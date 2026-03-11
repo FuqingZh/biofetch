@@ -3,6 +3,7 @@ package kegg
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,5 +92,49 @@ func TestParseKEGGReleaseFromInfo(t *testing.T) {
 	}
 	if value != "117.0+/03-10" {
 		t.Fatalf("parseKEGGReleaseFromInfo = %q, want %q", value, "117.0+/03-10")
+	}
+}
+
+func TestParseKEGGOrganismCodesFromList(t *testing.T) {
+	data := []byte("T01001\thsa\tHomo sapiens\nT01002\tmmu\tMus musculus\n")
+	values, err := parseKEGGOrganismCodesFromList(data)
+	if err != nil {
+		t.Fatalf("parseKEGGOrganismCodesFromList returned error: %v", err)
+	}
+
+	expected := []string{"hsa", "mmu"}
+	if !reflect.DeepEqual(values, expected) {
+		t.Fatalf("parseKEGGOrganismCodesFromList = %#v, want %#v", values, expected)
+	}
+}
+
+func TestValidateBriteConfigAllOrganisms(t *testing.T) {
+	cfg := briteConfig{
+		dirOut:                     "/tmp/kegg",
+		shouldDownloadAllOrganisms: true,
+		retryMax:                   1,
+	}
+	if err := validateBriteConfig(cfg); err != nil {
+		t.Fatalf("validateBriteConfig returned error: %v", err)
+	}
+}
+
+func TestValidateBriteConfigAllOrganismsWithCatalogFails(t *testing.T) {
+	cfg := briteConfig{
+		dirOut:                     "/tmp/kegg",
+		catalogCode:                "hsa",
+		shouldDownloadAllOrganisms: true,
+		retryMax:                   1,
+	}
+	err := validateBriteConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "must not be set") {
+		t.Fatalf("validateBriteConfig expected conflict error, got: %v", err)
+	}
+}
+
+func TestDeriveBriteScopeValueAllOrganisms(t *testing.T) {
+	cfg := briteConfig{shouldDownloadAllOrganisms: true}
+	if value := deriveBriteScopeValue(&cfg); value != "all" {
+		t.Fatalf("deriveBriteScopeValue = %q, want %q", value, "all")
 	}
 }

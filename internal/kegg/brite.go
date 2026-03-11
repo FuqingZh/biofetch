@@ -58,89 +58,39 @@ func runFetchBrite(cfg *briteConfig) error {
 	cfg.versionToken = versionToken
 
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
-	dirRawCatalog := filepath.Join(append([]string{dirVersion, "raw"}, deriveBriteScopeDir(cfg)...)...)
-	dirTidyCatalog := filepath.Join(append([]string{dirVersion, "tidy"}, deriveBriteScopeDir(cfg)...)...)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	if cfg.shouldDryRun {
 		logf("[dry-run] version dir: %s", dirVersion)
 		logf("[dry-run] manifest: %s", fileManifest)
 	} else {
-		if err := os.MkdirAll(dirRawCatalog, 0o755); err != nil {
-			return fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidyCatalog, 0o755); err != nil {
-			return fmt.Errorf("create tidy dir: %w", err)
+		if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+			return fmt.Errorf("create version dir: %w", err)
 		}
 	}
 
-	briteIDs, listContent, listURL, err := resolveBriteIDs(clientKegg, cfg)
-	if err != nil {
-		return err
+	records := make([]briteRecord, 0)
+	countBrites := 0
+	catalogs := []string{cfg.catalogCode}
+	if cfg.shouldDownloadAllOrganisms {
+		organismCodes, err := resolveKEGGOrganismCodes(clientKegg)
+		if err != nil {
+			return err
+		}
+		catalogs = organismCodes
 	}
 
-	records := make([]briteRecord, 0, 1+2*len(briteIDs))
-	fileList := filepath.Join(dirRawCatalog, "brite.list.tsv")
-	pathRelList := filepath.ToSlash(filepath.Join(append([]string{"raw"}, deriveBriteScopeDir(cfg)...)...))
-	pathRelList = filepath.ToSlash(filepath.Join(pathRelList, "brite.list.tsv"))
-	if cfg.shouldDryRun {
-		logf("[dry-run] %s -> %s", listURL, fileList)
-	} else {
-		recordList, err := writeBriteFile(fileList, pathRelList, "", "brite.list", listURL, listContent)
+	for _, catalogCode := range catalogs {
+		recordsCatalog, briteCount, err := fetchBriteCatalog(clientKegg, cfg, dirVersion, catalogCode)
 		if err != nil {
 			return err
 		}
-		records = append(records, recordList)
-	}
-
-	for _, briteID := range briteIDs {
-		fileEntry := filepath.Join(dirRawCatalog, briteID+".txt")
-		pathRelEntry := filepath.ToSlash(filepath.Join(append([]string{"raw"}, deriveBriteScopeDir(cfg)...)...))
-		pathRelEntry = filepath.ToSlash(filepath.Join(pathRelEntry, briteID+".txt"))
-		urlEntry := baseURL + "/get/br:" + briteID
-
-		fileJSON := filepath.Join(dirRawCatalog, briteID+".json")
-		pathRelJSON := filepath.ToSlash(filepath.Join(append([]string{"raw"}, deriveBriteScopeDir(cfg)...)...))
-		pathRelJSON = filepath.ToSlash(filepath.Join(pathRelJSON, briteID+".json"))
-		urlJSON := baseURL + "/get/br:" + briteID + "/json"
-
-		if cfg.shouldDryRun {
-			logf("[dry-run] %s -> %s", urlEntry, fileEntry)
-			logf("[dry-run] %s -> %s", urlJSON, fileJSON)
-			continue
-		}
-
-		recordEntry, err := fetchBriteAsset(
-			clientKegg,
-			cfg.shouldOverwriteExisting,
-			fileEntry,
-			pathRelEntry,
-			briteID,
-			"brite.entry",
-			urlEntry,
-		)
-		if err != nil {
-			return err
-		}
-		records = append(records, recordEntry)
-
-		recordJSON, err := fetchBriteAsset(
-			clientKegg,
-			cfg.shouldOverwriteExisting,
-			fileJSON,
-			pathRelJSON,
-			briteID,
-			"brite.json",
-			urlJSON,
-		)
-		if err != nil {
-			return err
-		}
-		records = append(records, recordJSON)
+		records = append(records, recordsCatalog...)
+		countBrites += briteCount
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] done (brites=%d)", len(briteIDs))
+		logf("[dry-run] done (catalogs=%d)", len(catalogs))
 		return nil
 	}
 
@@ -155,9 +105,79 @@ func runFetchBrite(cfg *briteConfig) error {
 		return err
 	}
 
-	logf("done (files=%d, brites=%d)", len(records), len(briteIDs))
+	logf("done (files=%d, brites=%d, catalogs=%d)", len(records), countBrites, len(catalogs))
 	logf("manifest written: %s", fileManifest)
 	return nil
+}
+
+func fetchBriteCatalog(
+	clientKegg *keggClient,
+	cfg *briteConfig,
+	dirVersion string,
+	catalogCode string,
+) ([]briteRecord, int, error) {
+	cfgCatalog := *cfg
+	cfgCatalog.catalogCode = catalogCode
+
+	dirRawCatalog := filepath.Join(append([]string{dirVersion, "raw"}, deriveBriteScopeDir(&cfgCatalog)...)...)
+	dirTidyCatalog := filepath.Join(append([]string{dirVersion, "tidy"}, deriveBriteScopeDir(&cfgCatalog)...)...)
+	if !cfg.shouldDryRun {
+		if err := os.MkdirAll(dirRawCatalog, 0o755); err != nil {
+			return nil, 0, fmt.Errorf("create raw dir: %w", err)
+		}
+		if err := os.MkdirAll(dirTidyCatalog, 0o755); err != nil {
+			return nil, 0, fmt.Errorf("create tidy dir: %w", err)
+		}
+	}
+
+	briteIDs, listContent, listURL, err := resolveBriteIDs(clientKegg, &cfgCatalog)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	records := make([]briteRecord, 0, 1+2*len(briteIDs))
+	pathRelRoot := filepath.ToSlash(filepath.Join(append([]string{"raw"}, deriveBriteScopeDir(&cfgCatalog)...)...))
+	fileList := filepath.Join(dirRawCatalog, "brite.list.tsv")
+	pathRelList := filepath.ToSlash(filepath.Join(pathRelRoot, "brite.list.tsv"))
+	if cfg.shouldDryRun {
+		logf("[dry-run] %s -> %s", listURL, fileList)
+	} else {
+		recordList, err := writeBriteFile(fileList, pathRelList, "", "brite.list", listURL, listContent)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, recordList)
+	}
+
+	for _, briteID := range briteIDs {
+		fileEntry := filepath.Join(dirRawCatalog, briteID+".txt")
+		pathRelEntry := filepath.ToSlash(filepath.Join(pathRelRoot, briteID+".txt"))
+		urlEntry := baseURL + "/get/br:" + briteID
+
+		fileJSON := filepath.Join(dirRawCatalog, briteID+".json")
+		pathRelJSON := filepath.ToSlash(filepath.Join(pathRelRoot, briteID+".json"))
+		urlJSON := baseURL + "/get/br:" + briteID + "/json"
+
+		if cfg.shouldDryRun {
+			logf("[dry-run] %s -> %s", urlEntry, fileEntry)
+			logf("[dry-run] %s -> %s", urlJSON, fileJSON)
+			continue
+		}
+
+		recordEntry, err := fetchBriteAsset(clientKegg, cfg.shouldOverwriteExisting, fileEntry, pathRelEntry, briteID, "brite.entry", urlEntry)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, recordEntry)
+
+		recordJSON, err := fetchBriteAsset(clientKegg, cfg.shouldOverwriteExisting, fileJSON, pathRelJSON, briteID, "brite.json", urlJSON)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, recordJSON)
+	}
+
+	return records, len(briteIDs), nil
 }
 
 func resolveBriteIDs(
@@ -432,11 +452,18 @@ func buildBriteManifest(
 		DownloadedAt: timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  deriveBriteScopeType(cfg),
-			Value: cfg.catalogCode,
+			Value: deriveBriteScopeValue(cfg),
 		},
 		Brites: brites,
 		Files:  files,
 	}
+}
+
+func deriveBriteScopeValue(cfg *briteConfig) string {
+	if cfg.shouldDownloadAllOrganisms {
+		return "all"
+	}
+	return cfg.catalogCode
 }
 
 func normalizeBriteID(text string) string {
@@ -444,6 +471,38 @@ func normalizeBriteID(text string) string {
 	value = strings.TrimPrefix(value, "br:")
 	value = strings.TrimPrefix(value, "BR:")
 	return value
+}
+
+func resolveKEGGOrganismCodes(clientKegg *keggClient) ([]string, error) {
+	data, err := clientKegg.download(baseURL + "/list/organism")
+	if err != nil {
+		return nil, err
+	}
+	return parseKEGGOrganismCodesFromList(data)
+}
+
+func parseKEGGOrganismCodesFromList(data []byte) ([]string, error) {
+	setCodes := make(map[string]struct{})
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		code := strings.TrimSpace(fields[1])
+		if code == "" {
+			continue
+		}
+		setCodes[code] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan KEGG organism list: %w", err)
+	}
+	return selectSortedKeys(setCodes), nil
 }
 
 func isValidBriteID(text string) bool {
@@ -469,6 +528,9 @@ func isValidBriteID(text string) bool {
 }
 
 func deriveBriteScopeType(cfg *briteConfig) string {
+	if cfg.shouldDownloadAllOrganisms {
+		return "organism_all"
+	}
 	if cfg.catalogCode == "br" || cfg.catalogCode == "ko" {
 		return "reference"
 	}
