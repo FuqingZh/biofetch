@@ -26,18 +26,19 @@ type pathwayConfig struct {
 }
 
 type briteConfig struct {
-	dirOut                  string
-	version                 string
-	versionToken            string
-	catalogCode             string
-	briteIDsCSV             string
-	fileBriteIDs            string
-	shouldOverwriteExisting bool
-	retryMax                int
-	retryWait               time.Duration
-	requestInterval         time.Duration
-	shouldAllowInsecureTLS  bool
-	shouldDryRun            bool
+	dirOut                     string
+	version                    string
+	versionToken               string
+	catalogCode                string
+	shouldDownloadAllOrganisms bool
+	briteIDsCSV                string
+	fileBriteIDs               string
+	shouldOverwriteExisting    bool
+	retryMax                   int
+	retryWait                  time.Duration
+	requestInterval            time.Duration
+	shouldAllowInsecureTLS     bool
+	shouldDryRun               bool
 }
 
 func RunCLI(args []string) error {
@@ -187,12 +188,19 @@ func createBriteCommand() *cobra.Command {
 	commandBrite.Example = strings.Join([]string{
 		"biofetch kegg brite --dir_out /data/kegg --catalog br --should_dry_run",
 		"biofetch kegg brite --dir_out /data/kegg --catalog hsa --brite_ids hsa00001",
+		"biofetch kegg brite --dir_out /data/kegg --should_download_all_organisms",
 	}, "\n")
 
 	flags := commandBrite.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.catalogCode, "catalog", "", "BRITE collection code; use br or ko for reference, or an organism code such as hsa or tcar")
+	flags.BoolVar(
+		&cfg.shouldDownloadAllOrganisms,
+		"should_download_all_organisms",
+		false,
+		"Fetch BRITE assets for all KEGG organisms",
+	)
 	flags.StringVar(&cfg.briteIDsCSV, "brite_ids", "", "Comma-separated BRITE IDs, e.g. br08301,hsa00001")
 	flags.StringVar(&cfg.fileBriteIDs, "file_brite_ids", "", "File with one BRITE ID per line")
 	flags.BoolVar(
@@ -241,8 +249,15 @@ func validateBriteConfig(cfg briteConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
-	if strings.TrimSpace(cfg.catalogCode) == "" {
-		return fmt.Errorf("catalog is required")
+	if cfg.shouldDownloadAllOrganisms {
+		if strings.TrimSpace(cfg.catalogCode) != "" {
+			return fmt.Errorf("catalog must not be set with --should_download_all_organisms")
+		}
+		if strings.TrimSpace(cfg.briteIDsCSV) != "" || strings.TrimSpace(cfg.fileBriteIDs) != "" {
+			return fmt.Errorf("brite_ids and file_brite_ids are not allowed with --should_download_all_organisms")
+		}
+	} else if strings.TrimSpace(cfg.catalogCode) == "" {
+		return fmt.Errorf("catalog is required unless --should_download_all_organisms is set")
 	}
 	if cfg.fileBriteIDs != "" {
 		if _, err := os.Stat(cfg.fileBriteIDs); err != nil {
