@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/logx"
 	"bufio"
 	"crypto/sha256"
 	"crypto/tls"
@@ -68,96 +69,35 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	cfg.version = version
 	cfg.versionToken = versionToken
 
-	scopeKey := deriveScopeKey(cfg)
+	scopeKeys, err := resolvePathwayScopeKeys(clientKegg, cfg)
+	if err != nil {
+		return err
+	}
 	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
-	dirRawScope := filepath.Join(dirVersion, "raw", scopeKey)
-	dirTidyScope := filepath.Join(dirVersion, "tidy", scopeKey)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	if cfg.shouldDryRun {
 		logf("[dry-run] version dir: %s", dirVersion)
 		logf("[dry-run] manifest: %s", fileManifest)
 	} else {
-		if err := os.MkdirAll(dirRawScope, 0o755); err != nil {
-			return fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidyScope, 0o755); err != nil {
-			return fmt.Errorf("create tidy dir: %w", err)
+		if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+			return fmt.Errorf("create version dir: %w", err)
 		}
 	}
 
-	pathwayIDs, listContent, listURL, err := resolvePathwayIDs(clientKegg, cfg)
-	if err != nil {
-		return err
-	}
-
-	records := make([]pathwayRecord, 0, 1+2*len(pathwayIDs))
-	fileList := filepath.Join(dirRawScope, "pathway.list.tsv")
-	pathRelList := filepath.ToSlash(filepath.Join("raw", scopeKey, "pathway.list.tsv"))
-
-	if cfg.shouldDryRun {
-		logf("[dry-run] %s -> %s", listURL, fileList)
-	} else {
-		recordList, err := writeDownloadedFile(
-			fileList,
-			pathRelList,
-			"",
-			"pathway.list",
-			listURL,
-			listContent,
-		)
+	records := make([]pathwayRecord, 0)
+	countPathways := 0
+	for _, scopeKey := range scopeKeys {
+		recordsScope, countScopePathways, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey)
 		if err != nil {
 			return err
 		}
-		records = append(records, recordList)
-	}
-
-	for _, pathwayID := range pathwayIDs {
-		fileEntry := filepath.Join(dirRawScope, pathwayID+".txt")
-		pathRelEntry := filepath.ToSlash(filepath.Join("raw", scopeKey, pathwayID+".txt"))
-		urlEntry := baseURL + "/get/" + pathwayID
-
-		fileKGML := filepath.Join(dirRawScope, pathwayID+".kgml")
-		pathRelKGML := filepath.ToSlash(filepath.Join("raw", scopeKey, pathwayID+".kgml"))
-		urlKGML := baseURL + "/get/" + pathwayID + "/kgml"
-
-		if cfg.shouldDryRun {
-			logf("[dry-run] %s -> %s", urlEntry, fileEntry)
-			logf("[dry-run] %s -> %s", urlKGML, fileKGML)
-			continue
-		}
-
-		recordEntry, err := fetchPathwayAsset(
-			clientKegg,
-			cfg.shouldOverwriteExisting,
-			fileEntry,
-			pathRelEntry,
-			pathwayID,
-			"pathway.entry",
-			urlEntry,
-		)
-		if err != nil {
-			return err
-		}
-		records = append(records, recordEntry)
-
-		recordKGML, err := fetchPathwayAsset(
-			clientKegg,
-			cfg.shouldOverwriteExisting,
-			fileKGML,
-			pathRelKGML,
-			pathwayID,
-			"pathway.kgml",
-			urlKGML,
-		)
-		if err != nil {
-			return err
-		}
-		records = append(records, recordKGML)
+		records = append(records, recordsScope...)
+		countPathways += countScopePathways
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] done (pathways=%d)", len(pathwayIDs))
+		logf("[dry-run] done (scopes=%d)", len(scopeKeys))
 		return nil
 	}
 
@@ -168,20 +108,18 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		return records[i].Asset < records[j].Asset
 	})
 
-	if err := writeManifest(fileManifest, cfg, records, time.Now()); err != nil {
+	recordsComplete, err := buildCompletePathwayRecords(fileManifest, dirVersion, records)
+	if err != nil {
 		return err
 	}
 
-	logf("done (files=%d, pathways=%d)", len(records), len(pathwayIDs))
+	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
+		return err
+	}
+
+	logf("done (files=%d, pathways=%d, scopes=%d)", len(recordsComplete), countPathways, len(scopeKeys))
 	logf("manifest written: %s", fileManifest)
 	return nil
-}
-
-func deriveScopeKey(cfg *pathwayConfig) string {
-	if cfg.shouldFetchReference {
-		return "reference"
-	}
-	return cfg.organismCode
 }
 
 func resolvePathwayIDs(
@@ -221,6 +159,122 @@ func derivePathwayListURL(cfg *pathwayConfig) string {
 		return baseURL + "/list/pathway"
 	}
 	return baseURL + "/list/pathway/" + cfg.organismCode
+}
+
+func resolvePathwayScopeKeys(clientKegg *keggClient, cfg *pathwayConfig) ([]string, error) {
+	switch {
+	case cfg.shouldFetchReference:
+		cfg.scopeType = "reference"
+		cfg.scopeValue = "pathway"
+		return []string{"reference"}, nil
+	case cfg.shouldDownloadAll:
+		organismCodes, err := resolveKEGGOrganismCodes(clientKegg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.scopeType = "organisms"
+		cfg.scopeValue = "all"
+		return organismCodes, nil
+	case len(cfg.organismCodes) > 0:
+		organismCodes, err := parseKEGGOrganismCodes(cfg.organismCodes)
+		if err != nil {
+			return nil, err
+		}
+		if len(organismCodes) == 1 {
+			cfg.scopeType = "organism"
+			cfg.scopeValue = organismCodes[0]
+		} else {
+			cfg.scopeType = "organisms"
+			cfg.scopeValue = strings.Join(organismCodes, ",")
+		}
+		return organismCodes, nil
+	case strings.TrimSpace(cfg.fileOrganismCodes) != "":
+		organismCodes, err := readKEGGOrganismCodesFromFile(cfg.fileOrganismCodes)
+		if err != nil {
+			return nil, err
+		}
+		if len(organismCodes) == 1 {
+			cfg.scopeType = "organism"
+			cfg.scopeValue = organismCodes[0]
+		} else {
+			cfg.scopeType = "organisms"
+			cfg.scopeValue = strings.Join(organismCodes, ",")
+		}
+		return organismCodes, nil
+	default:
+		return nil, fmt.Errorf("no pathway scope configured")
+	}
+}
+
+func fetchPathwayScope(
+	clientKegg *keggClient,
+	cfg *pathwayConfig,
+	dirVersion string,
+	scopeKey string,
+) ([]pathwayRecord, int, error) {
+	cfgScope := *cfg
+	cfgScope.organismCode = scopeKey
+	cfgScope.shouldFetchReference = scopeKey == "reference"
+
+	dirRawScope := filepath.Join(dirVersion, "raw", scopeKey)
+	dirTidyScope := filepath.Join(dirVersion, "tidy", scopeKey)
+	if !cfg.shouldDryRun {
+		if err := os.MkdirAll(dirRawScope, 0o755); err != nil {
+			return nil, 0, fmt.Errorf("create raw dir: %w", err)
+		}
+		if err := os.MkdirAll(dirTidyScope, 0o755); err != nil {
+			return nil, 0, fmt.Errorf("create tidy dir: %w", err)
+		}
+	}
+
+	pathwayIDs, listContent, listURL, err := resolvePathwayIDs(clientKegg, &cfgScope)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	records := make([]pathwayRecord, 0, 1+2*len(pathwayIDs))
+	fileList := filepath.Join(dirRawScope, "pathway.list.tsv")
+	pathRelList := filepath.ToSlash(filepath.Join("raw", scopeKey, "pathway.list.tsv"))
+
+	if cfg.shouldDryRun {
+		logf("[dry-run] %s -> %s", listURL, fileList)
+	} else {
+		recordList, err := writeDownloadedFile(fileList, pathRelList, "", "pathway.list", listURL, listContent)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, recordList)
+	}
+
+	for _, pathwayID := range pathwayIDs {
+		fileEntry := filepath.Join(dirRawScope, pathwayID+".txt")
+		pathRelEntry := filepath.ToSlash(filepath.Join("raw", scopeKey, pathwayID+".txt"))
+		urlEntry := baseURL + "/get/" + pathwayID
+
+		fileKGML := filepath.Join(dirRawScope, pathwayID+".kgml")
+		pathRelKGML := filepath.ToSlash(filepath.Join("raw", scopeKey, pathwayID+".kgml"))
+		urlKGML := baseURL + "/get/" + pathwayID + "/kgml"
+
+		if cfg.shouldDryRun {
+			logf("[dry-run] %s -> %s", urlEntry, fileEntry)
+			logf("[dry-run] %s -> %s", urlKGML, fileKGML)
+			continue
+		}
+
+		recordEntry, err := fetchPathwayAsset(clientKegg, cfg.shouldOverwriteExisting, fileEntry, pathRelEntry, pathwayID, "pathway.entry", urlEntry)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, recordEntry)
+
+		recordKGML, err := fetchPathwayAsset(clientKegg, cfg.shouldOverwriteExisting, fileKGML, pathRelKGML, pathwayID, "pathway.kgml", urlKGML)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, recordKGML)
+	}
+
+	return records, len(pathwayIDs), nil
 }
 
 func parsePathwayIDsCSV(textCSV string) ([]string, error) {
@@ -412,6 +466,77 @@ func writeManifest(
 	return nil
 }
 
+func buildCompletePathwayRecords(
+	fileManifest string,
+	dirVersion string,
+	recordsCurrent []pathwayRecord,
+) ([]pathwayRecord, error) {
+	recordsExisting, err := readExistingPathwayRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+
+	recordsMerged := make(map[string]pathwayRecord, len(recordsExisting)+len(recordsCurrent))
+	for _, record := range recordsExisting {
+		recordsMerged[record.PathRel] = record
+	}
+	for _, record := range recordsCurrent {
+		recordsMerged[record.PathRel] = record
+	}
+
+	records := make([]pathwayRecord, 0, len(recordsMerged))
+	for _, record := range recordsMerged {
+		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
+		infoFile, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat manifest file %s: %w", filePath, err)
+		}
+		if infoFile.IsDir() {
+			continue
+		}
+		records = append(records, record)
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].PathwayID != records[j].PathwayID {
+			return records[i].PathwayID < records[j].PathwayID
+		}
+		return records[i].Asset < records[j].Asset
+	})
+	return records, nil
+}
+
+func readExistingPathwayRecords(fileManifest string) ([]pathwayRecord, error) {
+	data, err := os.ReadFile(fileManifest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+
+	var manifest manifestFile
+	if err := toml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+
+	records := make([]pathwayRecord, 0, len(manifest.Files))
+	for _, item := range manifest.Files {
+		records = append(records, pathwayRecord{
+			PathwayID: item.PathwayID,
+			Asset:     item.Asset,
+			PathRel:   item.Path,
+			SHA256:    item.SHA256,
+			Bytes:     item.Bytes,
+			URL:       item.URL,
+		})
+	}
+	return records, nil
+}
+
 func buildManifestFile(
 	cfg *pathwayConfig,
 	records []pathwayRecord,
@@ -459,12 +584,7 @@ func buildManifestFile(
 		})
 	}
 
-	scopeType := "organism"
-	scopeValue := cfg.organismCode
-	if cfg.shouldFetchReference {
-		scopeType = "reference"
-		scopeValue = "pathway"
-	}
+	scopeType, scopeValue := derivePathwayManifestScope(cfg, records)
 
 	return manifestFile{
 		Database:     "kegg",
@@ -479,6 +599,56 @@ func buildManifestFile(
 		Pathways: pathways,
 		Files:    files,
 	}
+}
+
+func derivePathwayManifestScope(cfg *pathwayConfig, records []pathwayRecord) (string, string) {
+	setScopes := make(map[string]struct{})
+	for _, record := range records {
+		scopeKey := derivePathwayScopeFromPath(record.PathRel)
+		if scopeKey != "" {
+			setScopes[scopeKey] = struct{}{}
+		}
+	}
+
+	scopeKeys := selectSortedKeys(setScopes)
+	switch len(scopeKeys) {
+	case 0:
+		if cfg.shouldFetchReference {
+			return "reference", "pathway"
+		}
+		if cfg.scopeType != "" || cfg.scopeValue != "" {
+			return cfg.scopeType, cfg.scopeValue
+		}
+		if cfg.organismCode != "" {
+			return "organism", cfg.organismCode
+		}
+		return "organisms", ""
+	case 1:
+		if scopeKeys[0] == "reference" {
+			return "reference", "pathway"
+		}
+		return "organism", scopeKeys[0]
+	default:
+		filtered := make([]string, 0, len(scopeKeys))
+		for _, scopeKey := range scopeKeys {
+			if scopeKey == "reference" {
+				continue
+			}
+			filtered = append(filtered, scopeKey)
+		}
+		if len(filtered) == 0 {
+			return "reference", "pathway"
+		}
+		return "organisms", strings.Join(filtered, ",")
+	}
+}
+
+func derivePathwayScopeFromPath(pathRel string) string {
+	parts := strings.Split(pathRel, "/")
+	if len(parts) < 3 || parts[0] != "raw" {
+		return ""
+	}
+	return parts[1]
 }
 
 type keggClient struct {
@@ -577,7 +747,7 @@ func isValidPathwayID(text string) bool {
 }
 
 func logf(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "[fetch_kegg] %s\n", fmt.Sprintf(format, args...))
+	logx.Logf("biofetch kegg", format, args...)
 }
 
 func resolveKEGGVersion(clientKegg *keggClient, databaseName string) (string, string, error) {

@@ -71,13 +71,9 @@ func runFetchBrite(cfg *briteConfig) error {
 
 	records := make([]briteRecord, 0)
 	countBrites := 0
-	catalogs := []string{cfg.catalogCode}
-	if cfg.shouldDownloadAllOrganisms {
-		organismCodes, err := resolveKEGGOrganismCodes(clientKegg)
-		if err != nil {
-			return err
-		}
-		catalogs = organismCodes
+	catalogs, err := resolveBriteCatalogs(clientKegg, cfg)
+	if err != nil {
+		return err
 	}
 
 	for _, catalogCode := range catalogs {
@@ -101,11 +97,16 @@ func runFetchBrite(cfg *briteConfig) error {
 		return records[i].Asset < records[j].Asset
 	})
 
-	if err := writeBriteManifest(fileManifest, cfg, records, time.Now()); err != nil {
+	recordsComplete, err := buildCompleteBriteRecords(fileManifest, dirVersion, records)
+	if err != nil {
 		return err
 	}
 
-	logf("done (files=%d, brites=%d, catalogs=%d)", len(records), countBrites, len(catalogs))
+	if err := writeBriteManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
+		return err
+	}
+
+	logf("done (files=%d, brites=%d, catalogs=%d)", len(recordsComplete), countBrites, len(catalogs))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }
@@ -119,8 +120,8 @@ func fetchBriteCatalog(
 	cfgCatalog := *cfg
 	cfgCatalog.catalogCode = catalogCode
 
-	dirRawCatalog := filepath.Join(append([]string{dirVersion, "raw"}, deriveBriteScopeDir(&cfgCatalog)...)...)
-	dirTidyCatalog := filepath.Join(append([]string{dirVersion, "tidy"}, deriveBriteScopeDir(&cfgCatalog)...)...)
+	dirRawCatalog := filepath.Join(dirVersion, "raw", catalogCode)
+	dirTidyCatalog := filepath.Join(dirVersion, "tidy", catalogCode)
 	if !cfg.shouldDryRun {
 		if err := os.MkdirAll(dirRawCatalog, 0o755); err != nil {
 			return nil, 0, fmt.Errorf("create raw dir: %w", err)
@@ -136,7 +137,7 @@ func fetchBriteCatalog(
 	}
 
 	records := make([]briteRecord, 0, 1+2*len(briteIDs))
-	pathRelRoot := filepath.ToSlash(filepath.Join(append([]string{"raw"}, deriveBriteScopeDir(&cfgCatalog)...)...))
+	pathRelRoot := filepath.ToSlash(filepath.Join("raw", catalogCode))
 	fileList := filepath.Join(dirRawCatalog, "brite.list.tsv")
 	pathRelList := filepath.ToSlash(filepath.Join(pathRelRoot, "brite.list.tsv"))
 	if cfg.shouldDryRun {
@@ -398,6 +399,77 @@ func writeBriteManifest(
 	return nil
 }
 
+func buildCompleteBriteRecords(
+	fileManifest string,
+	dirVersion string,
+	recordsCurrent []briteRecord,
+) ([]briteRecord, error) {
+	recordsExisting, err := readExistingBriteRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+
+	recordsMerged := make(map[string]briteRecord, len(recordsExisting)+len(recordsCurrent))
+	for _, record := range recordsExisting {
+		recordsMerged[record.PathRel] = record
+	}
+	for _, record := range recordsCurrent {
+		recordsMerged[record.PathRel] = record
+	}
+
+	records := make([]briteRecord, 0, len(recordsMerged))
+	for _, record := range recordsMerged {
+		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
+		infoFile, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat manifest file %s: %w", filePath, err)
+		}
+		if infoFile.IsDir() {
+			continue
+		}
+		records = append(records, record)
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].BriteID != records[j].BriteID {
+			return records[i].BriteID < records[j].BriteID
+		}
+		return records[i].Asset < records[j].Asset
+	})
+	return records, nil
+}
+
+func readExistingBriteRecords(fileManifest string) ([]briteRecord, error) {
+	data, err := os.ReadFile(fileManifest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+
+	var manifest briteManifestFile
+	if err := toml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+
+	records := make([]briteRecord, 0, len(manifest.Files))
+	for _, item := range manifest.Files {
+		records = append(records, briteRecord{
+			BriteID: item.BriteID,
+			Asset:   item.Asset,
+			PathRel: item.Path,
+			SHA256:  item.SHA256,
+			Bytes:   item.Bytes,
+			URL:     item.URL,
+		})
+	}
+	return records, nil
+}
+
 func buildBriteManifest(
 	cfg *briteConfig,
 	records []briteRecord,
@@ -451,17 +523,81 @@ func buildBriteManifest(
 		VersionToken: cfg.versionToken,
 		DownloadedAt: timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
-			Type:  deriveBriteScopeType(cfg),
-			Value: deriveBriteScopeValue(cfg),
+			Type:  deriveBriteManifestScopeType(cfg, records),
+			Value: deriveBriteManifestScopeValue(cfg, records),
 		},
 		Brites: brites,
 		Files:  files,
 	}
 }
 
+func deriveBriteManifestScopeType(cfg *briteConfig, records []briteRecord) string {
+	scopeKeys := collectBriteScopeKeys(records)
+	switch len(scopeKeys) {
+	case 0:
+		return deriveBriteScopeType(cfg)
+	case 1:
+		if isReferenceBriteScope(scopeKeys[0]) {
+			return "reference"
+		}
+		return "organism"
+	default:
+		allReference := true
+		allOrganism := true
+		for _, scopeKey := range scopeKeys {
+			if isReferenceBriteScope(scopeKey) {
+				allOrganism = false
+			} else {
+				allReference = false
+			}
+		}
+		if allReference {
+			return "references"
+		}
+		if allOrganism {
+			return "organisms"
+		}
+		return "scopes"
+	}
+}
+
+func deriveBriteManifestScopeValue(cfg *briteConfig, records []briteRecord) string {
+	scopeKeys := collectBriteScopeKeys(records)
+	if len(scopeKeys) == 0 {
+		return deriveBriteScopeValue(cfg)
+	}
+	if len(scopeKeys) == 1 {
+		return scopeKeys[0]
+	}
+	return strings.Join(scopeKeys, ",")
+}
+
+func collectBriteScopeKeys(records []briteRecord) []string {
+	setScopes := make(map[string]struct{})
+	for _, record := range records {
+		scopeKey := deriveBriteScopeFromPath(record.PathRel)
+		if scopeKey != "" {
+			setScopes[scopeKey] = struct{}{}
+		}
+	}
+	return selectSortedKeys(setScopes)
+}
+
+func deriveBriteScopeFromPath(pathRel string) string {
+	parts := strings.Split(pathRel, "/")
+	if len(parts) < 3 || parts[0] != "raw" {
+		return ""
+	}
+	return parts[1]
+}
+
+func isReferenceBriteScope(scopeKey string) bool {
+	return scopeKey == "br" || scopeKey == "ko"
+}
+
 func deriveBriteScopeValue(cfg *briteConfig) string {
-	if cfg.shouldDownloadAllOrganisms {
-		return "all"
+	if cfg.scopeValue != "" {
+		return cfg.scopeValue
 	}
 	return cfg.catalogCode
 }
@@ -528,8 +664,8 @@ func isValidBriteID(text string) bool {
 }
 
 func deriveBriteScopeType(cfg *briteConfig) string {
-	if cfg.shouldDownloadAllOrganisms {
-		return "organism_all"
+	if cfg.scopeType != "" {
+		return cfg.scopeType
 	}
 	if cfg.catalogCode == "br" || cfg.catalogCode == "ko" {
 		return "reference"
@@ -537,9 +673,49 @@ func deriveBriteScopeType(cfg *briteConfig) string {
 	return "organism"
 }
 
-func deriveBriteScopeDir(cfg *briteConfig) []string {
-	if deriveBriteScopeType(cfg) == "reference" {
-		return []string{"reference", cfg.catalogCode}
+func resolveBriteCatalogs(clientKegg *keggClient, cfg *briteConfig) ([]string, error) {
+	switch {
+	case cfg.shouldDownloadAll:
+		organismCodes, err := resolveKEGGOrganismCodes(clientKegg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.scopeType = "organisms"
+		cfg.scopeValue = "all"
+		return organismCodes, nil
+	case len(cfg.organismCodes) > 0:
+		organismCodes, err := parseKEGGOrganismCodes(cfg.organismCodes)
+		if err != nil {
+			return nil, err
+		}
+		if len(organismCodes) == 1 {
+			cfg.scopeType = "organism"
+			cfg.scopeValue = organismCodes[0]
+		} else {
+			cfg.scopeType = "organisms"
+			cfg.scopeValue = strings.Join(organismCodes, ",")
+		}
+		return organismCodes, nil
+	case strings.TrimSpace(cfg.fileOrganismCodes) != "":
+		organismCodes, err := readKEGGOrganismCodesFromFile(cfg.fileOrganismCodes)
+		if err != nil {
+			return nil, err
+		}
+		if len(organismCodes) == 1 {
+			cfg.scopeType = "organism"
+			cfg.scopeValue = organismCodes[0]
+		} else {
+			cfg.scopeType = "organisms"
+			cfg.scopeValue = strings.Join(organismCodes, ",")
+		}
+		return organismCodes, nil
+	case cfg.catalogCode == "br" || cfg.catalogCode == "ko":
+		cfg.scopeType = "reference"
+		cfg.scopeValue = cfg.catalogCode
+		return []string{cfg.catalogCode}, nil
+	default:
+		cfg.scopeType = "organism"
+		cfg.scopeValue = cfg.catalogCode
+		return []string{cfg.catalogCode}, nil
 	}
-	return []string{"organism", cfg.catalogCode}
 }

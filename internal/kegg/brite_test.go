@@ -45,7 +45,7 @@ func TestBuildBriteManifest(t *testing.T) {
 		{
 			BriteID: "br08301",
 			Asset:   "brite.entry",
-			PathRel: "raw/reference/br/br08301.txt",
+			PathRel: "raw/br/br08301.txt",
 			SHA256:  "sha-entry",
 			Bytes:   11,
 			URL:     "https://rest.kegg.jp/get/br:br08301",
@@ -53,7 +53,7 @@ func TestBuildBriteManifest(t *testing.T) {
 		{
 			BriteID: "br08301",
 			Asset:   "brite.json",
-			PathRel: "raw/reference/br/br08301.json",
+			PathRel: "raw/br/br08301.json",
 			SHA256:  "sha-json",
 			Bytes:   22,
 			URL:     "https://rest.kegg.jp/get/br:br08301/json",
@@ -110,9 +110,9 @@ func TestParseKEGGOrganismCodesFromList(t *testing.T) {
 
 func TestValidateBriteConfigAllOrganisms(t *testing.T) {
 	cfg := briteConfig{
-		dirOut:                     "/tmp/kegg",
-		shouldDownloadAllOrganisms: true,
-		retryMax:                   1,
+		dirOut:            "/tmp/kegg",
+		shouldDownloadAll: true,
+		retryMax:          1,
 	}
 	if err := validateBriteConfig(cfg); err != nil {
 		t.Fatalf("validateBriteConfig returned error: %v", err)
@@ -121,10 +121,10 @@ func TestValidateBriteConfigAllOrganisms(t *testing.T) {
 
 func TestValidateBriteConfigAllOrganismsWithCatalogFails(t *testing.T) {
 	cfg := briteConfig{
-		dirOut:                     "/tmp/kegg",
-		catalogCode:                "hsa",
-		shouldDownloadAllOrganisms: true,
-		retryMax:                   1,
+		dirOut:            "/tmp/kegg",
+		catalogCode:       "hsa",
+		shouldDownloadAll: true,
+		retryMax:          1,
 	}
 	err := validateBriteConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "must not be set") {
@@ -133,8 +133,22 @@ func TestValidateBriteConfigAllOrganismsWithCatalogFails(t *testing.T) {
 }
 
 func TestDeriveBriteScopeValueAllOrganisms(t *testing.T) {
-	cfg := briteConfig{shouldDownloadAllOrganisms: true}
+	cfg := briteConfig{scopeValue: "all"}
 	if value := deriveBriteScopeValue(&cfg); value != "all" {
 		t.Fatalf("deriveBriteScopeValue = %q, want %q", value, "all")
+	}
+}
+
+func TestDeriveBriteManifestScopeFromRecords(t *testing.T) {
+	cfg := briteConfig{}
+	records := []briteRecord{
+		{PathRel: "raw/hsa/hsa00001.txt"},
+		{PathRel: "raw/tcar/tcar00001.txt"},
+	}
+
+	scopeType := deriveBriteManifestScopeType(&cfg, records)
+	scopeValue := deriveBriteManifestScopeValue(&cfg, records)
+	if scopeType != "organisms" || scopeValue != "hsa,tcar" {
+		t.Fatalf("deriveBriteManifestScope = %q, %q", scopeType, scopeValue)
 	}
 }

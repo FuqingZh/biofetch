@@ -66,3 +66,16 @@ func TestBuildManifestFile(t *testing.T) {
 		t.Fatal("encoded manifest is empty")
 	}
 }
+
+func TestDerivePathwayManifestScopeFromRecords(t *testing.T) {
+	cfg := pathwayConfig{}
+	records := []pathwayRecord{
+		{PathRel: "raw/hsa/map00010.txt"},
+		{PathRel: "raw/mmu/map00020.txt"},
+	}
+
+	scopeType, scopeValue := derivePathwayManifestScope(&cfg, records)
+	if scopeType != "organisms" || scopeValue != "hsa,mmu" {
+		t.Fatalf("derivePathwayManifestScope = %q, %q", scopeType, scopeValue)
+	}
+}
