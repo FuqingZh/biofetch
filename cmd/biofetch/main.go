@@ -1,15 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	rootcli "biofetch/internal/biofetch"
+	"biofetch/internal/logx"
 )
 
 func main() {
 	if err := rootcli.RunCLI(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "[biofetch][ERROR] %v\n", err)
+		_, _ = os.Stderr.WriteString("[biofetch] " + logx.RenderErrorLabel() + " " + err.Error() + "\n")
 		os.Exit(1)
 	}
 }

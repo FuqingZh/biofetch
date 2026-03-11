@@ -1,6 +1,8 @@
 package geneontology
 
 import (
+	"biofetch/internal/logx"
+	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"golang.org/x/net/html"
 )
 
 type ontologyAsset struct {
@@ -45,34 +48,20 @@ type ontologyManifestFileItem struct {
 	URL    string `toml:"url"`
 }
 
-var ontologyAssets = []ontologyAsset{
-	{
-		name: "go-basic.obo",
-		url:  "https://current.geneontology.org/ontology/go-basic.obo",
-	},
-	{
-		name: "go.obo",
-		url:  "https://current.geneontology.org/ontology/go.obo",
-	},
-	{
-		name: "go-plus.json",
-		url:  "https://current.geneontology.org/ontology/go-plus.json",
-	},
-}
-
-var defaultOntologyAssetNames = []string{
-	"go-basic.obo",
-	"go.obo",
-	"go-plus.json",
-}
+const ontologyBaseURL = "https://current.geneontology.org/ontology/"
+const ontologyIndexURL = ontologyBaseURL + "index.html"
+const ontologyVersionAssetName = "go-basic.obo"
 
 func runFetchOntology(cfg *ontologyConfig) error {
-	assets, err := parseOntologyAssetNames(cfg.assetsCSV)
+	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	assetsAvailable, err := discoverOntologyAssets(clientHTTP)
 	if err != nil {
 		return err
 	}
-
-	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	assets, err := resolveOntologyAssets(assetsAvailable, cfg.assetNames, cfg.shouldDownloadAll)
+	if err != nil {
+		return err
+	}
 	version, versionToken, err := resolveOntologyVersion(clientHTTP)
 	if err != nil {
 		return err
@@ -124,44 +113,192 @@ func runFetchOntology(cfg *ontologyConfig) error {
 		return records[i].Asset < records[j].Asset
 	})
 
-	if err := writeManifest(fileManifest, cfg, records, time.Now()); err != nil {
+	recordsComplete, err := buildCompleteOntologyRecords(fileManifest, dirVersion, records)
+	if err != nil {
 		return err
 	}
 
-	logf("done (files=%d)", len(records))
+	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
+		return err
+	}
+
+	logf("done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }
 
-func parseOntologyAssetNames(textCSV string) ([]ontologyAsset, error) {
-	setAssets := make(map[string]struct{})
-	for _, token := range strings.Split(textCSV, ",") {
-		name := strings.TrimSpace(token)
-		if name == "" {
+func discoverOntologyAssets(clientHTTP *http.Client) ([]ontologyAsset, error) {
+	data, err := downloadText(clientHTTP, ontologyIndexURL)
+	if err != nil {
+		return nil, err
+	}
+	return parseOntologyAssetsFromIndex(data)
+}
+
+func parseOntologyAssetsFromIndex(data []byte) ([]ontologyAsset, error) {
+	document, err := html.Parse(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("parse ontology index html: %w", err)
+	}
+
+	assetsByName := make(map[string]ontologyAsset)
+	for _, name := range extractOntologyAnchorTargets(document) {
+		if shouldIncludeOntologyAsset(name) {
+			assetsByName[name] = ontologyAsset{
+				name: name,
+				url:  ontologyBaseURL + name,
+			}
+		}
+	}
+	if len(assetsByName) == 0 {
+		return nil, fmt.Errorf("no ontology assets found at %s", ontologyIndexURL)
+	}
+
+	names := make([]string, 0, len(assetsByName))
+	for name := range assetsByName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	assets := make([]ontologyAsset, 0, len(names))
+	for _, name := range names {
+		assets = append(assets, assetsByName[name])
+	}
+	return assets, nil
+}
+
+func extractOntologyAnchorTargets(root *html.Node) []string {
+	setTargets := make(map[string]struct{})
+	visitOntologyAnchorNodes(root, setTargets)
+
+	targets := make([]string, 0, len(setTargets))
+	for target := range setTargets {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	return targets
+}
+
+func visitOntologyAnchorNodes(node *html.Node, setTargets map[string]struct{}) {
+	if node == nil {
+		return
+	}
+	if node.Type == html.ElementNode && node.Data == "a" {
+		for _, target := range collectOntologyAnchorTargets(node) {
+			setTargets[target] = struct{}{}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		visitOntologyAnchorNodes(child, setTargets)
+	}
+}
+
+func collectOntologyAnchorTargets(node *html.Node) []string {
+	targets := make([]string, 0, 2)
+
+	for _, attr := range node.Attr {
+		if attr.Key == "href" {
+			value := strings.TrimSpace(attr.Val)
+			if value != "" {
+				targets = append(targets, value)
+			}
+			break
+		}
+	}
+
+	text := strings.TrimSpace(extractNodeText(node))
+	if text != "" {
+		targets = append(targets, text)
+	}
+
+	return targets
+}
+
+func extractNodeText(node *html.Node) string {
+	if node == nil {
+		return ""
+	}
+	if node.Type == html.TextNode {
+		return node.Data
+	}
+
+	var builder strings.Builder
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		builder.WriteString(extractNodeText(child))
+	}
+	return builder.String()
+}
+
+func shouldIncludeOntologyAsset(name string) bool {
+	if name == "" || name == ".." || name == "index.html" {
+		return false
+	}
+	if strings.HasSuffix(name, "/") {
+		return false
+	}
+	if strings.Contains(name, "/") {
+		return false
+	}
+	return strings.Contains(name, ".")
+}
+
+func resolveOntologyAssets(
+	assetsAvailable []ontologyAsset,
+	assetNames []string,
+	shouldDownloadAll bool,
+) ([]ontologyAsset, error) {
+	if shouldDownloadAll {
+		return assetsAvailable, nil
+	}
+
+	namesRequested, err := parseOntologyAssetNames(assetNames)
+	if err != nil {
+		return nil, err
+	}
+
+	assetsByName := make(map[string]ontologyAsset, len(assetsAvailable))
+	for _, asset := range assetsAvailable {
+		assetsByName[asset.name] = asset
+	}
+
+	assets := make([]ontologyAsset, 0, len(namesRequested))
+	namesUnknown := make([]string, 0)
+	for _, name := range namesRequested {
+		asset, ok := assetsByName[name]
+		if !ok {
+			namesUnknown = append(namesUnknown, name)
 			continue
 		}
-		setAssets[name] = struct{}{}
+		assets = append(assets, asset)
+	}
+	if len(namesUnknown) > 0 {
+		sort.Strings(namesUnknown)
+		return nil, fmt.Errorf("unknown ontology asset(s): %s", strings.Join(namesUnknown, ", "))
+	}
+	return assets, nil
+}
+
+func parseOntologyAssetNames(values []string) ([]string, error) {
+	setAssets := make(map[string]struct{})
+	for _, value := range values {
+		for _, token := range strings.Split(value, ",") {
+			name := strings.TrimSpace(token)
+			if name == "" {
+				continue
+			}
+			setAssets[name] = struct{}{}
+		}
 	}
 	if len(setAssets) == 0 {
 		return nil, fmt.Errorf("assets must not be empty")
 	}
 
-	assets := make([]ontologyAsset, 0, len(setAssets))
-	for _, asset := range ontologyAssets {
-		if _, ok := setAssets[asset.name]; ok {
-			assets = append(assets, asset)
-			delete(setAssets, asset.name)
-		}
+	names := make([]string, 0, len(setAssets))
+	for name := range setAssets {
+		names = append(names, name)
 	}
-	if len(setAssets) > 0 {
-		namesUnknown := make([]string, 0, len(setAssets))
-		for name := range setAssets {
-			namesUnknown = append(namesUnknown, name)
-		}
-		sort.Strings(namesUnknown)
-		return nil, fmt.Errorf("unknown ontology asset(s): %s", strings.Join(namesUnknown, ", "))
-	}
-	return assets, nil
+	sort.Strings(names)
+	return names, nil
 }
 
 func fetchOntologyAsset(
@@ -321,6 +458,73 @@ func writeManifest(
 	return nil
 }
 
+func buildCompleteOntologyRecords(
+	fileManifest string,
+	dirVersion string,
+	recordsCurrent []ontologyRecord,
+) ([]ontologyRecord, error) {
+	recordsExisting, err := readExistingOntologyRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+
+	recordsMerged := make(map[string]ontologyRecord, len(recordsExisting)+len(recordsCurrent))
+	for _, record := range recordsExisting {
+		recordsMerged[record.PathRel] = record
+	}
+	for _, record := range recordsCurrent {
+		recordsMerged[record.PathRel] = record
+	}
+
+	records := make([]ontologyRecord, 0, len(recordsMerged))
+	for _, record := range recordsMerged {
+		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
+		infoFile, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat manifest file %s: %w", filePath, err)
+		}
+		if infoFile.IsDir() {
+			continue
+		}
+		records = append(records, record)
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].Asset < records[j].Asset
+	})
+	return records, nil
+}
+
+func readExistingOntologyRecords(fileManifest string) ([]ontologyRecord, error) {
+	data, err := os.ReadFile(fileManifest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+
+	var manifest ontologyManifestFile
+	if err := toml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+
+	records := make([]ontologyRecord, 0, len(manifest.Files))
+	for _, item := range manifest.Files {
+		records = append(records, ontologyRecord{
+			Asset:   item.Asset,
+			PathRel: item.Path,
+			SHA256:  item.SHA256,
+			Bytes:   item.Bytes,
+			URL:     item.URL,
+		})
+	}
+	return records, nil
+}
+
 func buildOntologyManifestFile(
 	cfg *ontologyConfig,
 	records []ontologyRecord,
@@ -373,11 +577,11 @@ func calculateSHA256ForFile(filePath string) (string, error) {
 }
 
 func logf(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "[biofetch go] %s\n", fmt.Sprintf(format, args...))
+	logx.Logf("biofetch go", format, args...)
 }
 
 func resolveOntologyVersion(clientHTTP *http.Client) (string, string, error) {
-	data, err := downloadText(clientHTTP, "https://current.geneontology.org/ontology/go-basic.obo")
+	data, err := downloadText(clientHTTP, ontologyBaseURL+ontologyVersionAssetName)
 	if err != nil {
 		return "", "", err
 	}

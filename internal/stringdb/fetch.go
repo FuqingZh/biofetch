@@ -1,6 +1,7 @@
 package stringdb
 
 import (
+	"biofetch/internal/logx"
 	"bufio"
 	"compress/gzip"
 	"crypto/sha256"
@@ -151,37 +152,44 @@ func runFetch(cfg *config) error {
 		return records[i].assetName < records[j].assetName
 	})
 
-	if err := writeManifest(fileManifest, cfg.versionToken, records, time.Now()); err != nil {
+	recordsComplete, err := buildCompleteFileRecords(fileManifest, dirVersion, records)
+	if err != nil {
 		return err
 	}
 
-	logf("done (files=%d, taxids=%d)", len(records), len(taxIDs))
+	if err := writeManifest(fileManifest, cfg.versionToken, recordsComplete, time.Now()); err != nil {
+		return err
+	}
+
+	logf("done (files=%d, taxids=%d)", len(recordsComplete), len(taxIDs))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }
 
 func resolveTaxIDs(cfg *config) ([]string, error) {
 	switch {
-	case cfg.shouldDownloadAllSpecies:
+	case cfg.shouldDownloadAll:
 		return fetchAllSpeciesTaxIDs(cfg)
-	case strings.TrimSpace(cfg.taxIDsCSV) != "":
-		return parseTaxIDsCSV(cfg.taxIDsCSV)
+	case len(cfg.taxIDs) > 0:
+		return parseTaxIDs(cfg.taxIDs)
 	default:
 		return readTaxIDsFromFile(cfg.fileTaxIDs)
 	}
 }
 
-func parseTaxIDsCSV(textCSV string) ([]string, error) {
+func parseTaxIDs(valuesInput []string) ([]string, error) {
 	setTaxIDs := make(map[string]struct{})
-	for _, token := range strings.Split(textCSV, ",") {
-		taxID := strings.TrimSpace(token)
-		if taxID == "" {
-			continue
+	for _, valueInput := range valuesInput {
+		for _, token := range strings.Split(valueInput, ",") {
+			taxID := strings.TrimSpace(token)
+			if taxID == "" {
+				continue
+			}
+			if !isDigits(taxID) {
+				return nil, fmt.Errorf("invalid taxid: %s", taxID)
+			}
+			setTaxIDs[taxID] = struct{}{}
 		}
-		if !isDigits(taxID) {
-			return nil, fmt.Errorf("invalid taxid: %s", taxID)
-		}
-		setTaxIDs[taxID] = struct{}{}
 	}
 
 	return selectSortedKeys(setTaxIDs), nil
@@ -456,6 +464,73 @@ func writeManifest(
 	return nil
 }
 
+func buildCompleteFileRecords(fileManifest string, dirVersion string, recordsCurrent []fileRecord) ([]fileRecord, error) {
+	recordsExisting, err := readExistingFileRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+
+	recordsMerged := make(map[string]fileRecord, len(recordsExisting)+len(recordsCurrent))
+	for _, record := range recordsExisting {
+		recordsMerged[record.pathRel] = record
+	}
+	for _, record := range recordsCurrent {
+		recordsMerged[record.pathRel] = record
+	}
+
+	records := make([]fileRecord, 0, len(recordsMerged))
+	for _, record := range recordsMerged {
+		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.pathRel))
+		infoFile, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat manifest file %s: %w", filePath, err)
+		}
+		if infoFile.IsDir() {
+			continue
+		}
+		records = append(records, record)
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].speciesID != records[j].speciesID {
+			return records[i].speciesID < records[j].speciesID
+		}
+		return records[i].assetName < records[j].assetName
+	})
+	return records, nil
+}
+
+func readExistingFileRecords(fileManifest string) ([]fileRecord, error) {
+	data, err := os.ReadFile(fileManifest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+
+	var manifest manifestFile
+	if err := toml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+
+	records := make([]fileRecord, 0, len(manifest.Files))
+	for _, item := range manifest.Files {
+		records = append(records, fileRecord{
+			speciesID: item.SpeciesID,
+			assetName: item.Asset,
+			pathRel:   item.Path,
+			sha256:    item.SHA256,
+			bytes:     item.Bytes,
+			url:       item.URL,
+		})
+	}
+	return records, nil
+}
+
 func buildManifestFile(
 	versionToken string,
 	records []fileRecord,
@@ -533,5 +608,5 @@ func isDigits(text string) bool {
 }
 
 func logf(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "[biofetch string] %s\n", fmt.Sprintf(format, args...))
+	logx.Logf("biofetch string", format, args...)
 }

@@ -12,15 +12,15 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-func TestParseTaxIDsCSV(t *testing.T) {
-	values, err := parseTaxIDsCSV("9606,7070,9606")
+func TestParseTaxIDs(t *testing.T) {
+	values, err := parseTaxIDs([]string{"9606", "7070,9606"})
 	if err != nil {
-		t.Fatalf("parseTaxIDsCSV returned error: %v", err)
+		t.Fatalf("parseTaxIDs returned error: %v", err)
 	}
 
 	expected := []string{"7070", "9606"}
 	if !reflect.DeepEqual(values, expected) {
-		t.Fatalf("parseTaxIDsCSV = %#v, want %#v", values, expected)
+		t.Fatalf("parseTaxIDs = %#v, want %#v", values, expected)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestBuildManifestFile(t *testing.T) {
 func TestConfirmAllSpeciesDownload(t *testing.T) {
 	var buffer bytes.Buffer
 	err := confirmAllSpeciesDownload(
-		strings.NewReader("should_download_all_species\n"),
+		strings.NewReader("should_download_all\n"),
 		&buffer,
 	)
 	if err != nil {
@@ -100,7 +100,7 @@ func TestConfirmAllSpeciesDownload(t *testing.T) {
 	}
 
 	assertContains(t, buffer.String(), "Full-species download may fetch a large number of files")
-	assertContains(t, buffer.String(), `Type "should_download_all_species" to continue.`)
+	assertContains(t, buffer.String(), `Type "should_download_all" to continue.`)
 	assertContains(t, buffer.String(), "> ")
 }
 
@@ -113,7 +113,78 @@ func TestConfirmAllSpeciesDownloadRejectsWrongInput(t *testing.T) {
 		t.Fatal("confirmAllSpeciesDownload returned nil error for wrong confirmation text")
 	}
 
-	assertContains(t, err.Error(), `expected "should_download_all_species"`)
+	assertContains(t, err.Error(), `expected "should_download_all"`)
+}
+
+func TestBuildCompleteFileRecordsMergesExistingManifestAndDropsMissing(t *testing.T) {
+	dirVersion := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dirVersion, "raw", "7070"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dirVersion, "raw", "9606"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	fileExisting := filepath.Join(dirVersion, "raw", "7070", "7070.protein.aliases.v12.0.txt.gz")
+	fileCurrent := filepath.Join(dirVersion, "raw", "9606", "9606.protein.links.v12.0.txt.gz")
+	if err := os.WriteFile(fileExisting, []byte("a"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	if err := os.WriteFile(fileCurrent, []byte("b"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	manifest := manifestFile{
+		Database:     "string",
+		Version:      "12.0",
+		VersionToken: "v12.0",
+		Files: []manifestFileItem{
+			{
+				SpeciesID: "7070",
+				Asset:     "protein.aliases",
+				Path:      "raw/7070/7070.protein.aliases.v12.0.txt.gz",
+				SHA256:    "sha-existing",
+				Bytes:     1,
+				URL:       "https://example.org/existing",
+			},
+			{
+				SpeciesID: "9999",
+				Asset:     "protein.info",
+				Path:      "raw/9999/9999.protein.info.v12.0.txt.gz",
+				SHA256:    "sha-missing",
+				Bytes:     1,
+				URL:       "https://example.org/missing",
+			},
+		},
+	}
+
+	data, err := toml.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("toml.Marshal returned error: %v", err)
+	}
+	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	if err := os.WriteFile(fileManifest, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	recordsCurrent := []fileRecord{
+		{
+			speciesID: "9606",
+			assetName: "protein.links",
+			pathRel:   "raw/9606/9606.protein.links.v12.0.txt.gz",
+			sha256:    "sha-current",
+			bytes:     1,
+			url:       "https://example.org/current",
+		},
+	}
+
+	records, err := buildCompleteFileRecords(fileManifest, dirVersion, recordsCurrent)
+	if err != nil {
+		t.Fatalf("buildCompleteFileRecords returned error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("len(records) = %d, want 2", len(records))
+	}
 }
 
 func assertContains(t *testing.T, text string, expected string) {
