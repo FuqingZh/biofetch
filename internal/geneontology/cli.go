@@ -1,7 +1,7 @@
 package geneontology
 
 import (
-	"bufio"
+	"biofetch/internal/shared/confirm"
 	"fmt"
 	"io"
 	"strings"
@@ -209,27 +209,10 @@ func validateOntologyConfig(cfg ontologyConfig) error {
 }
 
 func confirmAllOntologyDownload(reader io.Reader, writer io.Writer) error {
-	const textConfirm = "should_download_all"
-
-	if _, err := fmt.Fprintf(
+	return confirm.RequireLiteral(
+		reader,
 		writer,
-		"Full ontology download may fetch a large number of files and consume substantial disk, time, and bandwidth.\n",
-	); err != nil {
-		return fmt.Errorf("write confirmation prompt: %w", err)
-	}
-	if _, err := fmt.Fprintf(writer, "Type %q to continue.\n", textConfirm); err != nil {
-		return fmt.Errorf("write confirmation prompt: %w", err)
-	}
-	if _, err := io.WriteString(writer, "> "); err != nil {
-		return fmt.Errorf("write confirmation prompt: %w", err)
-	}
-
-	textInput, err := bufio.NewReader(reader).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read confirmation input: %w", err)
-	}
-	if strings.TrimSpace(textInput) != textConfirm {
-		return fmt.Errorf("confirmation failed; expected %q", textConfirm)
-	}
-	return nil
+		"Full ontology download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
+		"should_download_all",
+	)
 }

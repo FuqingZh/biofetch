@@ -1,9 +1,11 @@
 package omnipath
 
 import (
-	"biofetch/internal/logx"
+	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/sets"
+	"biofetch/internal/shared/tomlx"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,8 +16,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 const baseURL = "https://omnipathdb.org"
@@ -263,17 +263,13 @@ func buildCompleteOmniPathRecords(
 }
 
 func readExistingOmniPathRecords(fileManifest string) ([]recordFile, error) {
-	data, err := os.ReadFile(fileManifest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read manifest: %w", err)
-	}
-
 	var manifest manifestFile
-	if err := toml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	ok, err := tomlx.ReadFileIfExists(fileManifest, &manifest)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
 	}
 	return manifest.Files, nil
 }
@@ -287,7 +283,7 @@ func deriveOmniPathManifestScope(records []recordFile) (string, string) {
 		}
 	}
 
-	taxIDs := selectSortedKeys(setTaxIDs)
+	taxIDs := sets.SortedKeys(setTaxIDs)
 	switch len(taxIDs) {
 	case 0:
 		return "organisms", ""
@@ -498,28 +494,14 @@ func calculateSHA256(pathFile string) (string, error) {
 }
 
 func writeManifest(fileManifest string, manifest manifestFile) error {
-	data, err := toml.Marshal(manifest)
-	if err != nil {
-		return fmt.Errorf("encode manifest: %w", err)
-	}
-	if err := os.WriteFile(fileManifest, data, 0o644); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
-	return nil
+	return tomlx.WriteFileAtomic(fileManifest, manifest)
 }
 
 func createClient(shouldAllowInsecureTLS bool, retryMax int, retryWait time.Duration) *omnipathClient {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if shouldAllowInsecureTLS {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
 	return &omnipathClient{
-		clientHTTP: &http.Client{
-			Transport: transport,
-			Timeout:   0,
-		},
-		retryMax:  retryMax,
-		retryWait: retryWait,
+		clientHTTP: httpx.NewClient(shouldAllowInsecureTLS),
+		retryMax:   retryMax,
+		retryWait:  retryWait,
 	}
 }
 

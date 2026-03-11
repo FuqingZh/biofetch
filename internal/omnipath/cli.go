@@ -1,11 +1,12 @@
 package omnipath
 
 import (
+	"biofetch/internal/shared/confirm"
+	"biofetch/internal/shared/sets"
 	"bufio"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -380,30 +381,12 @@ func validateInteractionsConfig(cfg configInteractions) error {
 }
 
 func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
-	const textConfirm = "should_download_all"
-
-	if _, err := fmt.Fprintf(
+	return confirm.RequireLiteral(
+		reader,
 		writer,
-		"Multi-organism download may fetch a large number of files and consume substantial disk, time, and bandwidth.\n",
-	); err != nil {
-		return fmt.Errorf("write confirmation prompt: %w", err)
-	}
-	if _, err := fmt.Fprintf(writer, "Type %q to continue.\n", textConfirm); err != nil {
-		return fmt.Errorf("write confirmation prompt: %w", err)
-	}
-	if _, err := io.WriteString(writer, "> "); err != nil {
-		return fmt.Errorf("write confirmation prompt: %w", err)
-	}
-
-	textInput, err := bufio.NewReader(reader).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read confirmation input: %w", err)
-	}
-	if strings.TrimSpace(textInput) != textConfirm {
-		return fmt.Errorf("confirmation failed; expected %q", textConfirm)
-	}
-
-	return nil
+		"Multi-organism download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
+		"should_download_all",
+	)
 }
 
 func parseOrganisms(valuesInput []string) ([]string, error) {
@@ -422,7 +405,7 @@ func parseOrganisms(valuesInput []string) ([]string, error) {
 	if len(setTaxIDs) == 0 {
 		return nil, fmt.Errorf("organisms must not be empty")
 	}
-	return selectSortedKeys(setTaxIDs), nil
+	return sets.SortedKeys(setTaxIDs), nil
 }
 
 func readOrganismsFromFile(filePath string) ([]string, error) {
@@ -451,16 +434,7 @@ func readOrganismsFromFile(filePath string) ([]string, error) {
 	if len(setTaxIDs) == 0 {
 		return nil, fmt.Errorf("organisms file must not be empty: %s", filePath)
 	}
-	return selectSortedKeys(setTaxIDs), nil
-}
-
-func selectSortedKeys(setText map[string]struct{}) []string {
-	values := make([]string, 0, len(setText))
-	for key := range setText {
-		values = append(values, key)
-	}
-	sort.Strings(values)
-	return values
+	return sets.SortedKeys(setTaxIDs), nil
 }
 
 func validateRuleLicense(ruleLicense string) error {

@@ -4,7 +4,7 @@ import (
 	"os"
 
 	rootcli "biofetch/internal/biofetch"
-	"biofetch/internal/logx"
+	"biofetch/internal/shared/logx"
 )
 
 func main() {

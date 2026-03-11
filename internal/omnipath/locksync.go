@@ -1,14 +1,13 @@
 package omnipath
 
 import (
+	"biofetch/internal/shared/tomlx"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 type lockConfig struct {
@@ -236,17 +235,13 @@ func urlForTaxID(asset string, taxID string) string {
 }
 
 func readExistingManifest(fileManifest string) (manifestFile, error) {
-	data, err := os.ReadFile(fileManifest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return manifestFile{}, nil
-		}
-		return manifestFile{}, fmt.Errorf("read manifest: %w", err)
-	}
-
 	var manifest manifestFile
-	if err := toml.Unmarshal(data, &manifest); err != nil {
-		return manifestFile{}, fmt.Errorf("decode manifest: %w", err)
+	ok, err := tomlx.ReadFileIfExists(fileManifest, &manifest)
+	if err != nil {
+		return manifestFile{}, err
+	}
+	if !ok {
+		return manifestFile{}, nil
 	}
 	return manifest, nil
 }

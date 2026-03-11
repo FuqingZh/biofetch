@@ -1,10 +1,12 @@
 package geneontology
 
 import (
-	"biofetch/internal/logx"
+	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/sets"
+	"biofetch/internal/shared/tomlx"
 	"bytes"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	toml "github.com/pelletier/go-toml/v2"
 	"golang.org/x/net/html"
 )
 
@@ -172,10 +173,7 @@ func extractOntologyAnchorTargets(root *html.Node) []string {
 	visitOntologyAnchorNodes(root, setTargets)
 
 	targets := make([]string, 0, len(setTargets))
-	for target := range setTargets {
-		targets = append(targets, target)
-	}
-	sort.Strings(targets)
+	targets = append(targets, sets.SortedKeys(setTargets)...)
 	return targets
 }
 
@@ -293,12 +291,7 @@ func parseOntologyAssetNames(values []string) ([]string, error) {
 		return nil, fmt.Errorf("assets must not be empty")
 	}
 
-	names := make([]string, 0, len(setAssets))
-	for name := range setAssets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names, nil
+	return sets.SortedKeys(setAssets), nil
 }
 
 func fetchOntologyAsset(
@@ -401,30 +394,7 @@ func downloadFileWithRetry(
 }
 
 func downloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error {
-	response, err := clientHTTP.Get(urlFile)
-	if err != nil {
-		return fmt.Errorf("request %s: %w", urlFile, err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("request %s: unexpected status %s", urlFile, response.Status)
-	}
-
-	fileHandle, err := os.Create(fileOut)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", fileOut, err)
-	}
-
-	_, errCopy := io.Copy(fileHandle, response.Body)
-	errClose := fileHandle.Close()
-	if errCopy != nil {
-		return fmt.Errorf("write %s: %w", fileOut, errCopy)
-	}
-	if errClose != nil {
-		return fmt.Errorf("close %s: %w", fileOut, errClose)
-	}
-	return nil
+	return httpx.DownloadFile(clientHTTP, urlFile, fileOut)
 }
 
 func writeManifest(
@@ -433,29 +403,8 @@ func writeManifest(
 	records []ontologyRecord,
 	timeDownloaded time.Time,
 ) error {
-	fileTemp := fileManifest + ".tmp"
-	fileOut, err := os.Create(fileTemp)
-	if err != nil {
-		return fmt.Errorf("create manifest: %w", err)
-	}
-
 	manifest := buildOntologyManifestFile(cfg, records, timeDownloaded)
-	encoder := toml.NewEncoder(fileOut)
-	encoder.SetIndentTables(true)
-	errEncode := encoder.Encode(manifest)
-	errClose := fileOut.Close()
-	if errEncode != nil {
-		_ = os.Remove(fileTemp)
-		return errEncode
-	}
-	if errClose != nil {
-		_ = os.Remove(fileTemp)
-		return fmt.Errorf("close manifest: %w", errClose)
-	}
-	if err := os.Rename(fileTemp, fileManifest); err != nil {
-		return fmt.Errorf("rename manifest: %w", err)
-	}
-	return nil
+	return tomlx.WriteFileAtomic(fileManifest, manifest)
 }
 
 func buildCompleteOntologyRecords(
@@ -499,17 +448,13 @@ func buildCompleteOntologyRecords(
 }
 
 func readExistingOntologyRecords(fileManifest string) ([]ontologyRecord, error) {
-	data, err := os.ReadFile(fileManifest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read manifest: %w", err)
-	}
-
 	var manifest ontologyManifestFile
-	if err := toml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	ok, err := tomlx.ReadFileIfExists(fileManifest, &manifest)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
 	}
 
 	records := make([]ontologyRecord, 0, len(manifest.Files))
@@ -552,14 +497,7 @@ func buildOntologyManifestFile(
 }
 
 func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if shouldAllowInsecureTLS {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	return &http.Client{
-		Timeout:   0,
-		Transport: transport,
-	}
+	return httpx.NewClient(shouldAllowInsecureTLS)
 }
 
 func calculateSHA256ForFile(filePath string) (string, error) {

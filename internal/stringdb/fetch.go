@@ -1,11 +1,13 @@
 package stringdb
 
 import (
-	"biofetch/internal/logx"
+	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/sets"
+	"biofetch/internal/shared/tomlx"
 	"bufio"
 	"compress/gzip"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,8 +16,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 const baseURL = "https://stringdb-downloads.org/download"
@@ -192,7 +192,7 @@ func parseTaxIDs(valuesInput []string) ([]string, error) {
 		}
 	}
 
-	return selectSortedKeys(setTaxIDs), nil
+	return sets.SortedKeys(setTaxIDs), nil
 }
 
 func readTaxIDsFromFile(fileTaxIDs string) ([]string, error) {
@@ -218,7 +218,7 @@ func readTaxIDsFromFile(fileTaxIDs string) ([]string, error) {
 		return nil, fmt.Errorf("read taxids file: %w", err)
 	}
 
-	return selectSortedKeys(setTaxIDs), nil
+	return sets.SortedKeys(setTaxIDs), nil
 }
 
 func fetchAllSpeciesTaxIDs(cfg *config) ([]string, error) {
@@ -264,19 +264,11 @@ func fetchAllSpeciesTaxIDs(cfg *config) ([]string, error) {
 		return nil, fmt.Errorf("read species list: %w", err)
 	}
 
-	return selectSortedKeys(setTaxIDs), nil
+	return sets.SortedKeys(setTaxIDs), nil
 }
 
 func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if shouldAllowInsecureTLS {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-
-	return &http.Client{
-		Timeout:   0,
-		Transport: transport,
-	}
+	return httpx.NewClient(shouldAllowInsecureTLS)
 }
 
 func inspectExistingFile(
@@ -373,30 +365,7 @@ func downloadFileWithRetry(
 }
 
 func downloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error {
-	response, err := clientHTTP.Get(urlFile)
-	if err != nil {
-		return fmt.Errorf("request %s: %w", urlFile, err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("request %s: unexpected status %s", urlFile, response.Status)
-	}
-
-	fileHandle, err := os.Create(fileOut)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", fileOut, err)
-	}
-
-	_, errCopy := io.Copy(fileHandle, response.Body)
-	errClose := fileHandle.Close()
-	if errCopy != nil {
-		return fmt.Errorf("write %s: %w", fileOut, errCopy)
-	}
-	if errClose != nil {
-		return fmt.Errorf("close %s: %w", fileOut, errClose)
-	}
-	return nil
+	return httpx.DownloadFile(clientHTTP, urlFile, fileOut)
 }
 
 func calculateSHA256ForFile(filePath string) (string, error) {
@@ -439,29 +408,8 @@ func writeManifest(
 	records []fileRecord,
 	timeDownloaded time.Time,
 ) error {
-	fileTemp := fileManifest + ".tmp"
-	fileOut, err := os.Create(fileTemp)
-	if err != nil {
-		return fmt.Errorf("create manifest: %w", err)
-	}
-
 	manifest := buildManifestFile(versionToken, records, timeDownloaded)
-	encoder := toml.NewEncoder(fileOut)
-	encoder.SetIndentTables(true)
-	errEncode := encoder.Encode(manifest)
-	errClose := fileOut.Close()
-	if errEncode != nil {
-		_ = os.Remove(fileTemp)
-		return errEncode
-	}
-	if errClose != nil {
-		_ = os.Remove(fileTemp)
-		return fmt.Errorf("close manifest: %w", errClose)
-	}
-	if err := os.Rename(fileTemp, fileManifest); err != nil {
-		return fmt.Errorf("rename manifest: %w", err)
-	}
-	return nil
+	return tomlx.WriteFileAtomic(fileManifest, manifest)
 }
 
 func buildCompleteFileRecords(fileManifest string, dirVersion string, recordsCurrent []fileRecord) ([]fileRecord, error) {
@@ -504,17 +452,13 @@ func buildCompleteFileRecords(fileManifest string, dirVersion string, recordsCur
 }
 
 func readExistingFileRecords(fileManifest string) ([]fileRecord, error) {
-	data, err := os.ReadFile(fileManifest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read manifest: %w", err)
-	}
-
 	var manifest manifestFile
-	if err := toml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	ok, err := tomlx.ReadFileIfExists(fileManifest, &manifest)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
 	}
 
 	records := make([]fileRecord, 0, len(manifest.Files))
@@ -584,15 +528,6 @@ func buildManifestFile(
 		Species:      species,
 		Files:        files,
 	}
-}
-
-func selectSortedKeys(setText map[string]struct{}) []string {
-	values := make([]string, 0, len(setText))
-	for key := range setText {
-		values = append(values, key)
-	}
-	sort.Strings(values)
-	return values
 }
 
 func isDigits(text string) bool {

@@ -1,10 +1,12 @@
 package kegg
 
 import (
-	"biofetch/internal/logx"
+	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/sets"
+	"biofetch/internal/shared/tomlx"
 	"bufio"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,8 +15,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 const baseURL = "https://rest.kegg.jp"
@@ -289,7 +289,7 @@ func parsePathwayIDsCSV(textCSV string) ([]string, error) {
 		}
 		setPathwayIDs[pathwayID] = struct{}{}
 	}
-	return selectSortedKeys(setPathwayIDs), nil
+	return sets.SortedKeys(setPathwayIDs), nil
 }
 
 func readPathwayIDsFromFile(filePathwayIDs string) ([]string, error) {
@@ -315,7 +315,7 @@ func readPathwayIDsFromFile(filePathwayIDs string) ([]string, error) {
 		return nil, fmt.Errorf("read pathway ids file: %w", err)
 	}
 
-	return selectSortedKeys(setPathwayIDs), nil
+	return sets.SortedKeys(setPathwayIDs), nil
 }
 
 func parsePathwayIDsFromList(data []byte) ([]string, error) {
@@ -339,7 +339,7 @@ func parsePathwayIDsFromList(data []byte) ([]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan pathway list: %w", err)
 	}
-	return selectSortedKeys(setPathwayIDs), nil
+	return sets.SortedKeys(setPathwayIDs), nil
 }
 
 func fetchPathwayAsset(
@@ -441,29 +441,8 @@ func writeManifest(
 	records []pathwayRecord,
 	timeDownloaded time.Time,
 ) error {
-	fileTemp := fileManifest + ".tmp"
-	fileOut, err := os.Create(fileTemp)
-	if err != nil {
-		return fmt.Errorf("create manifest: %w", err)
-	}
-
 	manifest := buildManifestFile(cfg, records, timeDownloaded)
-	encoder := toml.NewEncoder(fileOut)
-	encoder.SetIndentTables(true)
-	errEncode := encoder.Encode(manifest)
-	errClose := fileOut.Close()
-	if errEncode != nil {
-		_ = os.Remove(fileTemp)
-		return errEncode
-	}
-	if errClose != nil {
-		_ = os.Remove(fileTemp)
-		return fmt.Errorf("close manifest: %w", errClose)
-	}
-	if err := os.Rename(fileTemp, fileManifest); err != nil {
-		return fmt.Errorf("rename manifest: %w", err)
-	}
-	return nil
+	return tomlx.WriteFileAtomic(fileManifest, manifest)
 }
 
 func buildCompletePathwayRecords(
@@ -510,17 +489,13 @@ func buildCompletePathwayRecords(
 }
 
 func readExistingPathwayRecords(fileManifest string) ([]pathwayRecord, error) {
-	data, err := os.ReadFile(fileManifest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read manifest: %w", err)
-	}
-
 	var manifest manifestFile
-	if err := toml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	ok, err := tomlx.ReadFileIfExists(fileManifest, &manifest)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
 	}
 
 	records := make([]pathwayRecord, 0, len(manifest.Files))
@@ -610,7 +585,7 @@ func derivePathwayManifestScope(cfg *pathwayConfig, records []pathwayRecord) (st
 		}
 	}
 
-	scopeKeys := selectSortedKeys(setScopes)
+	scopeKeys := sets.SortedKeys(setScopes)
 	switch len(scopeKeys) {
 	case 0:
 		if cfg.shouldFetchReference {
@@ -691,14 +666,7 @@ func (client *keggClient) download(urlFile string) ([]byte, error) {
 }
 
 func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if shouldAllowInsecureTLS {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	return &http.Client{
-		Timeout:   0,
-		Transport: transport,
-	}
+	return httpx.NewClient(shouldAllowInsecureTLS)
 }
 
 func calculateSHA256ForFile(filePath string) (string, error) {
@@ -713,15 +681,6 @@ func calculateSHA256ForFile(filePath string) (string, error) {
 		return "", fmt.Errorf("hash %s: %w", filePath, err)
 	}
 	return fmt.Sprintf("%x", hashSHA256.Sum(nil)), nil
-}
-
-func selectSortedKeys(setText map[string]struct{}) []string {
-	values := make([]string, 0, len(setText))
-	for key := range setText {
-		values = append(values, key)
-	}
-	sort.Strings(values)
-	return values
 }
 
 func isValidPathwayID(text string) bool {

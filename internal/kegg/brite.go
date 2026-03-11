@@ -1,6 +1,8 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/sets"
+	"biofetch/internal/shared/tomlx"
 	"bufio"
 	"fmt"
 	"os"
@@ -8,8 +10,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 type briteRecord struct {
@@ -225,7 +225,7 @@ func parseBriteIDsCSV(textCSV string) ([]string, error) {
 		}
 		setBriteIDs[briteID] = struct{}{}
 	}
-	return selectSortedKeys(setBriteIDs), nil
+	return sets.SortedKeys(setBriteIDs), nil
 }
 
 func readBriteIDsFromFile(fileBriteIDs string) ([]string, error) {
@@ -250,7 +250,7 @@ func readBriteIDsFromFile(fileBriteIDs string) ([]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read BRITE ids file: %w", err)
 	}
-	return selectSortedKeys(setBriteIDs), nil
+	return sets.SortedKeys(setBriteIDs), nil
 }
 
 func parseBriteIDsFromList(data []byte) ([]string, error) {
@@ -274,7 +274,7 @@ func parseBriteIDsFromList(data []byte) ([]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan BRITE list: %w", err)
 	}
-	return selectSortedKeys(setBriteIDs), nil
+	return sets.SortedKeys(setBriteIDs), nil
 }
 
 func fetchBriteAsset(
@@ -374,29 +374,8 @@ func writeBriteManifest(
 	records []briteRecord,
 	timeDownloaded time.Time,
 ) error {
-	fileTemp := fileManifest + ".tmp"
-	fileOut, err := os.Create(fileTemp)
-	if err != nil {
-		return fmt.Errorf("create manifest: %w", err)
-	}
-
 	manifest := buildBriteManifest(cfg, records, timeDownloaded)
-	encoder := toml.NewEncoder(fileOut)
-	encoder.SetIndentTables(true)
-	errEncode := encoder.Encode(manifest)
-	errClose := fileOut.Close()
-	if errEncode != nil {
-		_ = os.Remove(fileTemp)
-		return errEncode
-	}
-	if errClose != nil {
-		_ = os.Remove(fileTemp)
-		return fmt.Errorf("close manifest: %w", errClose)
-	}
-	if err := os.Rename(fileTemp, fileManifest); err != nil {
-		return fmt.Errorf("rename manifest: %w", err)
-	}
-	return nil
+	return tomlx.WriteFileAtomic(fileManifest, manifest)
 }
 
 func buildCompleteBriteRecords(
@@ -443,17 +422,13 @@ func buildCompleteBriteRecords(
 }
 
 func readExistingBriteRecords(fileManifest string) ([]briteRecord, error) {
-	data, err := os.ReadFile(fileManifest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read manifest: %w", err)
-	}
-
 	var manifest briteManifestFile
-	if err := toml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	ok, err := tomlx.ReadFileIfExists(fileManifest, &manifest)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
 	}
 
 	records := make([]briteRecord, 0, len(manifest.Files))
@@ -580,7 +555,7 @@ func collectBriteScopeKeys(records []briteRecord) []string {
 			setScopes[scopeKey] = struct{}{}
 		}
 	}
-	return selectSortedKeys(setScopes)
+	return sets.SortedKeys(setScopes)
 }
 
 func deriveBriteScopeFromPath(pathRel string) string {
@@ -638,7 +613,7 @@ func parseKEGGOrganismCodesFromList(data []byte) ([]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan KEGG organism list: %w", err)
 	}
-	return selectSortedKeys(setCodes), nil
+	return sets.SortedKeys(setCodes), nil
 }
 
 func isValidBriteID(text string) bool {
