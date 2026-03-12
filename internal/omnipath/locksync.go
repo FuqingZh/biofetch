@@ -21,6 +21,7 @@ type syncConfig struct {
 	dirOut                  string
 	versionToken            string
 	dataset                 string
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration

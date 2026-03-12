@@ -17,6 +17,7 @@ type lockConfig struct {
 type syncConfig struct {
 	dirOut                  string
 	versionToken            string
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration

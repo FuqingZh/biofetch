@@ -24,7 +24,9 @@ func TestParsePathwayIDsFromList(t *testing.T) {
 
 func TestBuildManifestFile(t *testing.T) {
 	cfg := pathwayConfig{
-		versionToken:         "v2026-03-11",
+		version:              "117.0",
+		versionToken:         "117.0",
+		sourceRelease:        "117.0+/03-11",
 		shouldFetchReference: true,
 	}
 	records := []pathwayRecord{
@@ -77,5 +79,15 @@ func TestDerivePathwayManifestScopeFromRecords(t *testing.T) {
 	scopeType, scopeValue := derivePathwayManifestScope(&cfg, records)
 	if scopeType != "organisms" || scopeValue != "hsa,mmu" {
 		t.Fatalf("derivePathwayManifestScope = %q, %q", scopeType, scopeValue)
+	}
+}
+
+func TestParseKEGGMajorVersion(t *testing.T) {
+	value, err := parseKEGGMajorVersion("117.0+/03-10")
+	if err != nil {
+		t.Fatalf("parseKEGGMajorVersion returned error: %v", err)
+	}
+	if value != "117.0" {
+		t.Fatalf("parseKEGGMajorVersion = %q, want %q", value, "117.0")
 	}
 }

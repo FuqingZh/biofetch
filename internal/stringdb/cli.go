@@ -17,6 +17,7 @@ type config struct {
 	taxIDs                  []string
 	fileTaxIDs              string
 	shouldDownloadAll       bool
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
@@ -50,7 +51,7 @@ func createFetchCommand() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			if err := validateConfig(*cfg); err != nil {
+			if err := validateConfig(cfg); err != nil {
 				return err
 			}
 			if cfg.shouldDownloadAll {
@@ -80,12 +81,7 @@ func createFetchCommand() *cobra.Command {
 		false,
 		"Download all species listed by STRING",
 	)
-	flags.BoolVar(
-		&cfg.shouldOverwriteExisting,
-		"should_overwrite_existing",
-		false,
-		"Re-download existing files",
-	)
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(
@@ -131,6 +127,7 @@ func createSyncCommand() *cobra.Command {
 	cfg := syncConfig{}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.ruleExisting = "skip"
 	retryWaitSec := 3
 
 	commandSync := &cobra.Command{
@@ -150,6 +147,10 @@ func createSyncCommand() *cobra.Command {
 			if cfg.retryMax < 1 {
 				return fmt.Errorf("retry_max must be >= 1")
 			}
+			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+			}
+			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			if cfg.retryWait < 0 {
 				return fmt.Errorf("retry_wait_sec must be >= 0")
 			}
@@ -161,7 +162,7 @@ func createSyncCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "STRING asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "STRING release version token")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download files even if they already exist")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -172,12 +173,13 @@ func createSyncCommand() *cobra.Command {
 func createDefaultConfig() *config {
 	cfg := &config{}
 	cfg.versionToken = "v12.0"
+	cfg.ruleExisting = "skip"
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	return cfg
 }
 
-func validateConfig(cfg config) error {
+func validateConfig(cfg *config) error {
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("retry_max must be >= 1")
 	}
@@ -187,6 +189,10 @@ func validateConfig(cfg config) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
+	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+	}
+	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 
 	countSources := 0
 	if cfg.shouldDownloadAll {
