@@ -17,6 +17,7 @@ type ontologyLockConfig struct {
 type ontologySyncConfig struct {
 	dirOut                  string
 	versionToken            string
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration

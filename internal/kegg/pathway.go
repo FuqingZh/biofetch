@@ -29,14 +29,15 @@ type pathwayRecord struct {
 }
 
 type manifestFile struct {
-	Database     string            `toml:"database"`
-	Asset        string            `toml:"asset"`
-	Version      string            `toml:"version"`
-	VersionToken string            `toml:"version_token"`
-	DownloadedAt string            `toml:"downloaded_at"`
-	Scope        manifestScope     `toml:"scope"`
-	Pathways     []manifestPathway `toml:"pathways"`
-	Files        []manifestAsset   `toml:"files"`
+	Database      string            `toml:"database"`
+	Asset         string            `toml:"asset"`
+	Version       string            `toml:"version"`
+	VersionToken  string            `toml:"version_token"`
+	SourceRelease string            `toml:"source_release"`
+	DownloadedAt  string            `toml:"downloaded_at"`
+	Scope         manifestScope     `toml:"scope"`
+	Pathways      []manifestPathway `toml:"pathways"`
+	Files         []manifestAsset   `toml:"files"`
 }
 
 type manifestScope struct {
@@ -62,12 +63,17 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval)
 
-	version, versionToken, err := resolveKEGGVersion(clientKegg, "pathway")
+	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "pathway")
 	if err != nil {
 		return err
 	}
-	cfg.version = version
-	cfg.versionToken = versionToken
+	if strings.TrimSpace(cfg.versionToken) == "" {
+		cfg.versionToken = currentMajorVersion
+	} else if cfg.versionToken != currentMajorVersion {
+		return fmt.Errorf("version %q does not match current KEGG pathway major version %q", cfg.versionToken, currentMajorVersion)
+	}
+	cfg.version = cfg.versionToken
+	cfg.sourceRelease = sourceRelease
 
 	scopeKeys, err := resolvePathwayScopeKeys(clientKegg, cfg)
 	if err != nil {
@@ -562,11 +568,12 @@ func buildManifestFile(
 	scopeType, scopeValue := derivePathwayManifestScope(cfg, records)
 
 	return manifestFile{
-		Database:     "kegg",
-		Asset:        "pathway",
-		Version:      cfg.version,
-		VersionToken: cfg.versionToken,
-		DownloadedAt: timeDownloaded.Format(time.RFC3339),
+		Database:      "kegg",
+		Asset:         "pathway",
+		Version:       cfg.version,
+		VersionToken:  cfg.versionToken,
+		SourceRelease: cfg.sourceRelease,
+		DownloadedAt:  timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  scopeType,
 			Value: scopeValue,
@@ -714,11 +721,15 @@ func resolveKEGGVersion(clientKegg *keggClient, databaseName string) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	version, err := parseKEGGReleaseFromInfo(dataInfo)
+	sourceRelease, err := parseKEGGReleaseFromInfo(dataInfo)
 	if err != nil {
 		return "", "", err
 	}
-	return version, sanitizeKEGGVersionToken(version), nil
+	majorVersion, err := parseKEGGMajorVersion(sourceRelease)
+	if err != nil {
+		return "", "", err
+	}
+	return sourceRelease, majorVersion, nil
 }
 
 func parseKEGGReleaseFromInfo(data []byte) (string, error) {
@@ -751,7 +762,19 @@ func parseKEGGReleaseFromInfo(data []byte) (string, error) {
 	return "", fmt.Errorf("KEGG release not found in info output")
 }
 
-func sanitizeKEGGVersionToken(version string) string {
-	replacer := strings.NewReplacer("/", "_", " ", "_")
-	return replacer.Replace(version)
+func parseKEGGMajorVersion(sourceRelease string) (string, error) {
+	text := strings.TrimSpace(sourceRelease)
+	if text == "" {
+		return "", fmt.Errorf("KEGG source release is empty")
+	}
+	for i, ch := range text {
+		if ch == '+' || ch == '/' || ch == ' ' || ch == ',' {
+			text = strings.TrimSpace(text[:i])
+			break
+		}
+	}
+	if !isValidKEGGMajorVersion(text) {
+		return "", fmt.Errorf("invalid KEGG major version in source release %q", sourceRelease)
+	}
+	return text, nil
 }

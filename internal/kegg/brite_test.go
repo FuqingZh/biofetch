@@ -37,9 +37,10 @@ func TestParseBriteIDsCSVSupportsOrganismSpecificIDs(t *testing.T) {
 
 func TestBuildBriteManifest(t *testing.T) {
 	cfg := briteConfig{
-		version:      "117.0+/03-10",
-		versionToken: "117.0+_03-10",
-		catalogCode:  "br",
+		version:       "117.0",
+		versionToken:  "117.0",
+		sourceRelease: "117.0+/03-10",
+		catalogCode:   "br",
 	}
 	records := []briteRecord{
 		{
@@ -113,8 +114,9 @@ func TestValidateBriteConfigAllOrganisms(t *testing.T) {
 		dirOut:            "/tmp/kegg",
 		shouldDownloadAll: true,
 		retryMax:          1,
+		ruleExisting:      "skip",
 	}
-	if err := validateBriteConfig(cfg); err != nil {
+	if err := validateBriteConfig(&cfg); err != nil {
 		t.Fatalf("validateBriteConfig returned error: %v", err)
 	}
 }
@@ -125,10 +127,34 @@ func TestValidateBriteConfigAllOrganismsWithCatalogFails(t *testing.T) {
 		catalogCode:       "hsa",
 		shouldDownloadAll: true,
 		retryMax:          1,
+		ruleExisting:      "skip",
 	}
-	err := validateBriteConfig(cfg)
+	err := validateBriteConfig(&cfg)
 	if err == nil || !strings.Contains(err.Error(), "must not be set") {
 		t.Fatalf("validateBriteConfig expected conflict error, got: %v", err)
+	}
+}
+
+func TestFilterRootBriteIDs(t *testing.T) {
+	values := filterRootBriteIDs([]string{"hsa00001", "hsa03010", "hsa05130"}, "hsa")
+	expected := []string{"hsa00001"}
+	if !reflect.DeepEqual(values, expected) {
+		t.Fatalf("filterRootBriteIDs = %#v, want %#v", values, expected)
+	}
+}
+
+func TestValidateBriteConfigRootOnlyWithIDsFails(t *testing.T) {
+	cfg := briteConfig{
+		dirOut:                 "/tmp/kegg",
+		catalogCode:            "hsa",
+		shouldDownloadRootOnly: true,
+		briteIDsCSV:            "hsa00001",
+		retryMax:               1,
+		ruleExisting:           "skip",
+	}
+	err := validateBriteConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "should_download_root_only") {
+		t.Fatalf("validateBriteConfig expected root-only conflict error, got: %v", err)
 	}
 }
 

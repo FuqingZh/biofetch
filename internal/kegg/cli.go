@@ -17,6 +17,7 @@ type pathwayConfig struct {
 	dirOut                  string
 	version                 string
 	versionToken            string
+	sourceRelease           string
 	organismCode            string
 	organismCodes           []string
 	fileOrganismCodes       string
@@ -24,6 +25,7 @@ type pathwayConfig struct {
 	filePathwayIDs          string
 	shouldFetchReference    bool
 	shouldDownloadAll       bool
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
@@ -38,12 +40,15 @@ type briteConfig struct {
 	dirOut                  string
 	version                 string
 	versionToken            string
+	sourceRelease           string
 	catalogCode             string
 	organismCodes           []string
 	fileOrganismCodes       string
 	shouldDownloadAll       bool
 	briteIDsCSV             string
 	fileBriteIDs            string
+	shouldDownloadRootOnly  bool
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
@@ -101,7 +106,7 @@ func createPathwayFetchCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
 			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
-			if err := validatePathwayConfig(cfg); err != nil {
+			if err := validatePathwayConfig(&cfg); err != nil {
 				return err
 			}
 			if cfg.shouldDownloadAll {
@@ -122,6 +127,7 @@ func createPathwayFetchCommand() *cobra.Command {
 	flags := commandPathway.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG major version, e.g. 117.0")
 	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; repeat the flag or use commas")
 	flags.StringVar(&cfg.fileOrganismCodes, "file_organisms", "", "File with one KEGG organism code per line")
 	flags.StringVar(&cfg.pathwayIDsCSV, "pathway_ids", "", "Comma-separated pathway IDs")
@@ -138,12 +144,7 @@ func createPathwayFetchCommand() *cobra.Command {
 		false,
 		"Fetch PATHWAY assets for all KEGG organisms",
 	)
-	flags.BoolVar(
-		&cfg.shouldOverwriteExisting,
-		"should_overwrite_existing",
-		false,
-		"Re-download existing files",
-	)
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.IntVar(
@@ -196,6 +197,7 @@ func createPathwayLockCommand() *cobra.Command {
 
 func createPathwaySyncCommand() *cobra.Command {
 	cfg := keggSyncConfig{}
+	cfg.ruleExisting = "skip"
 	requestIntervalMs := 350
 
 	commandSync := &cobra.Command{
@@ -212,6 +214,10 @@ func createPathwaySyncCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+			}
+			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			return runSyncPathway(&cfg)
 		},
 	}
@@ -220,7 +226,7 @@ func createPathwaySyncCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download files even if they already exist")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
@@ -232,10 +238,11 @@ func createDefaultPathwayConfig() pathwayConfig {
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.requestInterval = 350 * time.Millisecond
+	cfg.ruleExisting = "skip"
 	return cfg
 }
 
-func validatePathwayConfig(cfg pathwayConfig) error {
+func validatePathwayConfig(cfg *pathwayConfig) error {
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("retry_max must be >= 1")
 	}
@@ -248,6 +255,13 @@ func validatePathwayConfig(cfg pathwayConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
+	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGMajorVersion(cfg.versionToken) {
+		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	}
+	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+	}
+	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 
 	countScope := 0
 	if len(cfg.organismCodes) > 0 {
@@ -324,7 +338,7 @@ func createBriteFetchCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
 			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
-			if err := validateBriteConfig(cfg); err != nil {
+			if err := validateBriteConfig(&cfg); err != nil {
 				return err
 			}
 			if cfg.shouldDownloadAll {
@@ -346,6 +360,7 @@ func createBriteFetchCommand() *cobra.Command {
 	flags := commandBrite.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG major version, e.g. 117.0")
 	flags.StringVar(&cfg.catalogCode, "catalog", "", "Reference BRITE catalog; use br or ko")
 	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; repeat the flag or use commas")
 	flags.StringVar(&cfg.fileOrganismCodes, "file_organisms", "", "File with one KEGG organism code per line")
@@ -357,12 +372,8 @@ func createBriteFetchCommand() *cobra.Command {
 	)
 	flags.StringVar(&cfg.briteIDsCSV, "brite_ids", "", "Comma-separated BRITE IDs, e.g. br08301,hsa00001")
 	flags.StringVar(&cfg.fileBriteIDs, "file_brite_ids", "", "File with one BRITE ID per line")
-	flags.BoolVar(
-		&cfg.shouldOverwriteExisting,
-		"should_overwrite_existing",
-		false,
-		"Re-download existing files",
-	)
+	flags.BoolVar(&cfg.shouldDownloadRootOnly, "should_download_root_only", false, "Download only root BRITE hierarchy (*00001) per catalog")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.IntVar(
@@ -415,6 +426,7 @@ func createBriteLockCommand() *cobra.Command {
 
 func createBriteSyncCommand() *cobra.Command {
 	cfg := keggSyncConfig{}
+	cfg.ruleExisting = "skip"
 	requestIntervalMs := 350
 
 	commandSync := &cobra.Command{
@@ -431,6 +443,10 @@ func createBriteSyncCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+			}
+			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			return runSyncBrite(&cfg)
 		},
 	}
@@ -439,7 +455,7 @@ func createBriteSyncCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download files even if they already exist")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
@@ -451,10 +467,11 @@ func createDefaultBriteConfig() briteConfig {
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.requestInterval = 350 * time.Millisecond
+	cfg.ruleExisting = "skip"
 	return cfg
 }
 
-func validateBriteConfig(cfg briteConfig) error {
+func validateBriteConfig(cfg *briteConfig) error {
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("retry_max must be >= 1")
 	}
@@ -467,6 +484,14 @@ func validateBriteConfig(cfg briteConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
+	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGMajorVersion(cfg.versionToken) {
+		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	}
+	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+	}
+	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
+
 	if cfg.shouldDownloadAll {
 		if strings.TrimSpace(cfg.catalogCode) != "" {
 			return fmt.Errorf("catalog must not be set with --should_download_all")
@@ -490,6 +515,12 @@ func validateBriteConfig(cfg briteConfig) error {
 		}
 		if countSources != 1 {
 			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --file_organisms | --should_download_all")
+		}
+	}
+
+	if cfg.shouldDownloadRootOnly {
+		if strings.TrimSpace(cfg.briteIDsCSV) != "" || strings.TrimSpace(cfg.fileBriteIDs) != "" {
+			return fmt.Errorf("brite_ids and file_brite_ids are not allowed with --should_download_root_only")
 		}
 	}
 	if cfg.fileBriteIDs != "" {
@@ -587,6 +618,31 @@ func isValidKEGGOrganismCode(text string) bool {
 	}
 	for _, char := range text {
 		if (char < 'a' || char > 'z') && (char < '0' || char > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidKEGGMajorVersion(value string) bool {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return false
+	}
+	parts := strings.Split(text, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	if parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, ch := range parts[0] {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	for _, ch := range parts[1] {
+		if ch < '0' || ch > '9' {
 			return false
 		}
 	}

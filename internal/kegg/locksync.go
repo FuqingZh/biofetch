@@ -20,6 +20,7 @@ type keggLockConfig struct {
 type keggSyncConfig struct {
 	dirOut                  string
 	versionToken            string
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	requestInterval         time.Duration
 	shouldAllowInsecureTLS  bool
@@ -37,8 +38,9 @@ func runLockPathway(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingPathwayManifest(fileManifest)
 	cfgManifest := pathwayConfig{
-		version:      firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken: firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		version:       firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:  firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease: manifestExisting.SourceRelease,
 	}
 
 	if cfg.shouldDryRun {
@@ -125,8 +127,9 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 	}
 
 	cfgManifest := pathwayConfig{
-		version:      manifestExisting.Version,
-		versionToken: manifestExisting.VersionToken,
+		version:       manifestExisting.Version,
+		versionToken:  manifestExisting.VersionToken,
+		sourceRelease: manifestExisting.SourceRelease,
 	}
 	if err := writeManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -148,8 +151,9 @@ func runLockBrite(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingBriteManifest(fileManifest)
 	cfgManifest := briteConfig{
-		version:      firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken: firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		version:       firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:  firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease: manifestExisting.SourceRelease,
 	}
 
 	if cfg.shouldDryRun {
@@ -236,8 +240,9 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 	}
 
 	cfgManifest := briteConfig{
-		version:      manifestExisting.Version,
-		versionToken: manifestExisting.VersionToken,
+		version:       manifestExisting.Version,
+		versionToken:  manifestExisting.VersionToken,
+		sourceRelease: manifestExisting.SourceRelease,
 	}
 	if err := writeBriteManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err

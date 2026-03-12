@@ -16,6 +16,7 @@ type ontologyConfig struct {
 	versionToken            string
 	assetNames              []string
 	shouldDownloadAll       bool
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
@@ -61,7 +62,7 @@ func createOntologyFetchCommand() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			if err := validateOntologyConfig(cfg); err != nil {
+			if err := validateOntologyConfig(&cfg); err != nil {
 				return err
 			}
 			if cfg.shouldDownloadAll {
@@ -89,12 +90,7 @@ func createOntologyFetchCommand() *cobra.Command {
 		"Ontology assets; repeat the flag or use commas, e.g. --assets go-basic.obo --assets go.obo",
 	)
 	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Discover and download all ontology files")
-	flags.BoolVar(
-		&cfg.shouldOverwriteExisting,
-		"should_overwrite_existing",
-		false,
-		"Re-download existing files",
-	)
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(
@@ -140,6 +136,8 @@ func createOntologySyncCommand() *cobra.Command {
 	cfg := ontologySyncConfig{}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.ruleExisting = "skip"
+	cfg.ruleExisting = "skip"
 	retryWaitSec := 3
 
 	commandSync := &cobra.Command{
@@ -159,6 +157,10 @@ func createOntologySyncCommand() *cobra.Command {
 			if cfg.retryMax < 1 {
 				return fmt.Errorf("retry_max must be >= 1")
 			}
+			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+			}
+			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			if cfg.retryWait < 0 {
 				return fmt.Errorf("retry_wait_sec must be >= 0")
 			}
@@ -170,7 +172,7 @@ func createOntologySyncCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "GO asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "GO ontology version token")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download files even if they already exist")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -185,7 +187,7 @@ func createDefaultOntologyConfig() ontologyConfig {
 	return cfg
 }
 
-func validateOntologyConfig(cfg ontologyConfig) error {
+func validateOntologyConfig(cfg *ontologyConfig) error {
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("retry_max must be >= 1")
 	}
@@ -195,6 +197,10 @@ func validateOntologyConfig(cfg ontologyConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
+	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+	}
+	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	countSources := 0
 	if len(cfg.assetNames) > 0 {
 		countSources++

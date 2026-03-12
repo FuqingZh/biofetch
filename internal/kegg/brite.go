@@ -22,14 +22,15 @@ type briteRecord struct {
 }
 
 type briteManifestFile struct {
-	Database     string                 `toml:"database"`
-	Asset        string                 `toml:"asset"`
-	Version      string                 `toml:"version"`
-	VersionToken string                 `toml:"version_token"`
-	DownloadedAt string                 `toml:"downloaded_at"`
-	Scope        manifestScope          `toml:"scope"`
-	Brites       []briteManifestEntry   `toml:"brites"`
-	Files        []briteManifestFileRef `toml:"files"`
+	Database      string                 `toml:"database"`
+	Asset         string                 `toml:"asset"`
+	Version       string                 `toml:"version"`
+	VersionToken  string                 `toml:"version_token"`
+	SourceRelease string                 `toml:"source_release"`
+	DownloadedAt  string                 `toml:"downloaded_at"`
+	Scope         manifestScope          `toml:"scope"`
+	Brites        []briteManifestEntry   `toml:"brites"`
+	Files         []briteManifestFileRef `toml:"files"`
 }
 
 type briteManifestEntry struct {
@@ -50,12 +51,17 @@ func runFetchBrite(cfg *briteConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval)
 
-	version, versionToken, err := resolveKEGGVersion(clientKegg, "brite")
+	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "brite")
 	if err != nil {
 		return err
 	}
-	cfg.version = version
-	cfg.versionToken = versionToken
+	if strings.TrimSpace(cfg.versionToken) == "" {
+		cfg.versionToken = currentMajorVersion
+	} else if cfg.versionToken != currentMajorVersion {
+		return fmt.Errorf("version %q does not match current KEGG brite major version %q", cfg.versionToken, currentMajorVersion)
+	}
+	cfg.version = cfg.versionToken
+	cfg.sourceRelease = sourceRelease
 
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
@@ -209,6 +215,12 @@ func resolveBriteIDs(
 	briteIDs, err := parseBriteIDsFromList(listContent)
 	if err != nil {
 		return nil, nil, "", err
+	}
+	if cfg.shouldDownloadRootOnly {
+		briteIDs = filterRootBriteIDs(briteIDs, cfg.catalogCode)
+		if len(briteIDs) == 0 {
+			return nil, nil, "", fmt.Errorf("no root BRITE hierarchy (*00001) found for catalog %s", cfg.catalogCode)
+		}
 	}
 	return briteIDs, listContent, listURL, nil
 }
@@ -492,11 +504,12 @@ func buildBriteManifest(
 	}
 
 	return briteManifestFile{
-		Database:     "kegg",
-		Asset:        "brite",
-		Version:      cfg.version,
-		VersionToken: cfg.versionToken,
-		DownloadedAt: timeDownloaded.Format(time.RFC3339),
+		Database:      "kegg",
+		Asset:         "brite",
+		Version:       cfg.version,
+		VersionToken:  cfg.versionToken,
+		SourceRelease: cfg.sourceRelease,
+		DownloadedAt:  timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  deriveBriteManifestScopeType(cfg, records),
 			Value: deriveBriteManifestScopeValue(cfg, records),
@@ -575,6 +588,37 @@ func deriveBriteScopeValue(cfg *briteConfig) string {
 		return cfg.scopeValue
 	}
 	return cfg.catalogCode
+}
+
+func filterRootBriteIDs(briteIDs []string, catalogCode string) []string {
+	if len(briteIDs) == 0 {
+		return briteIDs
+	}
+	textCatalog := strings.TrimSpace(strings.ToLower(catalogCode))
+	if textCatalog == "" {
+		filtered := make([]string, 0, len(briteIDs))
+		for _, briteID := range briteIDs {
+			if strings.HasSuffix(briteID, "00001") {
+				filtered = append(filtered, briteID)
+			}
+		}
+		return filtered
+	}
+
+	expected := textCatalog + "00001"
+	for _, briteID := range briteIDs {
+		if strings.EqualFold(briteID, expected) {
+			return []string{briteID}
+		}
+	}
+
+	filtered := make([]string, 0, len(briteIDs))
+	for _, briteID := range briteIDs {
+		if strings.HasSuffix(briteID, "00001") {
+			filtered = append(filtered, briteID)
+		}
+	}
+	return filtered
 }
 
 func normalizeBriteID(text string) string {

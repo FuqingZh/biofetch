@@ -19,6 +19,7 @@ type configEnzSub struct {
 	fileOrganisms           string
 	shouldDownloadAll       bool
 	ruleLicense             string
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
@@ -33,6 +34,7 @@ type configInteractions struct {
 	shouldDownloadAll       bool
 	dataset                 string
 	ruleLicense             string
+	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
@@ -69,6 +71,7 @@ func createEnzSubFetchCommand() *cobra.Command {
 	cfg := configEnzSub{}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.ruleExisting = "skip"
 	retryWaitSec := 3
 
 	command := &cobra.Command{
@@ -79,7 +82,7 @@ func createEnzSubFetchCommand() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			if err := validateEnzSubConfig(cfg); err != nil {
+			if err := validateEnzSubConfig(&cfg); err != nil {
 				return err
 			}
 			if cfg.shouldDownloadAll {
@@ -98,7 +101,7 @@ func createEnzSubFetchCommand() *cobra.Command {
 	flags.StringVar(&cfg.fileOrganisms, "file_organisms", "", "File with one organism per line")
 	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download existing files")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -125,6 +128,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	cfg.dataset = "kinaseextra"
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.ruleExisting = "skip"
 	retryWaitSec := 3
 
 	command := &cobra.Command{
@@ -135,7 +139,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			if err := validateInteractionsConfig(cfg); err != nil {
+			if err := validateInteractionsConfig(&cfg); err != nil {
 				return err
 			}
 			if cfg.shouldDownloadAll {
@@ -155,7 +159,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
 	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download existing files")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -196,6 +200,7 @@ func createEnzSubSyncCommand() *cobra.Command {
 	cfg := syncConfig{}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.ruleExisting = "skip"
 	retryWaitSec := 3
 
 	command := &cobra.Command{
@@ -212,6 +217,10 @@ func createEnzSubSyncCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+			}
+			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			return runSyncEnzSub(&cfg)
 		},
 	}
@@ -220,7 +229,7 @@ func createEnzSubSyncCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download files even if they already exist")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -263,6 +272,7 @@ func createInteractionsSyncCommand() *cobra.Command {
 	cfg.dataset = "kinaseextra"
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.ruleExisting = "skip"
 	retryWaitSec := 3
 
 	command := &cobra.Command{
@@ -279,6 +289,10 @@ func createInteractionsSyncCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+			}
+			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			if strings.TrimSpace(strings.ToLower(cfg.dataset)) != "kinaseextra" {
 				return fmt.Errorf("dataset must be kinaseextra in v1")
 			}
@@ -291,7 +305,7 @@ func createInteractionsSyncCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
-	flags.BoolVar(&cfg.shouldOverwriteExisting, "should_overwrite_existing", false, "Re-download files even if they already exist")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -299,10 +313,14 @@ func createInteractionsSyncCommand() *cobra.Command {
 	return command
 }
 
-func validateEnzSubConfig(cfg configEnzSub) error {
+func validateEnzSubConfig(cfg *configEnzSub) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
+	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+	}
+	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	countSources := 0
 	if len(cfg.organisms) > 0 {
 		countSources++
@@ -338,10 +356,14 @@ func validateEnzSubConfig(cfg configEnzSub) error {
 	return nil
 }
 
-func validateInteractionsConfig(cfg configInteractions) error {
+func validateInteractionsConfig(cfg *configInteractions) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
+	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
+		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+	}
+	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	countSources := 0
 	if len(cfg.organisms) > 0 {
 		countSources++
