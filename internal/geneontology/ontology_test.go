@@ -1,6 +1,7 @@
 package geneontology
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"bytes"
 	"reflect"
 	"strings"
@@ -92,8 +93,8 @@ func TestResolveOntologyAssetsRejectsUnknownAsset(t *testing.T) {
 
 func TestBuildOntologyManifestFile(t *testing.T) {
 	cfg := ontologyConfig{
-		version:      "2026-03-11",
-		versionToken: "2026-03-11",
+		version:       "2026-03-11",
+		VersionConfig: cliopt.VersionConfig{VersionToken: "2026-03-11"},
 	}
 	records := []ontologyRecord{
 		{

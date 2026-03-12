@@ -1,6 +1,7 @@
 package geneontology
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,24 +10,22 @@ import (
 )
 
 type ontologyLockConfig struct {
-	dirOut       string
-	versionToken string
-	shouldDryRun bool
+	cliopt.DirOutConfig
+	cliopt.VersionConfig
+	cliopt.DryRunConfig
 }
 
 type ontologySyncConfig struct {
-	dirOut                  string
-	versionToken            string
-	ruleExisting            string
-	shouldOverwriteExisting bool
-	retryMax                int
-	retryWait               time.Duration
-	shouldAllowInsecureTLS  bool
-	shouldDryRun            bool
+	cliopt.DirOutConfig
+	cliopt.VersionConfig
+	cliopt.ExistingRuleConfig
+	cliopt.RetryConfig
+	cliopt.InsecureTLSConfig
+	cliopt.DryRunConfig
 }
 
 func runLockOntology(cfg *ontologyLockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "ontology", cfg.versionToken)
+	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	records, err := scanOntologyRecords(dirVersion)
@@ -34,14 +33,17 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 		return err
 	}
 
-	if cfg.shouldDryRun {
+	if cfg.ShouldDryRun {
 		logf("dry-run lock version dir: %s", dirVersion)
 		logf("dry-run manifest: %s", fileManifest)
 		logf("dry-run files=%d", len(records))
 		return nil
 	}
 
-	cfgManifest := ontologyConfig{version: cfg.versionToken, versionToken: cfg.versionToken}
+	cfgManifest := ontologyConfig{
+		version:       cfg.VersionToken,
+		VersionConfig: cliopt.VersionConfig{VersionToken: cfg.VersionToken},
+	}
 	if err := writeManifest(fileManifest, &cfgManifest, records, time.Now()); err != nil {
 		return err
 	}
@@ -51,7 +53,7 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 }
 
 func runSyncOntology(cfg *ontologySyncConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "ontology", cfg.versionToken)
+	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	recordsManifest, err := readExistingOntologyRecords(fileManifest)
@@ -62,11 +64,11 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
 	}
 
-	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	clientHTTP := createHTTPClient(cfg.ShouldAllowInsecureTLS)
 	recordsCurrent := make([]ontologyRecord, 0, len(recordsManifest))
 	for _, record := range recordsManifest {
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
-		if cfg.shouldDryRun {
+		if cfg.ShouldDryRun {
 			logf("[dry-run] sync %s -> %s", record.URL, filePath)
 			continue
 		}
@@ -75,7 +77,7 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 			return fmt.Errorf("create sync dir: %w", err)
 		}
 
-		shouldDownload := cfg.shouldOverwriteExisting
+		shouldDownload := cfg.ShouldOverwriteExisting
 		if !shouldDownload {
 			recordCurrent, ok, err := inspectExistingAsset(filePath, record.PathRel, ontologyAsset{name: record.Asset, url: record.URL})
 			if err != nil {
@@ -90,7 +92,7 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 
 		if shouldDownload {
 			logf("sync downloading %s", filepath.Base(filePath))
-			if err := downloadFileWithRetry(clientHTTP, record.URL, filePath, cfg.retryMax, cfg.retryWait); err != nil {
+			if err := downloadFileWithRetry(clientHTTP, record.URL, filePath, cfg.RetryMax, cfg.RetryWait); err != nil {
 				return err
 			}
 		}
@@ -102,7 +104,7 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 		recordsCurrent = append(recordsCurrent, recordCurrent)
 	}
 
-	if cfg.shouldDryRun {
+	if cfg.ShouldDryRun {
 		logf("dry-run sync done (files=%d)", len(recordsManifest))
 		return nil
 	}
@@ -111,7 +113,10 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 	if err != nil {
 		return err
 	}
-	cfgManifest := ontologyConfig{version: cfg.versionToken, versionToken: cfg.versionToken}
+	cfgManifest := ontologyConfig{
+		version:       cfg.VersionToken,
+		VersionConfig: cliopt.VersionConfig{VersionToken: cfg.VersionToken},
+	}
 	if err := writeManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
 	}

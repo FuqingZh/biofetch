@@ -54,7 +54,7 @@ const ontologyIndexURL = ontologyBaseURL + "index.html"
 const ontologyVersionAssetName = "go-basic.obo"
 
 func runFetchOntology(cfg *ontologyConfig) error {
-	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	clientHTTP := createHTTPClient(cfg.ShouldAllowInsecureTLS)
 	assetsAvailable, err := discoverOntologyAssets(clientHTTP)
 	if err != nil {
 		return err
@@ -68,14 +68,14 @@ func runFetchOntology(cfg *ontologyConfig) error {
 		return err
 	}
 	cfg.version = version
-	cfg.versionToken = versionToken
+	cfg.VersionToken = versionToken
 
-	dirVersion := filepath.Join(cfg.dirOut, "ontology", cfg.versionToken)
+	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	dirRaw := filepath.Join(dirVersion, "raw")
 	dirTidy := filepath.Join(dirVersion, "tidy")
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
-	if cfg.shouldDryRun {
+	if cfg.ShouldDryRun {
 		logf("[dry-run] version dir: %s", dirVersion)
 		logf("[dry-run] manifest: %s", fileManifest)
 	} else {
@@ -93,7 +93,7 @@ func runFetchOntology(cfg *ontologyConfig) error {
 		fileOut := filepath.Join(dirRaw, asset.name)
 		pathRel := filepath.ToSlash(filepath.Join("raw", asset.name))
 
-		if cfg.shouldDryRun {
+		if cfg.ShouldDryRun {
 			logf("[dry-run] %s -> %s", asset.url, fileOut)
 			continue
 		}
@@ -105,7 +105,7 @@ func runFetchOntology(cfg *ontologyConfig) error {
 		records = append(records, record)
 	}
 
-	if cfg.shouldDryRun {
+	if cfg.ShouldDryRun {
 		logf("[dry-run] done (assets=%d)", len(assets))
 		return nil
 	}
@@ -301,7 +301,7 @@ func fetchOntologyAsset(
 	fileOut string,
 	pathRel string,
 ) (ontologyRecord, error) {
-	if !cfg.shouldOverwriteExisting {
+	if !cfg.ShouldOverwriteExisting {
 		recordExisting, ok, err := inspectExistingAsset(fileOut, pathRel, asset)
 		if err != nil {
 			return ontologyRecord{}, err
@@ -313,7 +313,7 @@ func fetchOntologyAsset(
 	}
 
 	logf("downloading %s", asset.name)
-	if err := downloadFileWithRetry(clientHTTP, asset.url, fileOut, cfg.retryMax, cfg.retryWait); err != nil {
+	if err := downloadFileWithRetry(clientHTTP, asset.url, fileOut, cfg.RetryMax, cfg.RetryWait); err != nil {
 		return ontologyRecord{}, err
 	}
 	return buildOntologyRecord(fileOut, pathRel, asset)
@@ -490,7 +490,7 @@ func buildOntologyManifestFile(
 		Database:     "go",
 		Asset:        "ontology",
 		Version:      cfg.version,
-		VersionToken: cfg.versionToken,
+		VersionToken: cfg.VersionToken,
 		DownloadedAt: timeDownloaded.Format(time.RFC3339),
 		Files:        files,
 	}

@@ -1,6 +1,7 @@
 package geneontology
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/confirm"
 	"fmt"
 	"io"
@@ -11,17 +12,15 @@ import (
 )
 
 type ontologyConfig struct {
-	dirOut                  string
-	version                 string
-	versionToken            string
-	assetNames              []string
-	shouldDownloadAll       bool
-	ruleExisting            string
-	shouldOverwriteExisting bool
-	retryMax                int
-	retryWait               time.Duration
-	shouldAllowInsecureTLS  bool
-	shouldDryRun            bool
+	cliopt.DirOutConfig
+	cliopt.VersionConfig
+	cliopt.ExistingRuleConfig
+	cliopt.RetryConfig
+	cliopt.InsecureTLSConfig
+	cliopt.DryRunConfig
+	version           string
+	assetNames        []string
+	shouldDownloadAll bool
 }
 
 func NewCommand() *cobra.Command {
@@ -61,7 +60,7 @@ func createOntologyFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
 			if err := validateOntologyConfig(&cfg); err != nil {
 				return err
 			}
@@ -82,7 +81,7 @@ func createOntologyFetchCommand() *cobra.Command {
 
 	flags := commandOntology.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "GO asset root directory")
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	flags.StringSliceVar(
 		&cfg.assetNames,
 		"assets",
@@ -90,16 +89,10 @@ func createOntologyFetchCommand() *cobra.Command {
 		"Ontology assets; repeat the flag or use commas, e.g. --assets go-basic.obo --assets go.obo",
 	)
 	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Discover and download all ontology files")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.BoolVar(
-		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
-		false,
-		"Disable TLS certificate verification",
-	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
+	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 
 	return commandOntology
 }
@@ -114,11 +107,11 @@ func createOntologyLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
+				return err
 			}
-			if strings.TrimSpace(cfg.versionToken) == "" {
-				return fmt.Errorf("version is required")
+			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
+				return err
 			}
 			return runLockOntology(&cfg)
 		},
@@ -126,18 +119,17 @@ func createOntologyLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "GO asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "GO ontology version token")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO ontology version token")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	return commandLock
 }
 
 func createOntologySyncCommand() *cobra.Command {
 	cfg := ontologySyncConfig{}
-	cfg.retryMax = 5
-	cfg.retryWait = 3 * time.Second
-	cfg.ruleExisting = "skip"
-	cfg.ruleExisting = "skip"
+	cfg.RetryMax = 5
+	cfg.RetryWait = 3 * time.Second
+	cfg.RuleExisting = "skip"
 	retryWaitSec := 3
 
 	commandSync := &cobra.Command{
@@ -147,22 +139,18 @@ func createOntologySyncCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
+			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
+				return err
 			}
-			if strings.TrimSpace(cfg.versionToken) == "" {
-				return fmt.Errorf("version is required")
+			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
+				return err
 			}
-			if cfg.retryMax < 1 {
-				return fmt.Errorf("retry_max must be >= 1")
+			if err := cliopt.ValidateRetryConfig(&cfg.RetryConfig); err != nil {
+				return err
 			}
-			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
-			}
-			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
-			if cfg.retryWait < 0 {
-				return fmt.Errorf("retry_wait_sec must be >= 0")
+			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
+				return err
 			}
 			return runSyncOntology(&cfg)
 		},
@@ -170,37 +158,32 @@ func createOntologySyncCommand() *cobra.Command {
 
 	flags := commandSync.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "GO asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "GO ontology version token")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO ontology version token")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
+	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	return commandSync
 }
 
 func createDefaultOntologyConfig() ontologyConfig {
 	cfg := ontologyConfig{}
-	cfg.retryMax = 5
-	cfg.retryWait = 3 * time.Second
+	cfg.RetryMax = 5
+	cfg.RetryWait = 3 * time.Second
 	return cfg
 }
 
 func validateOntologyConfig(cfg *ontologyConfig) error {
-	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+	if err := cliopt.ValidateRetryConfig(&cfg.RetryConfig); err != nil {
+		return err
 	}
-	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+	if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
+		return err
 	}
-	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+	if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
+		return err
 	}
-	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
-	}
-	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	countSources := 0
 	if len(cfg.assetNames) > 0 {
 		countSources++
