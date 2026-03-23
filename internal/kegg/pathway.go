@@ -7,17 +7,24 @@ import (
 	"biofetch/internal/shared/tomlx"
 	"bufio"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
-const baseURL = "https://rest.kegg.jp"
+const (
+	baseURL              = "https://rest.kegg.jp"
+	defaultKEGGRetryMax  = 5
+	defaultKEGGRetryWait = 3 * time.Second
+)
 
 type pathwayRecord struct {
 	PathwayID string
@@ -61,7 +68,7 @@ type manifestAsset struct {
 
 func runFetchPathway(cfg *pathwayConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval)
+	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
 	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "pathway")
 	if err != nil {
@@ -709,17 +716,57 @@ func derivePathwayScopeFromPath(pathRel string) string {
 type keggClient struct {
 	clientHTTP      *http.Client
 	requestInterval time.Duration
+	retryMax        int
+	retryWait       time.Duration
 	timeLastRequest time.Time
 }
 
-func createKEGGClient(clientHTTP *http.Client, requestInterval time.Duration) *keggClient {
+func createKEGGClient(
+	clientHTTP *http.Client,
+	requestInterval time.Duration,
+	retryMax int,
+	retryWait time.Duration,
+) *keggClient {
+	if retryMax < 1 {
+		retryMax = 1
+	}
+	if retryWait < 0 {
+		retryWait = 0
+	}
 	return &keggClient{
 		clientHTTP:      clientHTTP,
 		requestInterval: requestInterval,
+		retryMax:        retryMax,
+		retryWait:       retryWait,
 	}
 }
 
 func (client *keggClient) download(urlFile string) ([]byte, error) {
+	for attempt := 1; attempt <= client.retryMax; attempt++ {
+		data, shouldRetry, err := client.downloadOnce(urlFile)
+		if err == nil {
+			return data, nil
+		}
+		if !shouldRetry || attempt == client.retryMax {
+			return nil, err
+		}
+		if client.retryWait > 0 {
+			logf(
+				"request failed (%d/%d), retrying in %s: %v",
+				attempt,
+				client.retryMax,
+				client.retryWait,
+				err,
+			)
+			time.Sleep(client.retryWait)
+			continue
+		}
+		logf("request failed (%d/%d), retrying: %v", attempt, client.retryMax, err)
+	}
+	return nil, fmt.Errorf("request %s: exhausted retries", urlFile)
+}
+
+func (client *keggClient) downloadOnce(urlFile string) ([]byte, bool, error) {
 	if client.requestInterval > 0 && !client.timeLastRequest.IsZero() {
 		wait := client.requestInterval - time.Since(client.timeLastRequest)
 		if wait > 0 {
@@ -730,23 +777,57 @@ func (client *keggClient) download(urlFile string) ([]byte, error) {
 	response, err := client.clientHTTP.Get(urlFile)
 	client.timeLastRequest = time.Now()
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", urlFile, err)
+		return nil, isRetryableKEGGError(err), fmt.Errorf("request %s: %w", urlFile, err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("request %s: unexpected status %s", urlFile, response.Status)
+		return nil, isRetryableKEGGStatus(response.StatusCode), fmt.Errorf("request %s: unexpected status %s", urlFile, response.Status)
 	}
 
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", urlFile, err)
+		return nil, isRetryableKEGGError(err), fmt.Errorf("read %s: %w", urlFile, err)
 	}
-	return data, nil
+	return data, false, nil
 }
 
 func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
 	return httpx.NewClient(shouldAllowInsecureTLS)
+}
+
+func isRetryableKEGGStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	}
+	return statusCode >= 500
+}
+
+func isRetryableKEGGError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	type temporary interface {
+		Temporary() bool
+	}
+	var errTemporary temporary
+	if errors.As(err, &errTemporary) && errTemporary.Temporary() {
+		return true
+	}
+
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 func calculateSHA256ForFile(filePath string) (string, error) {

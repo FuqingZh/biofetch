@@ -66,7 +66,7 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 	}
 
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval)
+	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
 	recordsCurrent := make([]pathwayRecord, 0, len(manifestExisting.Files))
 
 	for _, item := range manifestExisting.Files {
@@ -179,7 +179,7 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 	}
 
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval)
+	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
 	recordsCurrent := make([]briteRecord, 0, len(manifestExisting.Files))
 
 	for _, item := range manifestExisting.Files {

@@ -238,8 +238,8 @@ func createPathwaySyncCommand() *cobra.Command {
 
 func createDefaultPathwayConfig() pathwayConfig {
 	cfg := pathwayConfig{}
-	cfg.retryMax = 5
-	cfg.retryWait = 3 * time.Second
+	cfg.retryMax = defaultKEGGRetryMax
+	cfg.retryWait = defaultKEGGRetryWait
 	cfg.requestInterval = 350 * time.Millisecond
 	cfg.ruleExisting = "skip"
 	cfg.assetNames = []string{"list", "entry", "kgml"}
@@ -495,8 +495,8 @@ func createBriteSyncCommand() *cobra.Command {
 
 func createDefaultBriteConfig() briteConfig {
 	cfg := briteConfig{}
-	cfg.retryMax = 5
-	cfg.retryWait = 3 * time.Second
+	cfg.retryMax = defaultKEGGRetryMax
+	cfg.retryWait = defaultKEGGRetryWait
 	cfg.requestInterval = 350 * time.Millisecond
 	cfg.ruleExisting = "skip"
 	return cfg

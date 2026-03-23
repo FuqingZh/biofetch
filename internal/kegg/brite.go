@@ -49,7 +49,7 @@ type briteManifestFileRef struct {
 
 func runFetchBrite(cfg *briteConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval)
+	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
 	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "brite")
 	if err != nil {
