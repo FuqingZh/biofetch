@@ -18,6 +18,7 @@ type pathwayConfig struct {
 	version                 string
 	versionToken            string
 	sourceRelease           string
+	assetNames              []string
 	organismCode            string
 	organismCodes           []string
 	fileOrganismCodes       string
@@ -122,12 +123,14 @@ func createPathwayFetchCommand() *cobra.Command {
 		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --should_dry_run",
 		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --organisms tca",
 		"biofetch kegg pathway fetch --dir_out /data/kegg --should_fetch_reference --pathway_ids map00010,map00020",
+		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --assets entry --assets kgml --assets image",
 	}, "\n")
 
 	flags := commandPathway.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG major version, e.g. 117.0")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: list|entry|kgml|conf|image; repeat the flag or use commas")
 	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; repeat the flag or use commas")
 	flags.StringVar(&cfg.fileOrganismCodes, "file_organisms", "", "File with one KEGG organism code per line")
 	flags.StringVar(&cfg.pathwayIDsCSV, "pathway_ids", "", "Comma-separated pathway IDs")
@@ -239,6 +242,7 @@ func createDefaultPathwayConfig() pathwayConfig {
 	cfg.retryWait = 3 * time.Second
 	cfg.requestInterval = 350 * time.Millisecond
 	cfg.ruleExisting = "skip"
+	cfg.assetNames = []string{"list", "entry", "kgml"}
 	return cfg
 }
 
@@ -262,6 +266,11 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 	}
 	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
+	assetNames, err := parsePathwayAssetNames(cfg.assetNames)
+	if err != nil {
+		return err
+	}
+	cfg.assetNames = assetNames
 
 	countScope := 0
 	if len(cfg.organismCodes) > 0 {
@@ -308,6 +317,28 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	}
 
 	return nil
+}
+
+func parsePathwayAssetNames(valuesInput []string) ([]string, error) {
+	setAssets := make(map[string]struct{})
+	for _, valueInput := range valuesInput {
+		for _, token := range strings.Split(valueInput, ",") {
+			assetName := strings.ToLower(strings.TrimSpace(token))
+			if assetName == "" {
+				continue
+			}
+			switch assetName {
+			case "list", "entry", "kgml", "conf", "image":
+				setAssets[assetName] = struct{}{}
+			default:
+				return nil, fmt.Errorf("invalid PATHWAY asset: %s", token)
+			}
+		}
+	}
+	if len(setAssets) == 0 {
+		return nil, fmt.Errorf("assets must not be empty")
+	}
+	return sets.SortedKeys(setAssets), nil
 }
 
 func createBriteCommand() *cobra.Command {

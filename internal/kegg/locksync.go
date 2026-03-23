@@ -310,6 +310,12 @@ func buildScannedPathwayRecord(filePath string, pathRel string, scopeKey string,
 	case strings.HasSuffix(fileName, ".kgml"):
 		pathwayID := strings.TrimSuffix(fileName, ".kgml")
 		return buildPathwayRecord(filePath, pathRel, pathwayID, "pathway.kgml", baseURL+"/get/"+pathwayID+"/kgml")
+	case strings.HasSuffix(fileName, ".conf"):
+		pathwayID := strings.TrimSuffix(fileName, ".conf")
+		return buildPathwayRecord(filePath, pathRel, pathwayID, "pathway.conf", baseURL+"/get/"+pathwayID+"/conf")
+	case strings.HasSuffix(fileName, ".png"):
+		pathwayID := strings.TrimSuffix(fileName, ".png")
+		return buildPathwayRecord(filePath, pathRel, pathwayID, "pathway.image", baseURL+"/get/"+pathwayID+"/image")
 	default:
 		return pathwayRecord{}, fmt.Errorf("unexpected KEGG pathway filename: %s", fileName)
 	}

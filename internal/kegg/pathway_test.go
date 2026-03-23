@@ -22,6 +22,34 @@ func TestParsePathwayIDsFromList(t *testing.T) {
 	}
 }
 
+func TestParsePathwayAssetNames(t *testing.T) {
+	values, err := parsePathwayAssetNames([]string{"entry,kgml", "image", "entry"})
+	if err != nil {
+		t.Fatalf("parsePathwayAssetNames returned error: %v", err)
+	}
+
+	expected := []string{"entry", "image", "kgml"}
+	if !reflect.DeepEqual(values, expected) {
+		t.Fatalf("parsePathwayAssetNames = %#v, want %#v", values, expected)
+	}
+}
+
+func TestDerivePathwayAssetSpecs(t *testing.T) {
+	specs := derivePathwayAssetSpecs("hsa", "hsa00010", []string{"entry", "conf", "image"}, "/tmp/raw/hsa")
+	if len(specs) != 3 {
+		t.Fatalf("derivePathwayAssetSpecs len = %d, want 3", len(specs))
+	}
+	if specs[0].assetName != "pathway.entry" || specs[0].url != "https://rest.kegg.jp/get/hsa00010" {
+		t.Fatalf("entry spec = %#v", specs[0])
+	}
+	if specs[1].assetName != "pathway.conf" || specs[1].pathRel != "raw/hsa/hsa00010.conf" {
+		t.Fatalf("conf spec = %#v", specs[1])
+	}
+	if specs[2].assetName != "pathway.image" || specs[2].fileOut != "/tmp/raw/hsa/hsa00010.png" {
+		t.Fatalf("image spec = %#v", specs[2])
+	}
+}
+
 func TestBuildManifestFile(t *testing.T) {
 	cfg := pathwayConfig{
 		version:              "117.0",

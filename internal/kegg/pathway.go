@@ -238,49 +238,122 @@ func fetchPathwayScope(
 		return nil, 0, err
 	}
 
-	records := make([]pathwayRecord, 0, 1+2*len(pathwayIDs))
+	records := make([]pathwayRecord, 0, estimatePathwayRecordCapacity(cfg.assetNames, len(pathwayIDs)))
 	fileList := filepath.Join(dirRawScope, "pathway.list.tsv")
 	pathRelList := filepath.ToSlash(filepath.Join("raw", scopeKey, "pathway.list.tsv"))
 
-	if cfg.shouldDryRun {
-		logf("[dry-run] %s -> %s", listURL, fileList)
-	} else {
-		recordList, err := writeDownloadedFile(fileList, pathRelList, "", "pathway.list", listURL, listContent)
-		if err != nil {
-			return nil, 0, err
+	if shouldFetchPathwayAsset(cfg.assetNames, "list") {
+		if cfg.shouldDryRun {
+			logf("[dry-run] %s -> %s", listURL, fileList)
+		} else {
+			recordList, err := writeDownloadedFile(fileList, pathRelList, "", "pathway.list", listURL, listContent)
+			if err != nil {
+				return nil, 0, err
+			}
+			records = append(records, recordList)
 		}
-		records = append(records, recordList)
 	}
 
 	for _, pathwayID := range pathwayIDs {
-		fileEntry := filepath.Join(dirRawScope, pathwayID+".txt")
-		pathRelEntry := filepath.ToSlash(filepath.Join("raw", scopeKey, pathwayID+".txt"))
-		urlEntry := baseURL + "/get/" + pathwayID
+		for _, assetSpec := range derivePathwayAssetSpecs(scopeKey, pathwayID, cfg.assetNames, dirRawScope) {
+			if cfg.shouldDryRun {
+				logf("[dry-run] %s -> %s", assetSpec.url, assetSpec.fileOut)
+				continue
+			}
 
-		fileKGML := filepath.Join(dirRawScope, pathwayID+".kgml")
-		pathRelKGML := filepath.ToSlash(filepath.Join("raw", scopeKey, pathwayID+".kgml"))
-		urlKGML := baseURL + "/get/" + pathwayID + "/kgml"
-
-		if cfg.shouldDryRun {
-			logf("[dry-run] %s -> %s", urlEntry, fileEntry)
-			logf("[dry-run] %s -> %s", urlKGML, fileKGML)
-			continue
+			recordAsset, err := fetchPathwayAsset(
+				clientKegg,
+				cfg.shouldOverwriteExisting,
+				assetSpec.fileOut,
+				assetSpec.pathRel,
+				pathwayID,
+				assetSpec.assetName,
+				assetSpec.url,
+			)
+			if err != nil {
+				return nil, 0, err
+			}
+			records = append(records, recordAsset)
 		}
-
-		recordEntry, err := fetchPathwayAsset(clientKegg, cfg.shouldOverwriteExisting, fileEntry, pathRelEntry, pathwayID, "pathway.entry", urlEntry)
-		if err != nil {
-			return nil, 0, err
-		}
-		records = append(records, recordEntry)
-
-		recordKGML, err := fetchPathwayAsset(clientKegg, cfg.shouldOverwriteExisting, fileKGML, pathRelKGML, pathwayID, "pathway.kgml", urlKGML)
-		if err != nil {
-			return nil, 0, err
-		}
-		records = append(records, recordKGML)
 	}
 
 	return records, len(pathwayIDs), nil
+}
+
+type pathwayAssetSpec struct {
+	assetName string
+	fileOut   string
+	pathRel   string
+	url       string
+}
+
+func shouldFetchPathwayAsset(assetNames []string, assetName string) bool {
+	for _, value := range assetNames {
+		if value == assetName {
+			return true
+		}
+	}
+	return false
+}
+
+func estimatePathwayRecordCapacity(assetNames []string, numPathways int) int {
+	countPerPathway := 0
+	for _, assetName := range assetNames {
+		if assetName == "list" {
+			continue
+		}
+		countPerPathway++
+	}
+	capacity := countPerPathway * numPathways
+	if shouldFetchPathwayAsset(assetNames, "list") {
+		capacity++
+	}
+	return capacity
+}
+
+func derivePathwayAssetSpecs(
+	scopeKey string,
+	pathwayID string,
+	assetNames []string,
+	dirRawScope string,
+) []pathwayAssetSpec {
+	pathRoot := filepath.ToSlash(filepath.Join("raw", scopeKey))
+	specs := make([]pathwayAssetSpec, 0, len(assetNames))
+
+	for _, assetName := range assetNames {
+		switch assetName {
+		case "entry":
+			specs = append(specs, pathwayAssetSpec{
+				assetName: "pathway.entry",
+				fileOut:   filepath.Join(dirRawScope, pathwayID+".txt"),
+				pathRel:   filepath.ToSlash(filepath.Join(pathRoot, pathwayID+".txt")),
+				url:       baseURL + "/get/" + pathwayID,
+			})
+		case "kgml":
+			specs = append(specs, pathwayAssetSpec{
+				assetName: "pathway.kgml",
+				fileOut:   filepath.Join(dirRawScope, pathwayID+".kgml"),
+				pathRel:   filepath.ToSlash(filepath.Join(pathRoot, pathwayID+".kgml")),
+				url:       baseURL + "/get/" + pathwayID + "/kgml",
+			})
+		case "conf":
+			specs = append(specs, pathwayAssetSpec{
+				assetName: "pathway.conf",
+				fileOut:   filepath.Join(dirRawScope, pathwayID+".conf"),
+				pathRel:   filepath.ToSlash(filepath.Join(pathRoot, pathwayID+".conf")),
+				url:       baseURL + "/get/" + pathwayID + "/conf",
+			})
+		case "image":
+			specs = append(specs, pathwayAssetSpec{
+				assetName: "pathway.image",
+				fileOut:   filepath.Join(dirRawScope, pathwayID+".png"),
+				pathRel:   filepath.ToSlash(filepath.Join(pathRoot, pathwayID+".png")),
+				url:       baseURL + "/get/" + pathwayID + "/image",
+			})
+		}
+	}
+
+	return specs
 }
 
 func parsePathwayIDsCSV(textCSV string) ([]string, error) {
