@@ -74,9 +74,24 @@ func NewCommand() *cobra.Command {
 		SilenceErrors: true,
 	}
 
+	commandRoot.AddCommand(createCatalogCommand())
 	commandRoot.AddCommand(createPathwayCommand())
 	commandRoot.AddCommand(createBriteCommand())
 	return commandRoot
+}
+
+func createCatalogCommand() *cobra.Command {
+	commandCatalog := &cobra.Command{
+		Use:           "catalog",
+		Short:         "Manage KEGG shared catalog assets",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	commandCatalog.AddCommand(createCatalogFetchCommand())
+	commandCatalog.AddCommand(createCatalogLockCommand())
+	commandCatalog.AddCommand(createCatalogSyncCommand())
+	return commandCatalog
 }
 
 func createPathwayCommand() *cobra.Command {
