@@ -33,10 +33,25 @@ func NewCommand() *cobra.Command {
 		SilenceErrors: true,
 	}
 
+	commandString.AddCommand(createCatalogCommand())
 	commandString.AddCommand(createFetchCommand())
 	commandString.AddCommand(createLockCommand())
 	commandString.AddCommand(createSyncCommand())
 	return commandString
+}
+
+func createCatalogCommand() *cobra.Command {
+	commandCatalog := &cobra.Command{
+		Use:           "catalog",
+		Short:         "Manage STRING shared catalog assets",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	commandCatalog.AddCommand(createCatalogFetchCommand())
+	commandCatalog.AddCommand(createCatalogLockCommand())
+	commandCatalog.AddCommand(createCatalogSyncCommand())
+	return commandCatalog
 }
 
 func createFetchCommand() *cobra.Command {
