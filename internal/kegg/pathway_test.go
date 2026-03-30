@@ -119,3 +119,12 @@ func TestParseKEGGMajorVersion(t *testing.T) {
 		t.Fatalf("parseKEGGMajorVersion = %q, want %q", value, "117.0")
 	}
 }
+
+func TestDerivePathwayListURLReferenceAndOrganism(t *testing.T) {
+	if value := derivePathwayListURL(&pathwayConfig{shouldFetchReference: true}); value != "https://rest.kegg.jp/list/pathway" {
+		t.Fatalf("derivePathwayListURL reference = %q", value)
+	}
+	if value := derivePathwayListURL(&pathwayConfig{organismCode: "hsa"}); value != "https://rest.kegg.jp/list/pathway/hsa" {
+		t.Fatalf("derivePathwayListURL organism = %q", value)
+	}
+}
