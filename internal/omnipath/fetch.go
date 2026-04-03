@@ -58,13 +58,15 @@ type manifestScope struct {
 func runFetchEnzSub(cfg *configEnzSub) error {
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
 
-	taxIDs, scopeType, scopeValue, err := resolveOmniPathTaxIDsEnzSub(client, cfg)
+	taxIDs, scopeType, scopeValue, err := resolveFetchTaxIDsEnzSub(client, cfg)
 	if err != nil {
 		return err
 	}
 	return runFetchCommon(fetchInput{
 		asset:                   "enz_sub",
 		dataset:                 "",
+		versionToken:            cfg.versionToken,
+		ruleLicense:             cfg.ruleLicense,
 		taxIDs:                  taxIDs,
 		urlQuery:                queryEnzSubURL,
 		dirOut:                  cfg.dirOut,
@@ -90,13 +92,15 @@ func runFetchEnzSub(cfg *configEnzSub) error {
 func runFetchInteractions(cfg *configInteractions) error {
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
 
-	taxIDs, scopeType, scopeValue, err := resolveOmniPathTaxIDsInteractions(client, cfg)
+	taxIDs, scopeType, scopeValue, err := resolveFetchTaxIDsInteractions(client, cfg)
 	if err != nil {
 		return err
 	}
 	return runFetchCommon(fetchInput{
 		asset:                   "interactions",
 		dataset:                 "kinaseextra",
+		versionToken:            cfg.versionToken,
+		ruleLicense:             cfg.ruleLicense,
 		taxIDs:                  taxIDs,
 		urlQuery:                queryInteractionsURL,
 		dirOut:                  cfg.dirOut,
@@ -123,6 +127,8 @@ func runFetchInteractions(cfg *configInteractions) error {
 type fetchInput struct {
 	asset                   string
 	dataset                 string
+	versionToken            string
+	ruleLicense             string
 	taxIDs                  []string
 	urlQuery                string
 	dirOut                  string
@@ -138,6 +144,9 @@ type fetchInput struct {
 
 func runFetchCommon(in fetchInput) error {
 	client := createClient(in.shouldAllowInsecureTLS, in.retryMax, in.retryWait)
+	if strings.TrimSpace(in.versionToken) != "" {
+		return runFetchArchive(client, in)
+	}
 
 	version, versionToken, err := resolveVersion(client, in.asset)
 	if err != nil {
@@ -215,6 +224,76 @@ func runFetchCommon(in fetchInput) error {
 		Scope:        manifestScope{Type: scopeType, Value: scopeValue},
 		RequestURL:   deriveOmniPathRequestURL(records),
 		QueryURL:     deriveOmniPathQueryURL(records, in.urlQuery),
+		Files:        records,
+	}
+	if err := writeManifest(fileManifest, manifest); err != nil {
+		return err
+	}
+
+	logf("done (files=%d)", len(records))
+	logf("manifest written: %s", fileManifest)
+	return nil
+}
+
+func runFetchArchive(client *omnipathClient, in fetchInput) error {
+	if strings.TrimSpace(in.ruleLicense) != "" && strings.ToLower(strings.TrimSpace(in.ruleLicense)) != "academic" {
+		return fmt.Errorf(
+			"historical OmniPath archive fetch supports only default/academic license mode; see %s",
+			archiveURL,
+		)
+	}
+	snapshot, err := resolveArchiveSnapshot(client, in.asset, in.versionToken)
+	if err != nil {
+		return err
+	}
+
+	dirVersion := deriveVersionDir(in)
+	dirVersion = filepath.Join(in.dirOut, dirVersion, snapshot.versionToken)
+	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+
+	if in.shouldDryRun {
+		logf("[dry-run] archive url: %s", snapshot.urlFile)
+		logf("[dry-run] version dir: %s", dirVersion)
+		if len(in.taxIDs) == 0 {
+			logf("[dry-run] organisms: all organisms in archive")
+		} else {
+			for _, taxID := range in.taxIDs {
+				logf("[dry-run] organism: %s", taxID)
+			}
+		}
+		return nil
+	}
+
+	records, err := materializeArchiveSnapshot(client, archiveMaterializeInput{
+		asset:        in.asset,
+		dataset:      in.dataset,
+		version:      snapshot.version,
+		versionToken: snapshot.versionToken,
+		taxIDs:       append([]string(nil), in.taxIDs...),
+		urlArchive:   snapshot.urlFile,
+		dirVersion:   dirVersion,
+		ruleLicense:  in.ruleLicense,
+	})
+	if err != nil {
+		return err
+	}
+
+	records, err = buildCompleteOmniPathRecords(fileManifest, dirVersion, records)
+	if err != nil {
+		return err
+	}
+
+	scopeType, scopeValue := deriveOmniPathManifestScope(records)
+	manifest := manifestFile{
+		Database:     "omnipath",
+		Asset:        in.asset,
+		Dataset:      in.dataset,
+		Version:      snapshot.version,
+		VersionToken: snapshot.versionToken,
+		DownloadedAt: time.Now().Format(time.RFC3339),
+		Scope:        manifestScope{Type: scopeType, Value: scopeValue},
+		RequestURL:   snapshot.urlFile,
+		QueryURL:     snapshot.urlFile,
 		Files:        records,
 	}
 	if err := writeManifest(fileManifest, manifest); err != nil {
@@ -328,6 +407,41 @@ func deriveOmniPathQueryURL(records []recordFile, defaultURL string) string {
 	return defaultURL
 }
 
+func resolveFetchTaxIDsEnzSub(client *omnipathClient, cfg *configEnzSub) ([]string, string, string, error) {
+	if strings.TrimSpace(cfg.versionToken) != "" {
+		return resolveConfiguredTaxIDs(cfg.organisms, cfg.shouldDownloadAll)
+	}
+	return resolveOmniPathTaxIDsEnzSub(client, cfg)
+}
+
+func resolveFetchTaxIDsInteractions(client *omnipathClient, cfg *configInteractions) ([]string, string, string, error) {
+	if strings.TrimSpace(cfg.versionToken) != "" {
+		return resolveConfiguredTaxIDs(cfg.organisms, cfg.shouldDownloadAll)
+	}
+	return resolveOmniPathTaxIDsInteractions(client, cfg)
+}
+
+func resolveConfiguredTaxIDs(
+	organisms []string,
+	shouldDownloadAll bool,
+) ([]string, string, string, error) {
+	switch {
+	case shouldDownloadAll:
+		return nil, "organisms", "all", nil
+	case len(organisms) > 0:
+		taxIDs, err := parseOrganisms(organisms)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if len(taxIDs) == 1 {
+			return taxIDs, "organism", taxIDs[0], nil
+		}
+		return taxIDs, "organisms", strings.Join(taxIDs, ","), nil
+	default:
+		return nil, "", "", fmt.Errorf("no organisms configured")
+	}
+}
+
 func resolveOmniPathTaxIDsEnzSub(client *omnipathClient, cfg *configEnzSub) ([]string, string, string, error) {
 	switch {
 	case cfg.shouldDownloadAll:
@@ -338,15 +452,6 @@ func resolveOmniPathTaxIDsEnzSub(client *omnipathClient, cfg *configEnzSub) ([]s
 		return taxIDs, "organisms", "all", nil
 	case len(cfg.organisms) > 0:
 		taxIDs, err := parseOrganisms(cfg.organisms)
-		if err != nil {
-			return nil, "", "", err
-		}
-		if len(taxIDs) == 1 {
-			return taxIDs, "organism", taxIDs[0], nil
-		}
-		return taxIDs, "organisms", strings.Join(taxIDs, ","), nil
-	case strings.TrimSpace(cfg.fileOrganisms) != "":
-		taxIDs, err := readOrganismsFromFile(cfg.fileOrganisms)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -369,15 +474,6 @@ func resolveOmniPathTaxIDsInteractions(client *omnipathClient, cfg *configIntera
 		return taxIDs, "organisms", "all", nil
 	case len(cfg.organisms) > 0:
 		taxIDs, err := parseOrganisms(cfg.organisms)
-		if err != nil {
-			return nil, "", "", err
-		}
-		if len(taxIDs) == 1 {
-			return taxIDs, "organism", taxIDs[0], nil
-		}
-		return taxIDs, "organisms", strings.Join(taxIDs, ","), nil
-	case strings.TrimSpace(cfg.fileOrganisms) != "":
-		taxIDs, err := readOrganismsFromFile(cfg.fileOrganisms)
 		if err != nil {
 			return nil, "", "", err
 		}

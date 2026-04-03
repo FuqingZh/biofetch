@@ -1,6 +1,7 @@
 package omnipath
 
 import (
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
 	"os"
@@ -41,12 +42,12 @@ func runLockInteractions(cfg *lockConfig) error {
 
 func runLockCommon(cfg *lockConfig, dirVersion string, asset string) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	records, err := scanOmniPathRecords(dirVersion, asset)
+	manifestExisting, _ := readExistingManifest(fileManifest)
+	records, err := scanOmniPathRecords(dirVersion, asset, manifestExisting)
 	if err != nil {
 		return err
 	}
 
-	manifestExisting, _ := readExistingManifest(fileManifest)
 	manifest := manifestFile{
 		Database:     "omnipath",
 		Asset:        asset,
@@ -90,6 +91,9 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 	}
 	if len(manifestExisting.Files) == 0 {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
+	}
+	if strings.HasPrefix(strings.TrimSpace(manifestExisting.QueryURL), archiveURL) {
+		return runSyncArchive(cfg, dirVersion, manifestExisting, asset)
 	}
 
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
@@ -162,14 +166,104 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 	return nil
 }
 
-func scanOmniPathRecords(dirVersion string, asset string) ([]recordFile, error) {
+func runSyncArchive(cfg *syncConfig, dirVersion string, manifestExisting manifestFile, asset string) error {
+	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	recordsCurrent := make([]recordFile, 0, len(manifestExisting.Files))
+	shouldDownload := cfg.shouldOverwriteExisting
+
+	if !shouldDownload {
+		allMatch := true
+		for _, record := range manifestExisting.Files {
+			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.Path))
+			recordCurrent, ok, err := inspectExisting(filePath, record.Path, record.URL, record.Asset)
+			if err != nil {
+				return err
+			}
+			if !ok || recordCurrent.SHA256 != record.SHA256 {
+				allMatch = false
+				break
+			}
+			recordsCurrent = append(recordsCurrent, recordCurrent)
+		}
+		if allMatch {
+			recordsComplete, err := buildCompleteOmniPathRecords(fileManifest, dirVersion, recordsCurrent)
+			if err != nil {
+				return err
+			}
+			manifestExisting.DownloadedAt = time.Now().Format(time.RFC3339)
+			manifestExisting.Files = recordsComplete
+			if err := writeManifest(fileManifest, manifestExisting); err != nil {
+				return err
+			}
+			logf("sync done (files=%d)", len(recordsComplete))
+			logf("manifest written: %s", fileManifest)
+			return nil
+		}
+	}
+
+	if cfg.shouldDryRun {
+		logf("[dry-run] sync archive %s -> %s", manifestExisting.QueryURL, dirVersion)
+		logf("[dry-run] sync done (files=%d)", len(manifestExisting.Files))
+		return nil
+	}
+
+	taxIDs := deriveOmniPathTaxIDsFromRecords(manifestExisting.Files)
+	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
+	recordsArchive, err := materializeArchiveSnapshot(client, archiveMaterializeInput{
+		asset:        asset,
+		dataset:      manifestExisting.Dataset,
+		version:      firstNonEmpty(manifestExisting.Version, manifestExisting.VersionToken),
+		versionToken: manifestExisting.VersionToken,
+		taxIDs:       taxIDs,
+		urlArchive:   manifestExisting.QueryURL,
+		dirVersion:   dirVersion,
+	})
+	if err != nil {
+		return err
+	}
+
+	recordsComplete, err := buildCompleteOmniPathRecords(fileManifest, dirVersion, recordsArchive)
+	if err != nil {
+		return err
+	}
+	manifestExisting.DownloadedAt = time.Now().Format(time.RFC3339)
+	manifestExisting.Scope = func() manifestScope {
+		scopeType, scopeValue := deriveOmniPathManifestScope(recordsComplete)
+		return manifestScope{Type: scopeType, Value: scopeValue}
+	}()
+	manifestExisting.RequestURL = firstNonEmpty(manifestExisting.RequestURL, manifestExisting.QueryURL)
+	manifestExisting.QueryURL = firstNonEmpty(manifestExisting.QueryURL, manifestExisting.RequestURL)
+	manifestExisting.Files = recordsComplete
+	if err := writeManifest(fileManifest, manifestExisting); err != nil {
+		return err
+	}
+
+	logf("sync done (files=%d)", len(recordsComplete))
+	logf("manifest written: %s", fileManifest)
+	return nil
+}
+
+func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manifestFile) ([]recordFile, error) {
+	type taskRecordFile struct {
+		filePath string
+		pathRel  string
+		urlFile  string
+		asset    string
+	}
+
 	dirRaw := filepath.Join(dirVersion, "raw")
+	urlsExisting := buildOmniPathExistingURLMap(manifestExisting)
+	urlArchive := firstNonEmpty(
+		strings.TrimSpace(manifestExisting.QueryURL),
+		strings.TrimSpace(manifestExisting.RequestURL),
+		deriveArchiveURLFromQueryMeta(filepath.Join(dirRaw, "query_meta.json")),
+	)
 	entries, err := os.ReadDir(dirRaw)
 	if err != nil {
 		return nil, fmt.Errorf("read raw dir: %w", err)
 	}
 
-	records := make([]recordFile, 0)
+	tasks := make([]taskRecordFile, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			taxID := entry.Name()
@@ -185,12 +279,20 @@ func scanOmniPathRecords(dirVersion string, asset string) ([]recordFile, error) 
 				fileName := entryFile.Name()
 				filePath := filepath.Join(dirTaxID, fileName)
 				pathRel := filepath.ToSlash(filepath.Join("raw", taxID, fileName))
-				urlFile := deriveOmniPathDataURL(asset, taxID)
-				record, err := buildRecord(filePath, pathRel, urlFile, asset)
-				if err != nil {
-					return nil, err
+				urlFile := urlsExisting[pathRel]
+				if urlFile == "" {
+					if strings.HasPrefix(urlArchive, archiveURL) {
+						urlFile = urlArchive
+					} else {
+						urlFile = deriveOmniPathDataURL(asset, taxID)
+					}
 				}
-				records = append(records, record)
+				tasks = append(tasks, taskRecordFile{
+					filePath: filePath,
+					pathRel:  pathRel,
+					urlFile:  urlFile,
+					asset:    asset,
+				})
 			}
 			continue
 		}
@@ -200,15 +302,30 @@ func scanOmniPathRecords(dirVersion string, asset string) ([]recordFile, error) 
 		}
 		filePath := filepath.Join(dirRaw, entry.Name())
 		pathRel := filepath.ToSlash(filepath.Join("raw", entry.Name()))
-		urlQuery := queryEnzSubURL
-		if asset == "interactions" {
-			urlQuery = queryInteractionsURL
+		urlQuery := urlsExisting[pathRel]
+		if urlQuery == "" {
+			if strings.HasPrefix(urlArchive, archiveURL) {
+				urlQuery = urlArchive
+			} else {
+				urlQuery = queryEnzSubURL
+				if asset == "interactions" {
+					urlQuery = queryInteractionsURL
+				}
+			}
 		}
-		record, err := buildRecord(filePath, pathRel, urlQuery, "query_meta")
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
+		tasks = append(tasks, taskRecordFile{
+			filePath: filePath,
+			pathRel:  pathRel,
+			urlFile:  urlQuery,
+			asset:    "query_meta",
+		})
+	}
+
+	records, err := parallel.MapOrdered(tasks, func(task taskRecordFile) (recordFile, error) {
+		return buildRecord(task.filePath, task.pathRel, task.urlFile, task.asset)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(records, func(i, j int) bool {
@@ -254,4 +371,27 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func buildOmniPathExistingURLMap(manifestExisting manifestFile) map[string]string {
+	urls := make(map[string]string, len(manifestExisting.Files))
+	for _, record := range manifestExisting.Files {
+		if strings.TrimSpace(record.Path) == "" || strings.TrimSpace(record.URL) == "" {
+			continue
+		}
+		urls[record.Path] = record.URL
+	}
+	return urls
+}
+
+func deriveOmniPathTaxIDsFromRecords(records []recordFile) []string {
+	setTaxIDs := make(map[string]struct{})
+	for _, record := range records {
+		taxID := deriveOmniPathTaxIDFromPath(record.Path)
+		if taxID == "" {
+			continue
+		}
+		setTaxIDs[taxID] = struct{}{}
+	}
+	return sortedKeys(setTaxIDs)
 }

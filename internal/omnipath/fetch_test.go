@@ -1,6 +1,12 @@
 package omnipath
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeOrganism(t *testing.T) {
 	value, err := normalizeOrganism("9606")
@@ -39,6 +45,72 @@ func TestSanitizeVersionToken(t *testing.T) {
 	}
 }
 
+func TestValidateOptionalVersionToken(t *testing.T) {
+	if err := validateOptionalVersionToken(""); err != nil {
+		t.Fatalf("validateOptionalVersionToken returned error for empty version: %v", err)
+	}
+	if err := validateOptionalVersionToken("2025-08-13"); err != nil {
+		t.Fatalf("validateOptionalVersionToken returned error for valid version: %v", err)
+	}
+}
+
+func TestValidateOptionalVersionTokenRejectsInvalidValue(t *testing.T) {
+	err := validateOptionalVersionToken("2025-8-13")
+	if err == nil {
+		t.Fatal("validateOptionalVersionToken returned nil error for invalid version")
+	}
+	if !strings.Contains(err.Error(), archiveURL) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExtractArchiveSnapshotFromIndexSelectsRequestedVersion(t *testing.T) {
+	text := []byte(`
+<a href="omnipath_webservice_enz_sub__20220114-20230405.tsv.xz">old</a>
+<a href="omnipath_webservice_enz_sub__20230405-20250813.tsv.xz">new</a>
+`)
+	snapshot, err := extractArchiveSnapshotFromIndex(text, "enz_sub", "2025-08-13")
+	if err != nil {
+		t.Fatalf("extractArchiveSnapshotFromIndex returned error: %v", err)
+	}
+	if snapshot.version != "2025-08-13" {
+		t.Fatalf("snapshot.version = %q", snapshot.version)
+	}
+	if snapshot.urlFile != archiveURL+"omnipath_webservice_enz_sub__20230405-20250813.tsv.xz" {
+		t.Fatalf("snapshot.urlFile = %q", snapshot.urlFile)
+	}
+}
+
+func TestMatchArchiveTaxIDsEnzSub(t *testing.T) {
+	taxIDs, err := matchArchiveTaxIDs(
+		"enz_sub",
+		"",
+		[]string{"enzyme", "ncbi_tax_id"},
+		"P12345\t10090",
+	)
+	if err != nil {
+		t.Fatalf("matchArchiveTaxIDs returned error: %v", err)
+	}
+	if len(taxIDs) != 1 || taxIDs[0] != "10090" {
+		t.Fatalf("taxIDs = %#v", taxIDs)
+	}
+}
+
+func TestMatchArchiveTaxIDsInteractions(t *testing.T) {
+	taxIDs, err := matchArchiveTaxIDs(
+		"interactions",
+		"kinaseextra",
+		[]string{"kinaseextra", "ncbi_tax_id_source", "ncbi_tax_id_target"},
+		"True\t9606\t-1",
+	)
+	if err != nil {
+		t.Fatalf("matchArchiveTaxIDs returned error: %v", err)
+	}
+	if len(taxIDs) != 1 || taxIDs[0] != "9606" {
+		t.Fatalf("taxIDs = %#v", taxIDs)
+	}
+}
+
 func TestParseOrganisms(t *testing.T) {
 	values, err := parseOrganisms([]string{"9606", "10090,9606"})
 	if err != nil {
@@ -46,6 +118,44 @@ func TestParseOrganisms(t *testing.T) {
 	}
 	if len(values) != 2 || values[0] != "10090" || values[1] != "9606" {
 		t.Fatalf("unexpected organisms: %#v", values)
+	}
+}
+
+func TestParseOrganismsSupportsAtFile(t *testing.T) {
+	fileOrganisms := filepath.Join(t.TempDir(), "organisms.txt")
+	if err := os.WriteFile(fileOrganisms, []byte("# comment\n9606\n\n10090\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	values, err := parseOrganisms([]string{"@" + fileOrganisms})
+	if err != nil {
+		t.Fatalf("parseOrganisms returned error: %v", err)
+	}
+	expected := []string{"10090", "9606"}
+	if !reflect.DeepEqual(values, expected) {
+		t.Fatalf("parseOrganisms = %#v, want %#v", values, expected)
+	}
+}
+
+func TestValidateEnzSubConfigResolvesAtFileOrganisms(t *testing.T) {
+	fileOrganisms := filepath.Join(t.TempDir(), "organisms.txt")
+	if err := os.WriteFile(fileOrganisms, []byte("9606\n10090\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	cfg := configEnzSub{
+		dirOut:       "/tmp/omnipath",
+		versionToken: "2025-08-13",
+		organisms:    []string{"@" + fileOrganisms},
+		ruleExisting: "skip",
+		retryMax:     1,
+	}
+	if err := validateEnzSubConfig(&cfg); err != nil {
+		t.Fatalf("validateEnzSubConfig returned error: %v", err)
+	}
+	expected := []string{"10090", "9606"}
+	if !reflect.DeepEqual(cfg.organisms, expected) {
+		t.Fatalf("cfg.organisms = %#v, want %#v", cfg.organisms, expected)
 	}
 }
 

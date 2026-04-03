@@ -1,12 +1,10 @@
 package omnipath
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/confirm"
-	"biofetch/internal/shared/sets"
-	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -15,8 +13,8 @@ import (
 
 type configEnzSub struct {
 	dirOut                  string
+	versionToken            string
 	organisms               []string
-	fileOrganisms           string
 	shouldDownloadAll       bool
 	ruleLicense             string
 	ruleExisting            string
@@ -29,8 +27,8 @@ type configEnzSub struct {
 
 type configInteractions struct {
 	dirOut                  string
+	versionToken            string
 	organisms               []string
-	fileOrganisms           string
 	shouldDownloadAll       bool
 	dataset                 string
 	ruleLicense             string
@@ -97,8 +95,8 @@ func createEnzSubFetchCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "OmniPath asset root directory")
-	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; repeat the flag or use commas, e.g. 9606,10090,10116")
-	flags.StringVar(&cfg.fileOrganisms, "file_organisms", "", "File with one organism per line")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
+	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag, or use @file with one organism per line (# comments and blank lines ignored)")
 	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
@@ -154,8 +152,8 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "OmniPath asset root directory")
-	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; repeat the flag or use commas, e.g. 9606,10090,10116")
-	flags.StringVar(&cfg.fileOrganisms, "file_organisms", "", "File with one organism per line")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
+	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag, or use @file with one organism per line (# comments and blank lines ignored)")
 	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
 	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
@@ -320,29 +318,26 @@ func validateEnzSubConfig(cfg *configEnzSub) error {
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 	}
+	if err := validateOptionalVersionToken(cfg.versionToken); err != nil {
+		return err
+	}
 	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	countSources := 0
 	if len(cfg.organisms) > 0 {
-		countSources++
-	}
-	if strings.TrimSpace(cfg.fileOrganisms) != "" {
 		countSources++
 	}
 	if cfg.shouldDownloadAll {
 		countSources++
 	}
 	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --organisms | --file_organisms | --should_download_all")
+		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all")
 	}
 	if len(cfg.organisms) > 0 {
-		if _, err := parseOrganisms(cfg.organisms); err != nil {
+		organisms, err := parseOrganisms(cfg.organisms)
+		if err != nil {
 			return err
 		}
-	}
-	if strings.TrimSpace(cfg.fileOrganisms) != "" {
-		if _, err := readOrganismsFromFile(cfg.fileOrganisms); err != nil {
-			return err
-		}
+		cfg.organisms = organisms
 	}
 	if err := validateRuleLicense(cfg.ruleLicense); err != nil {
 		return err
@@ -363,29 +358,26 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 	}
+	if err := validateOptionalVersionToken(cfg.versionToken); err != nil {
+		return err
+	}
 	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	countSources := 0
 	if len(cfg.organisms) > 0 {
-		countSources++
-	}
-	if strings.TrimSpace(cfg.fileOrganisms) != "" {
 		countSources++
 	}
 	if cfg.shouldDownloadAll {
 		countSources++
 	}
 	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --organisms | --file_organisms | --should_download_all")
+		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all")
 	}
 	if len(cfg.organisms) > 0 {
-		if _, err := parseOrganisms(cfg.organisms); err != nil {
+		organisms, err := parseOrganisms(cfg.organisms)
+		if err != nil {
 			return err
 		}
-	}
-	if strings.TrimSpace(cfg.fileOrganisms) != "" {
-		if _, err := readOrganismsFromFile(cfg.fileOrganisms); err != nil {
-			return err
-		}
+		cfg.organisms = organisms
 	}
 	if err := validateRuleLicense(cfg.ruleLicense); err != nil {
 		return err
@@ -412,51 +404,28 @@ func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
 }
 
 func parseOrganisms(valuesInput []string) ([]string, error) {
-	setTaxIDs := make(map[string]struct{})
-	for _, valueInput := range valuesInput {
-		for _, token := range strings.Split(valueInput, ",") {
-			taxID, err := normalizeOrganism(token)
-			if err != nil {
-				return nil, err
-			}
-			if taxID != "" {
-				setTaxIDs[taxID] = struct{}{}
-			}
+	valuesResolved, err := cliopt.ExpandAtFileTokens(valuesInput, "organisms")
+	if err != nil {
+		return nil, err
+	}
+	valuesValid := make([]string, 0, len(valuesResolved))
+	for _, value := range valuesResolved {
+		taxID, err := normalizeOrganism(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid organism: %w", err)
+		}
+		if taxID != "" {
+			valuesValid = append(valuesValid, taxID)
 		}
 	}
-	if len(setTaxIDs) == 0 {
+	if len(valuesValid) == 0 {
 		return nil, fmt.Errorf("organisms must not be empty")
 	}
-	return sets.SortedKeys(setTaxIDs), nil
+	return cliopt.SortedUniqueStrings(valuesValid), nil
 }
 
 func readOrganismsFromFile(filePath string) ([]string, error) {
-	fileIn, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("open organisms file: %w", err)
-	}
-	defer fileIn.Close()
-
-	setTaxIDs := make(map[string]struct{})
-	scanner := bufio.NewScanner(fileIn)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		taxID, err := normalizeOrganism(line)
-		if err != nil {
-			return nil, fmt.Errorf("invalid organism in %s: %w", filePath, err)
-		}
-		setTaxIDs[taxID] = struct{}{}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read organisms file: %w", err)
-	}
-	if len(setTaxIDs) == 0 {
-		return nil, fmt.Errorf("organisms file must not be empty: %s", filePath)
-	}
-	return sets.SortedKeys(setTaxIDs), nil
+	return parseOrganisms([]string{"@" + filePath})
 }
 
 func validateRuleLicense(ruleLicense string) error {
