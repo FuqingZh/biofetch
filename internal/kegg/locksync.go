@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
 	"os"
@@ -38,9 +39,11 @@ func runLockPathway(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingPathwayManifest(fileManifest)
 	cfgManifest := pathwayConfig{
-		version:       firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:  firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
-		sourceRelease: manifestExisting.SourceRelease,
+		version:            firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:       firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease:      manifestExisting.SourceRelease,
+		sourceReleaseStart: manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
 	}
 
 	if cfg.shouldDryRun {
@@ -127,9 +130,11 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 	}
 
 	cfgManifest := pathwayConfig{
-		version:       manifestExisting.Version,
-		versionToken:  manifestExisting.VersionToken,
-		sourceRelease: manifestExisting.SourceRelease,
+		version:            manifestExisting.Version,
+		versionToken:       manifestExisting.VersionToken,
+		sourceRelease:      manifestExisting.SourceRelease,
+		sourceReleaseStart: manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
 	}
 	if err := writeManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -151,9 +156,11 @@ func runLockBrite(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingBriteManifest(fileManifest)
 	cfgManifest := briteConfig{
-		version:       firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:  firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
-		sourceRelease: manifestExisting.SourceRelease,
+		version:            firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:       firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease:      manifestExisting.SourceRelease,
+		sourceReleaseStart: manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
 	}
 
 	if cfg.shouldDryRun {
@@ -240,9 +247,11 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 	}
 
 	cfgManifest := briteConfig{
-		version:       manifestExisting.Version,
-		versionToken:  manifestExisting.VersionToken,
-		sourceRelease: manifestExisting.SourceRelease,
+		version:            manifestExisting.Version,
+		versionToken:       manifestExisting.VersionToken,
+		sourceRelease:      manifestExisting.SourceRelease,
+		sourceReleaseStart: manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
 	}
 	if err := writeBriteManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -254,13 +263,20 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 }
 
 func scanPathwayRecords(dirVersion string) ([]pathwayRecord, error) {
+	type taskPathwayRecord struct {
+		filePath string
+		pathRel  string
+		scopeKey string
+		fileName string
+	}
+
 	dirRaw := filepath.Join(dirVersion, "raw")
 	entriesScopes, err := os.ReadDir(dirRaw)
 	if err != nil {
 		return nil, fmt.Errorf("read raw dir: %w", err)
 	}
 
-	records := make([]pathwayRecord, 0)
+	tasks := make([]taskPathwayRecord, 0)
 	for _, entryScope := range entriesScopes {
 		if !entryScope.IsDir() {
 			continue
@@ -279,12 +295,20 @@ func scanPathwayRecords(dirVersion string) ([]pathwayRecord, error) {
 			fileName := entryFile.Name()
 			filePath := filepath.Join(dirScope, fileName)
 			pathRel := filepath.ToSlash(filepath.Join("raw", scopeKey, fileName))
-			record, err := buildScannedPathwayRecord(filePath, pathRel, scopeKey, fileName)
-			if err != nil {
-				return nil, err
-			}
-			records = append(records, record)
+			tasks = append(tasks, taskPathwayRecord{
+				filePath: filePath,
+				pathRel:  pathRel,
+				scopeKey: scopeKey,
+				fileName: fileName,
+			})
 		}
+	}
+
+	records, err := parallel.MapOrdered(tasks, func(task taskPathwayRecord) (pathwayRecord, error) {
+		return buildScannedPathwayRecord(task.filePath, task.pathRel, task.scopeKey, task.fileName)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(records, func(i, j int) bool {
@@ -322,13 +346,20 @@ func buildScannedPathwayRecord(filePath string, pathRel string, scopeKey string,
 }
 
 func scanBriteRecords(dirVersion string) ([]briteRecord, error) {
+	type taskBriteRecord struct {
+		filePath string
+		pathRel  string
+		scopeKey string
+		fileName string
+	}
+
 	dirRaw := filepath.Join(dirVersion, "raw")
 	entriesScopes, err := os.ReadDir(dirRaw)
 	if err != nil {
 		return nil, fmt.Errorf("read raw dir: %w", err)
 	}
 
-	records := make([]briteRecord, 0)
+	tasks := make([]taskBriteRecord, 0)
 	for _, entryScope := range entriesScopes {
 		if !entryScope.IsDir() {
 			continue
@@ -347,12 +378,20 @@ func scanBriteRecords(dirVersion string) ([]briteRecord, error) {
 			fileName := entryFile.Name()
 			filePath := filepath.Join(dirScope, fileName)
 			pathRel := filepath.ToSlash(filepath.Join("raw", scopeKey, fileName))
-			record, err := buildScannedBriteRecord(filePath, pathRel, scopeKey, fileName)
-			if err != nil {
-				return nil, err
-			}
-			records = append(records, record)
+			tasks = append(tasks, taskBriteRecord{
+				filePath: filePath,
+				pathRel:  pathRel,
+				scopeKey: scopeKey,
+				fileName: fileName,
+			})
 		}
+	}
+
+	records, err := parallel.MapOrdered(tasks, func(task taskBriteRecord) (briteRecord, error) {
+		return buildScannedBriteRecord(task.filePath, task.pathRel, task.scopeKey, task.fileName)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(records, func(i, j int) bool {
@@ -388,6 +427,11 @@ func readExistingPathwayManifest(fileManifest string) (manifestFile, error) {
 	if !ok {
 		return manifestFile{}, nil
 	}
+	manifest.SourceRelease, manifest.SourceReleaseStart, manifest.SourceReleaseEnd = deriveKEGGReleaseFields(
+		manifest.SourceRelease,
+		manifest.SourceReleaseStart,
+		manifest.SourceReleaseEnd,
+	)
 	return manifest, nil
 }
 
@@ -400,6 +444,11 @@ func readExistingBriteManifest(fileManifest string) (briteManifestFile, error) {
 	if !ok {
 		return briteManifestFile{}, nil
 	}
+	manifest.SourceRelease, manifest.SourceReleaseStart, manifest.SourceReleaseEnd = deriveKEGGReleaseFields(
+		manifest.SourceRelease,
+		manifest.SourceReleaseStart,
+		manifest.SourceReleaseEnd,
+	)
 	return manifest, nil
 }
 

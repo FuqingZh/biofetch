@@ -7,10 +7,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+)
+
+var pathwayAssetNamesSupported = []string{"list", "entry", "kgml", "conf", "image"}
+
+const (
+	ruleOrderAsc   = "asc"
+	ruleOrderDesc  = "desc"
+	ruleOrderInput = "input"
 )
 
 type pathwayConfig struct {
@@ -18,12 +27,13 @@ type pathwayConfig struct {
 	version                 string
 	versionToken            string
 	sourceRelease           string
+	sourceReleaseStart      string
+	sourceReleaseEnd        string
 	assetNames              []string
+	ruleOrder               string
 	organismCode            string
 	organismCodes           []string
-	fileOrganismCodes       string
-	pathwayIDsCSV           string
-	filePathwayIDs          string
+	pathwayIDs              []string
 	shouldFetchReference    bool
 	shouldDownloadAll       bool
 	ruleExisting            string
@@ -42,12 +52,13 @@ type briteConfig struct {
 	version                 string
 	versionToken            string
 	sourceRelease           string
+	sourceReleaseStart      string
+	sourceReleaseEnd        string
 	catalogCode             string
+	ruleOrder               string
 	organismCodes           []string
-	fileOrganismCodes       string
 	shouldDownloadAll       bool
-	briteIDsCSV             string
-	fileBriteIDs            string
+	briteIDs                []string
 	shouldDownloadRootOnly  bool
 	ruleExisting            string
 	shouldOverwriteExisting bool
@@ -136,20 +147,21 @@ func createPathwayFetchCommand() *cobra.Command {
 
 	commandPathway.Example = strings.Join([]string{
 		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --should_dry_run",
+		"biofetch kegg pathway fetch --dir_out /data/kegg --version 2026-04 --organisms hsa",
+		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa",
+		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms @organisms.txt --rule_order input",
 		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --organisms tca",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --should_fetch_reference --pathway_ids map00010,map00020",
+		"biofetch kegg pathway fetch --dir_out /data/kegg --should_fetch_reference --pathway_ids @pathway_ids.txt",
 		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --assets entry --assets kgml --assets image",
 	}, "\n")
 
 	flags := commandPathway.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG major version, e.g. 117.0")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: list|entry|kgml|conf|image; repeat the flag or use commas")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; repeat the flag or use commas")
-	flags.StringVar(&cfg.fileOrganismCodes, "file_organisms", "", "File with one KEGG organism code per line")
-	flags.StringVar(&cfg.pathwayIDsCSV, "pathway_ids", "", "Comma-separated pathway IDs")
-	flags.StringVar(&cfg.filePathwayIDs, "file_pathway_ids", "", "File with one pathway ID per line")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: list|entry|kgml|conf|image; omit to fetch all supported assets within the selected scope; repeat the flag or use commas")
+	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
+	flags.StringSliceVar(&cfg.pathwayIDs, "pathway_ids", nil, "Pathway IDs; pass inline values, repeat the flag, or use @file with one pathway ID per line (# comments and blank lines ignored)")
 	flags.BoolVar(
 		&cfg.shouldFetchReference,
 		"should_fetch_reference",
@@ -163,6 +175,7 @@ func createPathwayFetchCommand() *cobra.Command {
 		"Fetch PATHWAY assets for all KEGG organisms",
 	)
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.StringVar(&cfg.ruleOrder, "rule_order", cfg.ruleOrder, "Traversal order for organisms and pathway IDs: asc|desc|input (input preserves first-seen order)")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.IntVar(
@@ -200,6 +213,9 @@ func createPathwayLockCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+				return fmt.Errorf("version must be a local snapshot key like 2026-04")
+			}
 			return runLockPathway(&cfg)
 		},
 	}
@@ -207,7 +223,7 @@ func createPathwayLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	return commandLock
@@ -232,6 +248,9 @@ func createPathwaySyncCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+				return fmt.Errorf("version must be a local snapshot key like 2026-04")
+			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 			}
@@ -243,7 +262,7 @@ func createPathwaySyncCommand() *cobra.Command {
 	flags := commandSync.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -257,7 +276,7 @@ func createDefaultPathwayConfig() pathwayConfig {
 	cfg.retryWait = defaultKEGGRetryWait
 	cfg.requestInterval = 350 * time.Millisecond
 	cfg.ruleExisting = "skip"
-	cfg.assetNames = []string{"list", "entry", "kgml"}
+	cfg.ruleOrder = ruleOrderAsc
 	return cfg
 }
 
@@ -274,24 +293,41 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
-	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGMajorVersion(cfg.versionToken) {
-		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 	}
+	if strings.TrimSpace(cfg.ruleOrder) == "" {
+		cfg.ruleOrder = ruleOrderAsc
+	}
+	if err := validateRuleOrder(cfg.ruleOrder); err != nil {
+		return err
+	}
 	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
-	assetNames, err := parsePathwayAssetNames(cfg.assetNames)
+	assetNames, err := resolvePathwayAssetNames(cfg.assetNames)
 	if err != nil {
 		return err
 	}
 	cfg.assetNames = assetNames
+	if len(cfg.organismCodes) > 0 {
+		organismCodes, err := resolveKEGGOrganismInputs(cfg.organismCodes, cfg.ruleOrder)
+		if err != nil {
+			return err
+		}
+		cfg.organismCodes = organismCodes
+	}
+	if len(cfg.pathwayIDs) > 0 {
+		pathwayIDs, err := resolvePathwayIDInputs(cfg.pathwayIDs, cfg.ruleOrder)
+		if err != nil {
+			return err
+		}
+		cfg.pathwayIDs = pathwayIDs
+	}
 
 	countScope := 0
 	if len(cfg.organismCodes) > 0 {
-		countScope++
-	}
-	if strings.TrimSpace(cfg.fileOrganismCodes) != "" {
 		countScope++
 	}
 	if cfg.shouldFetchReference {
@@ -302,36 +338,23 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	}
 	if countScope != 1 {
 		return fmt.Errorf(
-			"choose exactly one scope: --organisms | --file_organisms | --should_download_all | --should_fetch_reference",
+			"choose exactly one scope: --organisms | --should_download_all | --should_fetch_reference",
 		)
 	}
-	if cfg.fileOrganismCodes != "" {
-		if _, err := os.Stat(cfg.fileOrganismCodes); err != nil {
-			return fmt.Errorf("organisms file not found: %w", err)
-		}
-	}
 	if cfg.shouldDownloadAll {
-		if strings.TrimSpace(cfg.pathwayIDsCSV) != "" || strings.TrimSpace(cfg.filePathwayIDs) != "" {
-			return fmt.Errorf("pathway_ids and file_pathway_ids are not allowed with multi-organism download")
-		}
-	}
-	if strings.TrimSpace(cfg.fileOrganismCodes) != "" {
-		if _, err := readKEGGOrganismCodesFromFile(cfg.fileOrganismCodes); err != nil {
-			return err
-		}
-	}
-	if len(cfg.organismCodes) > 0 {
-		if _, err := parseKEGGOrganismCodes(cfg.organismCodes); err != nil {
-			return err
-		}
-	}
-	if cfg.filePathwayIDs != "" {
-		if _, err := os.Stat(cfg.filePathwayIDs); err != nil {
-			return fmt.Errorf("pathway ids file not found: %w", err)
+		if len(cfg.pathwayIDs) > 0 {
+			return fmt.Errorf("pathway_ids is not allowed with multi-organism download")
 		}
 	}
 
 	return nil
+}
+
+func resolvePathwayAssetNames(valuesInput []string) ([]string, error) {
+	if len(valuesInput) == 0 {
+		return append([]string(nil), pathwayAssetNamesSupported...), nil
+	}
+	return parsePathwayAssetNames(valuesInput)
 }
 
 func parsePathwayAssetNames(valuesInput []string) ([]string, error) {
@@ -342,18 +365,25 @@ func parsePathwayAssetNames(valuesInput []string) ([]string, error) {
 			if assetName == "" {
 				continue
 			}
-			switch assetName {
-			case "list", "entry", "kgml", "conf", "image":
-				setAssets[assetName] = struct{}{}
-			default:
+			if !isSupportedPathwayAssetName(assetName) {
 				return nil, fmt.Errorf("invalid PATHWAY asset: %s", token)
 			}
+			setAssets[assetName] = struct{}{}
 		}
 	}
 	if len(setAssets) == 0 {
 		return nil, fmt.Errorf("assets must not be empty")
 	}
 	return sets.SortedKeys(setAssets), nil
+}
+
+func isSupportedPathwayAssetName(assetName string) bool {
+	for _, value := range pathwayAssetNamesSupported {
+		if value == assetName {
+			return true
+		}
+	}
+	return false
 }
 
 func createBriteCommand() *cobra.Command {
@@ -398,7 +428,9 @@ func createBriteFetchCommand() *cobra.Command {
 
 	commandBrite.Example = strings.Join([]string{
 		"biofetch kegg brite fetch --dir_out /data/kegg --catalog br --should_dry_run",
-		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --brite_ids hsa00001",
+		"biofetch kegg brite fetch --dir_out /data/kegg --version 2026-04 --catalog br",
+		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --brite_ids @brite_ids.txt",
+		"biofetch kegg brite fetch --dir_out /data/kegg --organisms @organisms.txt --rule_order desc",
 		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --organisms tca",
 		"biofetch kegg brite fetch --dir_out /data/kegg --should_download_all",
 	}, "\n")
@@ -406,20 +438,19 @@ func createBriteFetchCommand() *cobra.Command {
 	flags := commandBrite.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG major version, e.g. 117.0")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	flags.StringVar(&cfg.catalogCode, "catalog", "", "Reference BRITE catalog; use br or ko")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; repeat the flag or use commas")
-	flags.StringVar(&cfg.fileOrganismCodes, "file_organisms", "", "File with one KEGG organism code per line")
+	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
 		"should_download_all",
 		false,
 		"Fetch BRITE assets for all KEGG organisms",
 	)
-	flags.StringVar(&cfg.briteIDsCSV, "brite_ids", "", "Comma-separated BRITE IDs, e.g. br08301,hsa00001")
-	flags.StringVar(&cfg.fileBriteIDs, "file_brite_ids", "", "File with one BRITE ID per line")
+	flags.StringSliceVar(&cfg.briteIDs, "brite_ids", nil, "BRITE IDs; pass inline values, repeat the flag, or use @file with one BRITE ID per line (# comments and blank lines ignored)")
 	flags.BoolVar(&cfg.shouldDownloadRootOnly, "should_download_root_only", false, "Download only root BRITE hierarchy (*00001) per catalog")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.StringVar(&cfg.ruleOrder, "rule_order", cfg.ruleOrder, "Traversal order for organisms and BRITE IDs: asc|desc|input (input preserves first-seen order)")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.IntVar(
@@ -457,6 +488,9 @@ func createBriteLockCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+				return fmt.Errorf("version must be a local snapshot key like 2026-04")
+			}
 			return runLockBrite(&cfg)
 		},
 	}
@@ -464,7 +498,7 @@ func createBriteLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	return commandLock
@@ -489,6 +523,9 @@ func createBriteSyncCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
+			if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+				return fmt.Errorf("version must be a local snapshot key like 2026-04")
+			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 			}
@@ -500,7 +537,7 @@ func createBriteSyncCommand() *cobra.Command {
 	flags := commandSync.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
@@ -514,6 +551,7 @@ func createDefaultBriteConfig() briteConfig {
 	cfg.retryWait = defaultKEGGRetryWait
 	cfg.requestInterval = 350 * time.Millisecond
 	cfg.ruleExisting = "skip"
+	cfg.ruleOrder = ruleOrderAsc
 	return cfg
 }
 
@@ -530,23 +568,43 @@ func validateBriteConfig(cfg *briteConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
-	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGMajorVersion(cfg.versionToken) {
-		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
 	}
+	if strings.TrimSpace(cfg.ruleOrder) == "" {
+		cfg.ruleOrder = ruleOrderAsc
+	}
+	if err := validateRuleOrder(cfg.ruleOrder); err != nil {
+		return err
+	}
 	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
+	if len(cfg.organismCodes) > 0 {
+		organismCodes, err := resolveKEGGOrganismInputs(cfg.organismCodes, cfg.ruleOrder)
+		if err != nil {
+			return err
+		}
+		cfg.organismCodes = organismCodes
+	}
+	if len(cfg.briteIDs) > 0 {
+		briteIDs, err := resolveBriteIDInputs(cfg.briteIDs, cfg.ruleOrder)
+		if err != nil {
+			return err
+		}
+		cfg.briteIDs = briteIDs
+	}
 
 	if cfg.shouldDownloadAll {
 		if strings.TrimSpace(cfg.catalogCode) != "" {
 			return fmt.Errorf("catalog must not be set with --should_download_all")
 		}
-		if len(cfg.organismCodes) > 0 || strings.TrimSpace(cfg.fileOrganismCodes) != "" {
-			return fmt.Errorf("organisms and file_organisms must not be set with --should_download_all")
+		if len(cfg.organismCodes) > 0 {
+			return fmt.Errorf("organisms must not be set with --should_download_all")
 		}
-		if strings.TrimSpace(cfg.briteIDsCSV) != "" || strings.TrimSpace(cfg.fileBriteIDs) != "" {
-			return fmt.Errorf("brite_ids and file_brite_ids are not allowed with --should_download_all")
+		if len(cfg.briteIDs) > 0 {
+			return fmt.Errorf("brite_ids is not allowed with --should_download_all")
 		}
 	} else {
 		countSources := 0
@@ -556,37 +614,14 @@ func validateBriteConfig(cfg *briteConfig) error {
 		if len(cfg.organismCodes) > 0 {
 			countSources++
 		}
-		if strings.TrimSpace(cfg.fileOrganismCodes) != "" {
-			countSources++
-		}
 		if countSources != 1 {
-			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --file_organisms | --should_download_all")
+			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --should_download_all")
 		}
 	}
 
 	if cfg.shouldDownloadRootOnly {
-		if strings.TrimSpace(cfg.briteIDsCSV) != "" || strings.TrimSpace(cfg.fileBriteIDs) != "" {
-			return fmt.Errorf("brite_ids and file_brite_ids are not allowed with --should_download_root_only")
-		}
-	}
-	if cfg.fileBriteIDs != "" {
-		if _, err := os.Stat(cfg.fileBriteIDs); err != nil {
-			return fmt.Errorf("brite ids file not found: %w", err)
-		}
-	}
-	if cfg.fileOrganismCodes != "" {
-		if _, err := os.Stat(cfg.fileOrganismCodes); err != nil {
-			return fmt.Errorf("organisms file not found: %w", err)
-		}
-	}
-	if strings.TrimSpace(cfg.fileOrganismCodes) != "" {
-		if _, err := readKEGGOrganismCodesFromFile(cfg.fileOrganismCodes); err != nil {
-			return err
-		}
-	}
-	if len(cfg.organismCodes) > 0 {
-		if _, err := parseKEGGOrganismCodes(cfg.organismCodes); err != nil {
-			return err
+		if len(cfg.briteIDs) > 0 {
+			return fmt.Errorf("brite_ids is not allowed with --should_download_root_only")
 		}
 	}
 	if strings.TrimSpace(cfg.catalogCode) != "" && cfg.catalogCode != "br" && cfg.catalogCode != "ko" {
@@ -604,53 +639,161 @@ func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
 	)
 }
 
-func parseKEGGOrganismCodes(valuesInput []string) ([]string, error) {
-	setCodes := make(map[string]struct{})
-	for _, valueInput := range valuesInput {
-		for _, token := range strings.Split(valueInput, ",") {
-			code := normalizeKEGGOrganismCode(token)
-			if code == "" {
-				continue
-			}
-			if !isValidKEGGOrganismCode(code) {
-				return nil, fmt.Errorf("invalid KEGG organism code: %s", token)
-			}
-			setCodes[code] = struct{}{}
-		}
-	}
-	if len(setCodes) == 0 {
-		return nil, fmt.Errorf("organisms must not be empty")
-	}
-	return sets.SortedKeys(setCodes), nil
+type orderedListInputSpec struct {
+	nameOption  string
+	nameValue   string
+	fnNormalize func(string) string
+	fnValidate  func(string) bool
 }
 
-func readKEGGOrganismCodesFromFile(filePath string) ([]string, error) {
+func validateRuleOrder(ruleOrder string) error {
+	switch ruleOrder {
+	case ruleOrderAsc, ruleOrderDesc, ruleOrderInput:
+		return nil
+	default:
+		return fmt.Errorf("rule_order must be one of: asc, desc, input")
+	}
+}
+
+func resolveKEGGOrganismInputs(valuesInput []string, ruleOrder string) ([]string, error) {
+	return resolveOrderedListInputs(valuesInput, ruleOrder, orderedListInputSpec{
+		nameOption:  "organisms",
+		nameValue:   "KEGG organism code",
+		fnNormalize: normalizeKEGGOrganismCode,
+		fnValidate:  isValidKEGGOrganismCode,
+	})
+}
+
+func resolvePathwayIDInputs(valuesInput []string, ruleOrder string) ([]string, error) {
+	return resolveOrderedListInputs(valuesInput, ruleOrder, orderedListInputSpec{
+		nameOption:  "pathway_ids",
+		nameValue:   "pathway id",
+		fnNormalize: normalizePathwayID,
+		fnValidate:  isValidPathwayID,
+	})
+}
+
+func resolveBriteIDInputs(valuesInput []string, ruleOrder string) ([]string, error) {
+	return resolveOrderedListInputs(valuesInput, ruleOrder, orderedListInputSpec{
+		nameOption:  "brite_ids",
+		nameValue:   "BRITE id",
+		fnNormalize: normalizeBriteID,
+		fnValidate:  isValidBriteID,
+	})
+}
+
+func resolveOrderedListInputs(
+	valuesInput []string,
+	ruleOrder string,
+	spec orderedListInputSpec,
+) ([]string, error) {
+	valuesResolved := make([]string, 0)
+	setSeen := make(map[string]struct{})
+
+	for _, valueInput := range valuesInput {
+		for _, tokenRaw := range strings.Split(valueInput, ",") {
+			token := strings.TrimSpace(tokenRaw)
+			if token == "" {
+				continue
+			}
+			if strings.HasPrefix(token, "@") {
+				filePath := strings.TrimSpace(strings.TrimPrefix(token, "@"))
+				if filePath == "" {
+					return nil, fmt.Errorf("%s file path must not be empty", spec.nameOption)
+				}
+				valuesFile, err := readOrderedListInputFile(filePath, spec)
+				if err != nil {
+					return nil, err
+				}
+				for _, value := range valuesFile {
+					if _, ok := setSeen[value]; ok {
+						continue
+					}
+					setSeen[value] = struct{}{}
+					valuesResolved = append(valuesResolved, value)
+				}
+				continue
+			}
+
+			valueNormalized := spec.fnNormalize(token)
+			if !spec.fnValidate(valueNormalized) {
+				return nil, fmt.Errorf("invalid %s: %s", spec.nameValue, token)
+			}
+			if _, ok := setSeen[valueNormalized]; ok {
+				continue
+			}
+			setSeen[valueNormalized] = struct{}{}
+			valuesResolved = append(valuesResolved, valueNormalized)
+		}
+	}
+
+	if len(valuesResolved) == 0 {
+		return nil, fmt.Errorf("%s must not be empty", spec.nameOption)
+	}
+	return applyTraversalOrder(valuesResolved, ruleOrder), nil
+}
+
+func readOrderedListInputFile(filePath string, spec orderedListInputSpec) ([]string, error) {
 	fileIn, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("open organisms file: %w", err)
+		return nil, fmt.Errorf("open %s file: %w", spec.nameOption, err)
 	}
 	defer fileIn.Close()
 
-	setCodes := make(map[string]struct{})
+	valuesResolved := make([]string, 0)
+	setSeen := make(map[string]struct{})
 	scanner := bufio.NewScanner(fileIn)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		code := normalizeKEGGOrganismCode(line)
-		if !isValidKEGGOrganismCode(code) {
-			return nil, fmt.Errorf("invalid KEGG organism code in %s: %s", filePath, line)
+		valueNormalized := spec.fnNormalize(line)
+		if !spec.fnValidate(valueNormalized) {
+			return nil, fmt.Errorf("invalid %s in %s: %s", spec.nameValue, filePath, line)
 		}
-		setCodes[code] = struct{}{}
+		if _, ok := setSeen[valueNormalized]; ok {
+			continue
+		}
+		setSeen[valueNormalized] = struct{}{}
+		valuesResolved = append(valuesResolved, valueNormalized)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read organisms file: %w", err)
+		return nil, fmt.Errorf("read %s file: %w", spec.nameOption, err)
 	}
-	if len(setCodes) == 0 {
-		return nil, fmt.Errorf("organisms file must not be empty: %s", filePath)
+	if len(valuesResolved) == 0 {
+		return nil, fmt.Errorf("%s file must not be empty: %s", spec.nameOption, filePath)
 	}
-	return sets.SortedKeys(setCodes), nil
+	return valuesResolved, nil
+}
+
+func applyTraversalOrder(values []string, ruleOrder string) []string {
+	valuesOrdered := append([]string(nil), values...)
+	switch ruleOrder {
+	case ruleOrderInput:
+		return valuesOrdered
+	case ruleOrderDesc:
+		sort.Strings(valuesOrdered)
+		reverseStrings(valuesOrdered)
+		return valuesOrdered
+	default:
+		sort.Strings(valuesOrdered)
+		return valuesOrdered
+	}
+}
+
+func reverseStrings(values []string) {
+	for idxLeft, idxRight := 0, len(values)-1; idxLeft < idxRight; idxLeft, idxRight = idxLeft+1, idxRight-1 {
+		values[idxLeft], values[idxRight] = values[idxRight], values[idxLeft]
+	}
+}
+
+func parseKEGGOrganismCodes(valuesInput []string) ([]string, error) {
+	return resolveKEGGOrganismInputs(valuesInput, ruleOrderAsc)
+}
+
+func readKEGGOrganismCodesFromFile(filePath string) ([]string, error) {
+	return resolveKEGGOrganismInputs([]string{"@" + filePath}, ruleOrderAsc)
 }
 
 func normalizeKEGGOrganismCode(text string) string {

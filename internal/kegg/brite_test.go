@@ -2,6 +2,8 @@ package kegg
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,12 +37,31 @@ func TestParseBriteIDsCSVSupportsOrganismSpecificIDs(t *testing.T) {
 	}
 }
 
+func TestResolveBriteIDInputsSupportsAtFileAndInputOrder(t *testing.T) {
+	fileBriteIDs := filepath.Join(t.TempDir(), "brite_ids.txt")
+	if err := os.WriteFile(fileBriteIDs, []byte("# comment\nbr08901\nbr08301\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	values, err := resolveBriteIDInputs([]string{"hsa00001", "@" + fileBriteIDs}, ruleOrderInput)
+	if err != nil {
+		t.Fatalf("resolveBriteIDInputs returned error: %v", err)
+	}
+
+	expected := []string{"hsa00001", "br08901", "br08301"}
+	if !reflect.DeepEqual(values, expected) {
+		t.Fatalf("resolveBriteIDInputs = %#v, want %#v", values, expected)
+	}
+}
+
 func TestBuildBriteManifest(t *testing.T) {
 	cfg := briteConfig{
-		version:       "117.0",
-		versionToken:  "117.0",
-		sourceRelease: "117.0+/03-10",
-		catalogCode:   "br",
+		version:            "2026-03",
+		versionToken:       "2026-03",
+		sourceRelease:      "117.0+/03-10",
+		sourceReleaseStart: "117.0+/03-10",
+		sourceReleaseEnd:   "117.0+/03-11",
+		catalogCode:        "br",
 	}
 	records := []briteRecord{
 		{
@@ -68,6 +89,9 @@ func TestBuildBriteManifest(t *testing.T) {
 	)
 	if manifest.Database != "kegg" || manifest.Asset != "brite" {
 		t.Fatalf("manifest = %#v", manifest)
+	}
+	if manifest.VersionToken != "2026-03" || manifest.SourceReleaseStart != "117.0+/03-10" || manifest.SourceReleaseEnd != "117.0+/03-11" {
+		t.Fatalf("manifest release fields = %#v", manifest)
 	}
 	if manifest.Scope.Type != "reference" || manifest.Scope.Value != "br" {
 		t.Fatalf("manifest.Scope = %#v", manifest.Scope)
@@ -112,6 +136,7 @@ func TestParseKEGGOrganismCodesFromList(t *testing.T) {
 func TestValidateBriteConfigAllOrganisms(t *testing.T) {
 	cfg := briteConfig{
 		dirOut:            "/tmp/kegg",
+		versionToken:      "2026-04",
 		shouldDownloadAll: true,
 		retryMax:          1,
 		ruleExisting:      "skip",
@@ -119,11 +144,15 @@ func TestValidateBriteConfigAllOrganisms(t *testing.T) {
 	if err := validateBriteConfig(&cfg); err != nil {
 		t.Fatalf("validateBriteConfig returned error: %v", err)
 	}
+	if cfg.ruleOrder != ruleOrderAsc {
+		t.Fatalf("cfg.ruleOrder = %q, want %q", cfg.ruleOrder, ruleOrderAsc)
+	}
 }
 
 func TestValidateBriteConfigAllOrganismsWithCatalogFails(t *testing.T) {
 	cfg := briteConfig{
 		dirOut:            "/tmp/kegg",
+		versionToken:      "2026-04",
 		catalogCode:       "hsa",
 		shouldDownloadAll: true,
 		retryMax:          1,
@@ -146,9 +175,10 @@ func TestFilterRootBriteIDs(t *testing.T) {
 func TestValidateBriteConfigRootOnlyWithIDsFails(t *testing.T) {
 	cfg := briteConfig{
 		dirOut:                 "/tmp/kegg",
+		versionToken:           "2026-04",
 		catalogCode:            "hsa",
 		shouldDownloadRootOnly: true,
-		briteIDsCSV:            "hsa00001",
+		briteIDs:               []string{"hsa00001"},
 		retryMax:               1,
 		ruleExisting:           "skip",
 	}
@@ -176,5 +206,95 @@ func TestDeriveBriteManifestScopeFromRecords(t *testing.T) {
 	scopeValue := deriveBriteManifestScopeValue(&cfg, records)
 	if scopeType != "organisms" || scopeValue != "hsa,tcar" {
 		t.Fatalf("deriveBriteManifestScope = %q, %q", scopeType, scopeValue)
+	}
+}
+
+func TestValidateBriteConfigRejectsMajorVersionToken(t *testing.T) {
+	cfg := briteConfig{
+		dirOut:       "/tmp/kegg",
+		versionToken: "117.0",
+		catalogCode:  "br",
+		retryMax:     1,
+		ruleExisting: "skip",
+	}
+	err := validateBriteConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "local snapshot key") {
+		t.Fatalf("validateBriteConfig expected snapshot key error, got: %v", err)
+	}
+}
+
+func TestValidateBriteConfigRejectsInvalidRuleOrder(t *testing.T) {
+	cfg := briteConfig{
+		dirOut:       "/tmp/kegg",
+		versionToken: "2026-04",
+		catalogCode:  "br",
+		ruleOrder:    "reverse",
+		retryMax:     1,
+		ruleExisting: "skip",
+	}
+	err := validateBriteConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "rule_order") {
+		t.Fatalf("validateBriteConfig expected rule_order error, got: %v", err)
+	}
+}
+
+func TestValidateBriteConfigResolvesAtFileInputs(t *testing.T) {
+	fileOrganisms := filepath.Join(t.TempDir(), "organisms.txt")
+	if err := os.WriteFile(fileOrganisms, []byte("tca\nhsa\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	fileBriteIDs := filepath.Join(t.TempDir(), "brite_ids.txt")
+	if err := os.WriteFile(fileBriteIDs, []byte("hsa00001\nbr08301\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	cfg := briteConfig{
+		dirOut:       "/tmp/kegg",
+		versionToken: "2026-04",
+		organismCodes: []string{
+			"@" + fileOrganisms,
+		},
+		briteIDs:     []string{"@" + fileBriteIDs},
+		ruleOrder:    ruleOrderInput,
+		retryMax:     1,
+		ruleExisting: "skip",
+	}
+	if err := validateBriteConfig(&cfg); err != nil {
+		t.Fatalf("validateBriteConfig returned error: %v", err)
+	}
+	expectedOrganisms := []string{"tca", "hsa"}
+	if !reflect.DeepEqual(cfg.organismCodes, expectedOrganisms) {
+		t.Fatalf("cfg.organismCodes = %#v, want %#v", cfg.organismCodes, expectedOrganisms)
+	}
+	expectedBriteIDs := []string{"hsa00001", "br08301"}
+	if !reflect.DeepEqual(cfg.briteIDs, expectedBriteIDs) {
+		t.Fatalf("cfg.briteIDs = %#v, want %#v", cfg.briteIDs, expectedBriteIDs)
+	}
+}
+
+func TestReadExistingBriteManifestBackfillsReleaseRange(t *testing.T) {
+	dirTemp := t.TempDir()
+	fileManifest := filepath.Join(dirTemp, "manifest.lock")
+	manifest := briteManifestFile{
+		Database:      "kegg",
+		Asset:         "brite",
+		Version:       "2026-04",
+		VersionToken:  "2026-04",
+		SourceRelease: "118.0+/04-01",
+	}
+	data, err := toml.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("toml.Marshal returned error: %v", err)
+	}
+	if err := os.WriteFile(fileManifest, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	manifestRead, err := readExistingBriteManifest(fileManifest)
+	if err != nil {
+		t.Fatalf("readExistingBriteManifest returned error: %v", err)
+	}
+	if manifestRead.SourceReleaseStart != "118.0+/04-01" || manifestRead.SourceReleaseEnd != "118.0+/04-01" {
+		t.Fatalf("manifestRead = %#v", manifestRead)
 	}
 }

@@ -22,15 +22,17 @@ type briteRecord struct {
 }
 
 type briteManifestFile struct {
-	Database      string                 `toml:"database"`
-	Asset         string                 `toml:"asset"`
-	Version       string                 `toml:"version"`
-	VersionToken  string                 `toml:"version_token"`
-	SourceRelease string                 `toml:"source_release"`
-	DownloadedAt  string                 `toml:"downloaded_at"`
-	Scope         manifestScope          `toml:"scope"`
-	Brites        []briteManifestEntry   `toml:"brites"`
-	Files         []briteManifestFileRef `toml:"files"`
+	Database           string                 `toml:"database"`
+	Asset              string                 `toml:"asset"`
+	Version            string                 `toml:"version"`
+	VersionToken       string                 `toml:"version_token"`
+	SourceRelease      string                 `toml:"source_release"`
+	SourceReleaseStart string                 `toml:"source_release_start,omitempty"`
+	SourceReleaseEnd   string                 `toml:"source_release_end,omitempty"`
+	DownloadedAt       string                 `toml:"downloaded_at"`
+	Scope              manifestScope          `toml:"scope"`
+	Brites             []briteManifestEntry   `toml:"brites"`
+	Files              []briteManifestFileRef `toml:"files"`
 }
 
 type briteManifestEntry struct {
@@ -48,20 +50,20 @@ type briteManifestFileRef struct {
 }
 
 func runFetchBrite(cfg *briteConfig) error {
+	timeStarted := time.Now()
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
-	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "brite")
+	sourceReleaseStart, _, err := resolveKEGGVersion(clientKegg, "brite")
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
-		cfg.versionToken = currentMajorVersion
-	} else if cfg.versionToken != currentMajorVersion {
-		return fmt.Errorf("version %q does not match current KEGG brite major version %q", cfg.versionToken, currentMajorVersion)
+		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	cfg.sourceRelease = sourceRelease
+	cfg.sourceRelease = sourceReleaseStart
+	cfg.sourceReleaseStart = sourceReleaseStart
 
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
@@ -106,6 +108,18 @@ func runFetchBrite(cfg *briteConfig) error {
 	recordsComplete, err := buildCompleteBriteRecords(fileManifest, dirVersion, records)
 	if err != nil {
 		return err
+	}
+	sourceReleaseEnd, _, err := resolveKEGGVersion(clientKegg, "brite")
+	if err != nil {
+		return err
+	}
+	cfg.sourceReleaseEnd = sourceReleaseEnd
+	if cfg.sourceReleaseStart != cfg.sourceReleaseEnd {
+		logf(
+			"KEGG brite release changed during download: start=%s end=%s",
+			cfg.sourceReleaseStart,
+			cfg.sourceReleaseEnd,
+		)
 	}
 
 	if err := writeBriteManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
@@ -197,19 +211,8 @@ func resolveBriteIDs(
 		return nil, nil, "", err
 	}
 
-	if strings.TrimSpace(cfg.briteIDsCSV) != "" {
-		briteIDs, err := parseBriteIDsCSV(cfg.briteIDsCSV)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		return briteIDs, listContent, listURL, nil
-	}
-	if cfg.fileBriteIDs != "" {
-		briteIDs, err := readBriteIDsFromFile(cfg.fileBriteIDs)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		return briteIDs, listContent, listURL, nil
+	if len(cfg.briteIDs) > 0 {
+		return append([]string(nil), cfg.briteIDs...), listContent, listURL, nil
 	}
 
 	briteIDs, err := parseBriteIDsFromList(listContent)
@@ -222,51 +225,21 @@ func resolveBriteIDs(
 			return nil, nil, "", fmt.Errorf("no root BRITE hierarchy (*00001) found for catalog %s", cfg.catalogCode)
 		}
 	}
+	briteIDs = applyTraversalOrder(briteIDs, cfg.ruleOrder)
 	return briteIDs, listContent, listURL, nil
 }
 
 func parseBriteIDsCSV(textCSV string) ([]string, error) {
-	setBriteIDs := make(map[string]struct{})
-	for _, token := range strings.Split(textCSV, ",") {
-		briteID := normalizeBriteID(token)
-		if briteID == "" {
-			continue
-		}
-		if !isValidBriteID(briteID) {
-			return nil, fmt.Errorf("invalid BRITE id: %s", token)
-		}
-		setBriteIDs[briteID] = struct{}{}
-	}
-	return sets.SortedKeys(setBriteIDs), nil
+	return resolveBriteIDInputs([]string{textCSV}, ruleOrderAsc)
 }
 
 func readBriteIDsFromFile(fileBriteIDs string) ([]string, error) {
-	fileIn, err := os.Open(fileBriteIDs)
-	if err != nil {
-		return nil, fmt.Errorf("open BRITE ids file: %w", err)
-	}
-	defer fileIn.Close()
-
-	setBriteIDs := make(map[string]struct{})
-	scanner := bufio.NewScanner(fileIn)
-	for scanner.Scan() {
-		line := normalizeBriteID(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !isValidBriteID(line) {
-			return nil, fmt.Errorf("invalid BRITE id in %s: %s", fileBriteIDs, line)
-		}
-		setBriteIDs[line] = struct{}{}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read BRITE ids file: %w", err)
-	}
-	return sets.SortedKeys(setBriteIDs), nil
+	return resolveBriteIDInputs([]string{"@" + fileBriteIDs}, ruleOrderAsc)
 }
 
 func parseBriteIDsFromList(data []byte) ([]string, error) {
 	setBriteIDs := make(map[string]struct{})
+	briteIDs := make([]string, 0)
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -281,12 +254,16 @@ func parseBriteIDsFromList(data []byte) ([]string, error) {
 		if !isValidBriteID(briteID) {
 			return nil, fmt.Errorf("invalid BRITE id in KEGG list output: %s", fields[0])
 		}
+		if _, ok := setBriteIDs[briteID]; ok {
+			continue
+		}
 		setBriteIDs[briteID] = struct{}{}
+		briteIDs = append(briteIDs, briteID)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan BRITE list: %w", err)
 	}
-	return sets.SortedKeys(setBriteIDs), nil
+	return briteIDs, nil
 }
 
 func fetchBriteAsset(
@@ -462,6 +439,11 @@ func buildBriteManifest(
 	records []briteRecord,
 	timeDownloaded time.Time,
 ) briteManifestFile {
+	sourceRelease, sourceReleaseStart, sourceReleaseEnd := deriveKEGGReleaseFields(
+		cfg.sourceRelease,
+		cfg.sourceReleaseStart,
+		cfg.sourceReleaseEnd,
+	)
 	mapRecordsByBrite := make(map[string][]briteRecord)
 	briteIDs := make([]string, 0)
 	for _, record := range records {
@@ -504,12 +486,14 @@ func buildBriteManifest(
 	}
 
 	return briteManifestFile{
-		Database:      "kegg",
-		Asset:         "brite",
-		Version:       cfg.version,
-		VersionToken:  cfg.versionToken,
-		SourceRelease: cfg.sourceRelease,
-		DownloadedAt:  timeDownloaded.Format(time.RFC3339),
+		Database:           "kegg",
+		Asset:              "brite",
+		Version:            cfg.version,
+		VersionToken:       cfg.versionToken,
+		SourceRelease:      sourceRelease,
+		SourceReleaseStart: sourceReleaseStart,
+		SourceReleaseEnd:   sourceReleaseEnd,
+		DownloadedAt:       timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  deriveBriteManifestScopeType(cfg, records),
 			Value: deriveBriteManifestScopeValue(cfg, records),
@@ -628,16 +612,21 @@ func normalizeBriteID(text string) string {
 	return value
 }
 
-func resolveKEGGOrganismCodes(clientKegg *keggClient) ([]string, error) {
+func resolveKEGGOrganismCodes(clientKegg *keggClient, ruleOrder string) ([]string, error) {
 	data, err := clientKegg.download(baseURL + "/list/organism")
 	if err != nil {
 		return nil, err
 	}
-	return parseKEGGOrganismCodesFromList(data)
+	organismCodes, err := parseKEGGOrganismCodesFromList(data)
+	if err != nil {
+		return nil, err
+	}
+	return applyTraversalOrder(organismCodes, ruleOrder), nil
 }
 
 func parseKEGGOrganismCodesFromList(data []byte) ([]string, error) {
 	setCodes := make(map[string]struct{})
+	codes := make([]string, 0)
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -652,12 +641,17 @@ func parseKEGGOrganismCodesFromList(data []byte) ([]string, error) {
 		if code == "" {
 			continue
 		}
+		code = normalizeKEGGOrganismCode(code)
+		if _, ok := setCodes[code]; ok {
+			continue
+		}
 		setCodes[code] = struct{}{}
+		codes = append(codes, code)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan KEGG organism list: %w", err)
 	}
-	return sets.SortedKeys(setCodes), nil
+	return codes, nil
 }
 
 func isValidBriteID(text string) bool {
@@ -695,7 +689,7 @@ func deriveBriteScopeType(cfg *briteConfig) string {
 func resolveBriteCatalogs(clientKegg *keggClient, cfg *briteConfig) ([]string, error) {
 	switch {
 	case cfg.shouldDownloadAll:
-		organismCodes, err := resolveKEGGOrganismCodes(clientKegg)
+		organismCodes, err := resolveKEGGOrganismCodes(clientKegg, cfg.ruleOrder)
 		if err != nil {
 			return nil, err
 		}
@@ -703,23 +697,7 @@ func resolveBriteCatalogs(clientKegg *keggClient, cfg *briteConfig) ([]string, e
 		cfg.scopeValue = "all"
 		return organismCodes, nil
 	case len(cfg.organismCodes) > 0:
-		organismCodes, err := parseKEGGOrganismCodes(cfg.organismCodes)
-		if err != nil {
-			return nil, err
-		}
-		if len(organismCodes) == 1 {
-			cfg.scopeType = "organism"
-			cfg.scopeValue = organismCodes[0]
-		} else {
-			cfg.scopeType = "organisms"
-			cfg.scopeValue = strings.Join(organismCodes, ",")
-		}
-		return organismCodes, nil
-	case strings.TrimSpace(cfg.fileOrganismCodes) != "":
-		organismCodes, err := readKEGGOrganismCodesFromFile(cfg.fileOrganismCodes)
-		if err != nil {
-			return nil, err
-		}
+		organismCodes := append([]string(nil), cfg.organismCodes...)
 		if len(organismCodes) == 1 {
 			cfg.scopeType = "organism"
 			cfg.scopeValue = organismCodes[0]

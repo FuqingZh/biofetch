@@ -36,15 +36,17 @@ type pathwayRecord struct {
 }
 
 type manifestFile struct {
-	Database      string            `toml:"database"`
-	Asset         string            `toml:"asset"`
-	Version       string            `toml:"version"`
-	VersionToken  string            `toml:"version_token"`
-	SourceRelease string            `toml:"source_release"`
-	DownloadedAt  string            `toml:"downloaded_at"`
-	Scope         manifestScope     `toml:"scope"`
-	Pathways      []manifestPathway `toml:"pathways"`
-	Files         []manifestAsset   `toml:"files"`
+	Database           string            `toml:"database"`
+	Asset              string            `toml:"asset"`
+	Version            string            `toml:"version"`
+	VersionToken       string            `toml:"version_token"`
+	SourceRelease      string            `toml:"source_release"`
+	SourceReleaseStart string            `toml:"source_release_start,omitempty"`
+	SourceReleaseEnd   string            `toml:"source_release_end,omitempty"`
+	DownloadedAt       string            `toml:"downloaded_at"`
+	Scope              manifestScope     `toml:"scope"`
+	Pathways           []manifestPathway `toml:"pathways"`
+	Files              []manifestAsset   `toml:"files"`
 }
 
 type manifestScope struct {
@@ -67,20 +69,20 @@ type manifestAsset struct {
 }
 
 func runFetchPathway(cfg *pathwayConfig) error {
+	timeStarted := time.Now()
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
-	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "pathway")
+	sourceReleaseStart, _, err := resolveKEGGVersion(clientKegg, "pathway")
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
-		cfg.versionToken = currentMajorVersion
-	} else if cfg.versionToken != currentMajorVersion {
-		return fmt.Errorf("version %q does not match current KEGG pathway major version %q", cfg.versionToken, currentMajorVersion)
+		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	cfg.sourceRelease = sourceRelease
+	cfg.sourceRelease = sourceReleaseStart
+	cfg.sourceReleaseStart = sourceReleaseStart
 
 	scopeKeys, err := resolvePathwayScopeKeys(clientKegg, cfg)
 	if err != nil {
@@ -125,6 +127,18 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	if err != nil {
 		return err
 	}
+	sourceReleaseEnd, _, err := resolveKEGGVersion(clientKegg, "pathway")
+	if err != nil {
+		return err
+	}
+	cfg.sourceReleaseEnd = sourceReleaseEnd
+	if cfg.sourceReleaseStart != cfg.sourceReleaseEnd {
+		logf(
+			"KEGG pathway release changed during download: start=%s end=%s",
+			cfg.sourceReleaseStart,
+			cfg.sourceReleaseEnd,
+		)
+	}
 
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return err
@@ -145,25 +159,15 @@ func resolvePathwayIDs(
 		return nil, nil, "", err
 	}
 
-	if strings.TrimSpace(cfg.pathwayIDsCSV) != "" {
-		pathwayIDs, err := parsePathwayIDsCSV(cfg.pathwayIDsCSV)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		return pathwayIDs, listContent, listURL, nil
-	}
-	if cfg.filePathwayIDs != "" {
-		pathwayIDs, err := readPathwayIDsFromFile(cfg.filePathwayIDs)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		return pathwayIDs, listContent, listURL, nil
+	if len(cfg.pathwayIDs) > 0 {
+		return append([]string(nil), cfg.pathwayIDs...), listContent, listURL, nil
 	}
 
 	pathwayIDs, err := parsePathwayIDsFromList(listContent)
 	if err != nil {
 		return nil, nil, "", err
 	}
+	pathwayIDs = applyTraversalOrder(pathwayIDs, cfg.ruleOrder)
 	return pathwayIDs, listContent, listURL, nil
 }
 
@@ -181,7 +185,7 @@ func resolvePathwayScopeKeys(clientKegg *keggClient, cfg *pathwayConfig) ([]stri
 		cfg.scopeValue = "pathway"
 		return []string{"reference"}, nil
 	case cfg.shouldDownloadAll:
-		organismCodes, err := resolveKEGGOrganismCodes(clientKegg)
+		organismCodes, err := resolveKEGGOrganismCodes(clientKegg, cfg.ruleOrder)
 		if err != nil {
 			return nil, err
 		}
@@ -189,23 +193,7 @@ func resolvePathwayScopeKeys(clientKegg *keggClient, cfg *pathwayConfig) ([]stri
 		cfg.scopeValue = "all"
 		return organismCodes, nil
 	case len(cfg.organismCodes) > 0:
-		organismCodes, err := parseKEGGOrganismCodes(cfg.organismCodes)
-		if err != nil {
-			return nil, err
-		}
-		if len(organismCodes) == 1 {
-			cfg.scopeType = "organism"
-			cfg.scopeValue = organismCodes[0]
-		} else {
-			cfg.scopeType = "organisms"
-			cfg.scopeValue = strings.Join(organismCodes, ",")
-		}
-		return organismCodes, nil
-	case strings.TrimSpace(cfg.fileOrganismCodes) != "":
-		organismCodes, err := readKEGGOrganismCodesFromFile(cfg.fileOrganismCodes)
-		if err != nil {
-			return nil, err
-		}
+		organismCodes := append([]string(nil), cfg.organismCodes...)
 		if len(organismCodes) == 1 {
 			cfg.scopeType = "organism"
 			cfg.scopeValue = organismCodes[0]
@@ -364,48 +352,16 @@ func derivePathwayAssetSpecs(
 }
 
 func parsePathwayIDsCSV(textCSV string) ([]string, error) {
-	setPathwayIDs := make(map[string]struct{})
-	for _, token := range strings.Split(textCSV, ",") {
-		pathwayID := strings.TrimSpace(token)
-		if pathwayID == "" {
-			continue
-		}
-		if !isValidPathwayID(pathwayID) {
-			return nil, fmt.Errorf("invalid pathway id: %s", pathwayID)
-		}
-		setPathwayIDs[pathwayID] = struct{}{}
-	}
-	return sets.SortedKeys(setPathwayIDs), nil
+	return resolvePathwayIDInputs([]string{textCSV}, ruleOrderAsc)
 }
 
 func readPathwayIDsFromFile(filePathwayIDs string) ([]string, error) {
-	fileIn, err := os.Open(filePathwayIDs)
-	if err != nil {
-		return nil, fmt.Errorf("open pathway ids file: %w", err)
-	}
-	defer fileIn.Close()
-
-	setPathwayIDs := make(map[string]struct{})
-	scanner := bufio.NewScanner(fileIn)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !isValidPathwayID(line) {
-			return nil, fmt.Errorf("invalid pathway id in %s: %s", filePathwayIDs, line)
-		}
-		setPathwayIDs[line] = struct{}{}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read pathway ids file: %w", err)
-	}
-
-	return sets.SortedKeys(setPathwayIDs), nil
+	return resolvePathwayIDInputs([]string{"@" + filePathwayIDs}, ruleOrderAsc)
 }
 
 func parsePathwayIDsFromList(data []byte) ([]string, error) {
 	setPathwayIDs := make(map[string]struct{})
+	pathwayIDs := make([]string, 0)
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -416,16 +372,20 @@ func parsePathwayIDsFromList(data []byte) ([]string, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		pathwayID := strings.TrimSpace(fields[0])
+		pathwayID := normalizePathwayID(fields[0])
 		if !isValidPathwayID(pathwayID) {
 			return nil, fmt.Errorf("invalid pathway id in KEGG list output: %s", pathwayID)
 		}
+		if _, ok := setPathwayIDs[pathwayID]; ok {
+			continue
+		}
 		setPathwayIDs[pathwayID] = struct{}{}
+		pathwayIDs = append(pathwayIDs, pathwayID)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan pathway list: %w", err)
 	}
-	return sets.SortedKeys(setPathwayIDs), nil
+	return pathwayIDs, nil
 }
 
 func fetchPathwayAsset(
@@ -603,6 +563,11 @@ func buildManifestFile(
 	records []pathwayRecord,
 	timeDownloaded time.Time,
 ) manifestFile {
+	sourceRelease, sourceReleaseStart, sourceReleaseEnd := deriveKEGGReleaseFields(
+		cfg.sourceRelease,
+		cfg.sourceReleaseStart,
+		cfg.sourceReleaseEnd,
+	)
 	mapRecordsByPathway := make(map[string][]pathwayRecord)
 	pathwayIDs := make([]string, 0)
 	for _, record := range records {
@@ -648,12 +613,14 @@ func buildManifestFile(
 	scopeType, scopeValue := derivePathwayManifestScope(cfg, records)
 
 	return manifestFile{
-		Database:      "kegg",
-		Asset:         "pathway",
-		Version:       cfg.version,
-		VersionToken:  cfg.versionToken,
-		SourceRelease: cfg.sourceRelease,
-		DownloadedAt:  timeDownloaded.Format(time.RFC3339),
+		Database:           "kegg",
+		Asset:              "pathway",
+		Version:            cfg.version,
+		VersionToken:       cfg.versionToken,
+		SourceRelease:      sourceRelease,
+		SourceReleaseStart: sourceReleaseStart,
+		SourceReleaseEnd:   sourceReleaseEnd,
+		DownloadedAt:       timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  scopeType,
 			Value: scopeValue,
@@ -864,6 +831,10 @@ func isValidPathwayID(text string) bool {
 		}
 	}
 	return true
+}
+
+func normalizePathwayID(text string) string {
+	return strings.TrimSpace(text)
 }
 
 func logf(format string, args ...interface{}) {

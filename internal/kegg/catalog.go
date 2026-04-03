@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
 	"os"
@@ -22,6 +23,8 @@ type catalogConfig struct {
 	version                string
 	versionToken           string
 	sourceRelease          string
+	sourceReleaseStart     string
+	sourceReleaseEnd       string
 	shouldAllowInsecureTLS bool
 	shouldDryRun           bool
 }
@@ -48,14 +51,16 @@ type catalogRecord struct {
 }
 
 type catalogManifestFile struct {
-	Database      string                    `toml:"database"`
-	Asset         string                    `toml:"asset"`
-	Catalog       string                    `toml:"catalog"`
-	Version       string                    `toml:"version"`
-	VersionToken  string                    `toml:"version_token"`
-	SourceRelease string                    `toml:"source_release"`
-	DownloadedAt  string                    `toml:"downloaded_at"`
-	Files         []catalogManifestFileItem `toml:"files"`
+	Database           string                    `toml:"database"`
+	Asset              string                    `toml:"asset"`
+	Catalog            string                    `toml:"catalog"`
+	Version            string                    `toml:"version"`
+	VersionToken       string                    `toml:"version_token"`
+	SourceRelease      string                    `toml:"source_release"`
+	SourceReleaseStart string                    `toml:"source_release_start,omitempty"`
+	SourceReleaseEnd   string                    `toml:"source_release_end,omitempty"`
+	DownloadedAt       string                    `toml:"downloaded_at"`
+	Files              []catalogManifestFileItem `toml:"files"`
 }
 
 type catalogManifestFileItem struct {
@@ -86,7 +91,7 @@ func createCatalogFetchCommand() *cobra.Command {
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG major version, e.g. 117.0")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
 		"should_allow_insecure_tls",
@@ -117,7 +122,7 @@ func createCatalogLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	return commandLock
 }
@@ -142,7 +147,7 @@ func createCatalogSyncCommand() *cobra.Command {
 	flags := commandSync.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG version token")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
 		"should_allow_insecure_tls",
@@ -157,8 +162,8 @@ func validateCatalogFetchConfig(cfg *catalogConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
 	}
-	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGMajorVersion(cfg.versionToken) {
-		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	return nil
 }
@@ -170,8 +175,8 @@ func validateCatalogLockConfig(cfg *catalogLockConfig) error {
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		return fmt.Errorf("version is required")
 	}
-	if !isValidKEGGMajorVersion(cfg.versionToken) {
-		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	return nil
 }
@@ -183,27 +188,27 @@ func validateCatalogSyncConfig(cfg *catalogSyncConfig) error {
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		return fmt.Errorf("version is required")
 	}
-	if !isValidKEGGMajorVersion(cfg.versionToken) {
-		return fmt.Errorf("version must be a KEGG major version like 117.0")
+	if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	return nil
 }
 
 func runFetchCatalog(cfg *catalogConfig) error {
+	timeStarted := time.Now()
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, 350*time.Millisecond, defaultKEGGRetryMax, defaultKEGGRetryWait)
 
-	sourceRelease, currentMajorVersion, err := resolveKEGGVersion(clientKegg, "kegg")
+	sourceReleaseStart, _, err := resolveKEGGVersion(clientKegg, "kegg")
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
-		cfg.versionToken = currentMajorVersion
-	} else if cfg.versionToken != currentMajorVersion {
-		return fmt.Errorf("version %q does not match current KEGG catalog major version %q", cfg.versionToken, currentMajorVersion)
+		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	cfg.sourceRelease = sourceRelease
+	cfg.sourceRelease = sourceReleaseStart
+	cfg.sourceReleaseStart = sourceReleaseStart
 
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
 	dirRaw := filepath.Join(dirVersion, "raw")
@@ -244,6 +249,18 @@ func runFetchCatalog(cfg *catalogConfig) error {
 	if err != nil {
 		return err
 	}
+	sourceReleaseEnd, _, err := resolveKEGGVersion(clientKegg, "kegg")
+	if err != nil {
+		return err
+	}
+	cfg.sourceReleaseEnd = sourceReleaseEnd
+	if cfg.sourceReleaseStart != cfg.sourceReleaseEnd {
+		logf(
+			"KEGG catalog release changed during download: start=%s end=%s",
+			cfg.sourceReleaseStart,
+			cfg.sourceReleaseEnd,
+		)
+	}
 	if err := writeCatalogManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return err
 	}
@@ -264,9 +281,11 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 
 	manifestExisting, _ := readExistingCatalogManifest(fileManifest)
 	cfgManifest := catalogConfig{
-		version:       firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:  firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
-		sourceRelease: manifestExisting.SourceRelease,
+		version:            firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:       firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease:      manifestExisting.SourceRelease,
+		sourceReleaseStart: manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
 	}
 
 	if cfg.shouldDryRun {
@@ -344,9 +363,11 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 	}
 
 	cfgManifest := catalogConfig{
-		version:       manifestExisting.Version,
-		versionToken:  manifestExisting.VersionToken,
-		sourceRelease: manifestExisting.SourceRelease,
+		version:            manifestExisting.Version,
+		versionToken:       manifestExisting.VersionToken,
+		sourceRelease:      manifestExisting.SourceRelease,
+		sourceReleaseStart: manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
 	}
 	if err := writeCatalogManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -432,6 +453,11 @@ func buildCatalogManifest(
 	records []catalogRecord,
 	timeDownloaded time.Time,
 ) catalogManifestFile {
+	sourceRelease, sourceReleaseStart, sourceReleaseEnd := deriveKEGGReleaseFields(
+		cfg.sourceRelease,
+		cfg.sourceReleaseStart,
+		cfg.sourceReleaseEnd,
+	)
 	files := make([]catalogManifestFileItem, 0, len(records))
 	for _, record := range records {
 		files = append(files, catalogManifestFileItem{
@@ -444,14 +470,16 @@ func buildCatalogManifest(
 	}
 
 	return catalogManifestFile{
-		Database:      "kegg",
-		Asset:         "catalog",
-		Catalog:       keggCatalogAsset,
-		Version:       cfg.version,
-		VersionToken:  cfg.versionToken,
-		SourceRelease: cfg.sourceRelease,
-		DownloadedAt:  timeDownloaded.Format(time.RFC3339),
-		Files:         files,
+		Database:           "kegg",
+		Asset:              "catalog",
+		Catalog:            keggCatalogAsset,
+		Version:            cfg.version,
+		VersionToken:       cfg.versionToken,
+		SourceRelease:      sourceRelease,
+		SourceReleaseStart: sourceReleaseStart,
+		SourceReleaseEnd:   sourceReleaseEnd,
+		DownloadedAt:       timeDownloaded.Format(time.RFC3339),
+		Files:              files,
 	}
 }
 
@@ -464,6 +492,11 @@ func readExistingCatalogManifest(fileManifest string) (catalogManifestFile, erro
 	if !ok {
 		return catalogManifestFile{}, nil
 	}
+	manifest.SourceRelease, manifest.SourceReleaseStart, manifest.SourceReleaseEnd = deriveKEGGReleaseFields(
+		manifest.SourceRelease,
+		manifest.SourceReleaseStart,
+		manifest.SourceReleaseEnd,
+	)
 	return manifest, nil
 }
 
@@ -522,10 +555,21 @@ func readExistingCatalogRecords(fileManifest string) ([]catalogRecord, error) {
 }
 
 func scanCatalogRecords(dirVersion string) ([]catalogRecord, error) {
-	filePath := filepath.Join(dirVersion, "raw", keggCatalogFileName)
-	record, err := buildCatalogRecord(filePath, filepath.ToSlash(filepath.Join("raw", keggCatalogFileName)), keggCatalogAsset, keggCatalogURL)
-	if err != nil {
-		return nil, err
+	type taskCatalogRecord struct {
+		filePath string
+		pathRel  string
+		asset    string
+		urlFile  string
 	}
-	return []catalogRecord{record}, nil
+
+	return parallel.MapOrdered([]taskCatalogRecord{
+		{
+			filePath: filepath.Join(dirVersion, "raw", keggCatalogFileName),
+			pathRel:  filepath.ToSlash(filepath.Join("raw", keggCatalogFileName)),
+			asset:    keggCatalogAsset,
+			urlFile:  keggCatalogURL,
+		},
+	}, func(task taskCatalogRecord) (catalogRecord, error) {
+		return buildCatalogRecord(task.filePath, task.pathRel, task.asset, task.urlFile)
+	})
 }

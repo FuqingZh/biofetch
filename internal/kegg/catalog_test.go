@@ -13,9 +13,11 @@ import (
 
 func TestBuildCatalogManifest(t *testing.T) {
 	cfg := catalogConfig{
-		version:       "117.0",
-		versionToken:  "117.0",
-		sourceRelease: "117.0+/03-26",
+		version:            "2026-03",
+		versionToken:       "2026-03",
+		sourceRelease:      "117.0+/03-26",
+		sourceReleaseStart: "117.0+/03-26",
+		sourceReleaseEnd:   "117.0+/03-27",
 	}
 	records := []catalogRecord{
 		{
@@ -45,8 +47,11 @@ func TestBuildCatalogManifest(t *testing.T) {
 	if err := toml.Unmarshal(buffer.Bytes(), &decoded); err != nil {
 		t.Fatalf("toml.Unmarshal returned error: %v", err)
 	}
-	if decoded.VersionToken != "117.0" || decoded.SourceRelease != "117.0+/03-26" {
+	if decoded.VersionToken != "2026-03" || decoded.SourceRelease != "117.0+/03-26" {
 		t.Fatalf("decoded = %#v", decoded)
+	}
+	if decoded.SourceReleaseStart != "117.0+/03-26" || decoded.SourceReleaseEnd != "117.0+/03-27" {
+		t.Fatalf("decoded release range = %#v", decoded)
 	}
 	if len(decoded.Files) != 1 || decoded.Files[0].Path != "raw/organism.list.tsv" {
 		t.Fatalf("decoded.Files = %#v", decoded.Files)
@@ -83,7 +88,45 @@ func TestValidateCatalogFetchConfigRejectsInvalidVersion(t *testing.T) {
 		versionToken: "current",
 	}
 	err := validateCatalogFetchConfig(&cfg)
-	if err == nil || !strings.Contains(err.Error(), "KEGG major version") {
+	if err == nil || !strings.Contains(err.Error(), "local snapshot key") {
 		t.Fatalf("validateCatalogFetchConfig expected version error, got: %v", err)
+	}
+}
+
+func TestValidateCatalogFetchConfigAcceptsSnapshotVersion(t *testing.T) {
+	cfg := catalogConfig{
+		dirOut:       "/tmp/kegg",
+		versionToken: "2026-04",
+	}
+	if err := validateCatalogFetchConfig(&cfg); err != nil {
+		t.Fatalf("validateCatalogFetchConfig returned error: %v", err)
+	}
+}
+
+func TestReadExistingCatalogManifestBackfillsReleaseRange(t *testing.T) {
+	dirTemp := t.TempDir()
+	fileManifest := filepath.Join(dirTemp, "manifest.lock")
+	manifest := catalogManifestFile{
+		Database:      "kegg",
+		Asset:         "catalog",
+		Catalog:       keggCatalogAsset,
+		Version:       "2026-04",
+		VersionToken:  "2026-04",
+		SourceRelease: "118.0+/04-01",
+	}
+	data, err := toml.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("toml.Marshal returned error: %v", err)
+	}
+	if err := os.WriteFile(fileManifest, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	manifestRead, err := readExistingCatalogManifest(fileManifest)
+	if err != nil {
+		t.Fatalf("readExistingCatalogManifest returned error: %v", err)
+	}
+	if manifestRead.SourceReleaseStart != "118.0+/04-01" || manifestRead.SourceReleaseEnd != "118.0+/04-01" {
+		t.Fatalf("manifestRead = %#v", manifestRead)
 	}
 }
