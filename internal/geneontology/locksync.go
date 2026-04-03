@@ -2,6 +2,9 @@ package geneontology
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/parallel"
+	"biofetch/internal/shared/tomlx"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +23,7 @@ type ontologySyncConfig struct {
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
 	cliopt.RetryConfig
+	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
 }
@@ -27,8 +31,12 @@ type ontologySyncConfig struct {
 func runLockOntology(cfg *ontologyLockConfig) error {
 	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	urlsExisting, err := buildOntologyExistingURLMap(fileManifest)
+	if err != nil {
+		return err
+	}
 
-	records, err := scanOntologyRecords(dirVersion)
+	records, err := scanOntologyRecords(dirVersion, cfg.VersionToken, urlsExisting)
 	if err != nil {
 		return err
 	}
@@ -44,7 +52,7 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 		version:       cfg.VersionToken,
 		VersionConfig: cliopt.VersionConfig{VersionToken: cfg.VersionToken},
 	}
-	if err := writeManifest(fileManifest, &cfgManifest, records, time.Now()); err != nil {
+	if err := tomlx.WriteFileAtomic(fileManifest, buildOntologyManifestFile(&cfgManifest, records, time.Now())); err != nil {
 		return err
 	}
 
@@ -64,50 +72,48 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
 	}
 
-	clientHTTP := createHTTPClient(cfg.ShouldAllowInsecureTLS)
-	recordsCurrent := make([]ontologyRecord, 0, len(recordsManifest))
-	for _, record := range recordsManifest {
-		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
-		if cfg.ShouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
-		}
-
-		shouldDownload := cfg.ShouldOverwriteExisting
-		if !shouldDownload {
-			recordCurrent, ok, err := inspectExistingAsset(filePath, record.PathRel, ontologyAsset{name: record.Asset, url: record.URL})
-			if err != nil {
-				return err
-			}
-			if ok && recordCurrent.SHA256 == record.SHA256 {
-				recordsCurrent = append(recordsCurrent, recordCurrent)
-				continue
-			}
-			shouldDownload = true
-		}
-
-		if shouldDownload {
-			logf("sync downloading %s", filepath.Base(filePath))
-			if err := downloadFileWithRetry(clientHTTP, record.URL, filePath, cfg.RetryMax, cfg.RetryWait); err != nil {
-				return err
-			}
-		}
-
-		recordCurrent, err := buildOntologyRecord(filePath, record.PathRel, ontologyAsset{name: record.Asset, url: record.URL})
+	filesCurrentByPath := map[string]ontologyFileState{}
+	if !cfg.ShouldOverwriteExisting {
+		dirRaw := filepath.Join(dirVersion, "raw")
+		filesCurrentByPath, err = scanOntologyRawFileStateIndex(dirRaw)
 		if err != nil {
 			return err
 		}
-		recordsCurrent = append(recordsCurrent, recordCurrent)
 	}
 
 	if cfg.ShouldDryRun {
+		for _, record := range recordsManifest {
+			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
+			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+		}
 		logf("dry-run sync done (files=%d)", len(recordsManifest))
 		return nil
 	}
+
+	recordsReused, tasksDownload := planSyncOntologyTasks(
+		dirVersion,
+		recordsManifest,
+		cfg.ShouldOverwriteExisting,
+		filesCurrentByPath,
+	)
+
+	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
+	limiterRequest := httpx.NewRequestLimiter(cfg.RequestInterval)
+	recordsDownloaded, err := runOntologyDownloadTasks(
+		clientHTTP,
+		tasksDownload,
+		cfg.RetryMax,
+		cfg.RetryWait,
+		cfg.WorkersMax,
+		limiterRequest,
+	)
+	if err != nil {
+		return err
+	}
+
+	recordsCurrent := make([]ontologyRecord, 0, len(recordsReused)+len(recordsDownloaded))
+	recordsCurrent = append(recordsCurrent, recordsReused...)
+	recordsCurrent = append(recordsCurrent, recordsDownloaded...)
 
 	recordsComplete, err := buildCompleteOntologyRecords(fileManifest, dirVersion, recordsCurrent)
 	if err != nil {
@@ -117,7 +123,7 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 		version:       cfg.VersionToken,
 		VersionConfig: cliopt.VersionConfig{VersionToken: cfg.VersionToken},
 	}
-	if err := writeManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
+	if err := tomlx.WriteFileAtomic(fileManifest, buildOntologyManifestFile(&cfgManifest, recordsComplete, time.Now())); err != nil {
 		return err
 	}
 
@@ -126,14 +132,24 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 	return nil
 }
 
-func scanOntologyRecords(dirVersion string) ([]ontologyRecord, error) {
+func scanOntologyRecords(
+	dirVersion string,
+	versionToken string,
+	urlsExisting map[string]string,
+) ([]ontologyRecord, error) {
+	type taskOntologyRecord struct {
+		filePath string
+		pathRel  string
+		asset    ontologyAsset
+	}
+
 	dirRaw := filepath.Join(dirVersion, "raw")
 	entries, err := os.ReadDir(dirRaw)
 	if err != nil {
 		return nil, fmt.Errorf("read raw dir: %w", err)
 	}
 
-	records := make([]ontologyRecord, 0)
+	tasks := make([]taskOntologyRecord, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -141,15 +157,42 @@ func scanOntologyRecords(dirVersion string) ([]ontologyRecord, error) {
 		fileName := entry.Name()
 		filePath := filepath.Join(dirRaw, fileName)
 		pathRel := filepath.ToSlash(filepath.Join("raw", fileName))
-		record, err := buildOntologyRecord(filePath, pathRel, ontologyAsset{name: fileName, url: ontologyBaseURL + fileName})
-		if err != nil {
-			return nil, err
+		urlAsset := urlsExisting[pathRel]
+		if urlAsset == "" {
+			urlAsset = buildOntologyAssetURL(buildOntologyBaseURLForVersionToken(versionToken), fileName)
 		}
-		records = append(records, record)
+		tasks = append(tasks, taskOntologyRecord{
+			filePath: filePath,
+			pathRel:  pathRel,
+			asset:    ontologyAsset{name: fileName, url: urlAsset},
+		})
+	}
+
+	records, err := parallel.MapOrdered(tasks, func(task taskOntologyRecord) (ontologyRecord, error) {
+		return buildOntologyRecord(task.filePath, task.pathRel, task.asset)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].Asset < records[j].Asset
 	})
 	return records, nil
+}
+
+func buildOntologyExistingURLMap(fileManifest string) (map[string]string, error) {
+	recordsExisting, err := readExistingOntologyRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+
+	urls := make(map[string]string, len(recordsExisting))
+	for _, record := range recordsExisting {
+		if record.PathRel == "" || record.URL == "" {
+			continue
+		}
+		urls[record.PathRel] = record.URL
+	}
+	return urls, nil
 }

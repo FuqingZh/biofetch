@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/log v1.0.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.10.1
+	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/net v0.51.0
 )
 

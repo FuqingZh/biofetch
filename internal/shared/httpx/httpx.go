@@ -6,7 +6,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 )
+
+type RequestLimiter struct {
+	interval        time.Duration
+	mutexLimiter    sync.Mutex
+	timeLastRequest time.Time
+}
 
 func NewClient(shouldAllowInsecureTLS bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -18,6 +26,27 @@ func NewClient(shouldAllowInsecureTLS bool) *http.Client {
 		Timeout:   0,
 		Transport: transport,
 	}
+}
+
+func NewRequestLimiter(requestInterval time.Duration) *RequestLimiter {
+	return &RequestLimiter{interval: requestInterval}
+}
+
+func (limiter *RequestLimiter) Wait() {
+	if limiter == nil || limiter.interval <= 0 {
+		return
+	}
+
+	limiter.mutexLimiter.Lock()
+	defer limiter.mutexLimiter.Unlock()
+
+	if !limiter.timeLastRequest.IsZero() {
+		wait := limiter.interval - time.Since(limiter.timeLastRequest)
+		if wait > 0 {
+			time.Sleep(wait)
+		}
+	}
+	limiter.timeLastRequest = time.Now()
 }
 
 func DownloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error {

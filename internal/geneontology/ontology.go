@@ -1,8 +1,10 @@
 package geneontology
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/tomlx"
 	"bytes"
@@ -32,6 +34,23 @@ type ontologyRecord struct {
 	URL     string
 }
 
+type ontologyFileState struct {
+	Bytes int64
+}
+
+type ontologyDownloadTask struct {
+	asset      ontologyAsset
+	fileOut    string
+	pathRel    string
+	textAction string
+}
+
+type ontologySource struct {
+	version      string
+	versionToken string
+	baseURL      string
+}
+
 type ontologyManifestFile struct {
 	Database     string                     `toml:"database"`
 	Asset        string                     `toml:"asset"`
@@ -49,26 +68,33 @@ type ontologyManifestFileItem struct {
 	URL    string `toml:"url"`
 }
 
-const ontologyBaseURL = "https://current.geneontology.org/ontology/"
-const ontologyIndexURL = ontologyBaseURL + "index.html"
+const ontologyCurrentBaseURL = "https://current.geneontology.org/ontology/"
+const ontologyArchiveRootURL = "https://release.geneontology.org/"
+const ontologyArchiveDocsURL = "https://geneontology.org/docs/download-ontology/"
 const ontologyVersionAssetName = "go-basic.obo"
 
-func runFetchOntology(cfg *ontologyConfig) error {
-	clientHTTP := createHTTPClient(cfg.ShouldAllowInsecureTLS)
-	assetsAvailable, err := discoverOntologyAssets(clientHTTP)
+func runFetchOntology(cfg *ontologyConfig, readerConfirm io.Reader, writerConfirm io.Writer) error {
+	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
+	limiterRequest := httpx.NewRequestLimiter(cfg.RequestInterval)
+	source, err := resolveOntologySource(clientHTTP, cfg.VersionToken, limiterRequest)
 	if err != nil {
 		return err
 	}
-	assets, err := resolveOntologyAssets(assetsAvailable, cfg.assetNames, cfg.shouldDownloadAll)
+	assetsAvailable, err := discoverOntologyAssets(clientHTTP, source.baseURL, limiterRequest)
 	if err != nil {
 		return err
 	}
-	version, versionToken, err := resolveOntologyVersion(clientHTTP)
+	assets, err := resolveOntologyAssets(assetsAvailable, cfg.assetNames)
 	if err != nil {
 		return err
 	}
-	cfg.version = version
-	cfg.VersionToken = versionToken
+	if shouldConfirmAllOntologyDownload(assetsAvailable, assets) {
+		if err := confirmAllOntologyDownload(readerConfirm, writerConfirm); err != nil {
+			return err
+		}
+	}
+	cfg.version = source.version
+	cfg.VersionToken = source.versionToken
 
 	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	dirRaw := filepath.Join(dirVersion, "raw")
@@ -87,28 +113,58 @@ func runFetchOntology(cfg *ontologyConfig) error {
 		}
 	}
 
-	records := make([]ontologyRecord, 0, len(assets))
-
-	for _, asset := range assets {
-		fileOut := filepath.Join(dirRaw, asset.name)
-		pathRel := filepath.ToSlash(filepath.Join("raw", asset.name))
-
-		if cfg.ShouldDryRun {
-			logf("[dry-run] %s -> %s", asset.url, fileOut)
-			continue
-		}
-
-		record, err := fetchOntologyAsset(clientHTTP, cfg, asset, fileOut, pathRel)
+	recordsManifestByPath := map[string]ontologyRecord{}
+	filesCurrentByPath := map[string]ontologyFileState{}
+	if !cfg.ShouldOverwriteExisting {
+		var err error
+		recordsManifestByPath, err = buildOntologyRecordIndex(fileManifest)
 		if err != nil {
 			return err
 		}
-		records = append(records, record)
+		filesCurrentByPath, err = scanOntologyRawFileStateIndex(dirRaw)
+		if err != nil {
+			return err
+		}
 	}
 
 	if cfg.ShouldDryRun {
+		for _, asset := range assets {
+			fileOut := filepath.Join(dirRaw, asset.name)
+			logf("[dry-run] %s -> %s", asset.url, fileOut)
+		}
 		logf("[dry-run] done (assets=%d)", len(assets))
 		return nil
 	}
+
+	recordsReused, tasksDownload, err := planFetchOntologyTasks(
+		assets,
+		dirRaw,
+		cfg.ShouldOverwriteExisting,
+		recordsManifestByPath,
+		filesCurrentByPath,
+	)
+	if err != nil {
+		return err
+	}
+	for _, record := range recordsReused {
+		logf("using existing %s", record.Asset)
+	}
+
+	recordsDownloaded, err := runOntologyDownloadTasks(
+		clientHTTP,
+		tasksDownload,
+		cfg.RetryMax,
+		cfg.RetryWait,
+		cfg.WorkersMax,
+		limiterRequest,
+	)
+	if err != nil {
+		return err
+	}
+
+	records := make([]ontologyRecord, 0, len(recordsReused)+len(recordsDownloaded))
+	records = append(records, recordsReused...)
+	records = append(records, recordsDownloaded...)
 
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].Asset < records[j].Asset
@@ -119,7 +175,7 @@ func runFetchOntology(cfg *ontologyConfig) error {
 		return err
 	}
 
-	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
+	if err := tomlx.WriteFileAtomic(fileManifest, buildOntologyManifestFile(cfg, recordsComplete, time.Now())); err != nil {
 		return err
 	}
 
@@ -128,15 +184,19 @@ func runFetchOntology(cfg *ontologyConfig) error {
 	return nil
 }
 
-func discoverOntologyAssets(clientHTTP *http.Client) ([]ontologyAsset, error) {
-	data, err := downloadText(clientHTTP, ontologyIndexURL)
+func discoverOntologyAssets(
+	clientHTTP *http.Client,
+	baseURL string,
+	limiterRequest *httpx.RequestLimiter,
+) ([]ontologyAsset, error) {
+	data, err := downloadText(clientHTTP, buildOntologyIndexURL(baseURL), limiterRequest)
 	if err != nil {
 		return nil, err
 	}
-	return parseOntologyAssetsFromIndex(data)
+	return parseOntologyAssetsFromIndex(data, baseURL)
 }
 
-func parseOntologyAssetsFromIndex(data []byte) ([]ontologyAsset, error) {
+func parseOntologyAssetsFromIndex(data []byte, baseURL string) ([]ontologyAsset, error) {
 	document, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("parse ontology index html: %w", err)
@@ -147,12 +207,12 @@ func parseOntologyAssetsFromIndex(data []byte) ([]ontologyAsset, error) {
 		if shouldIncludeOntologyAsset(name) {
 			assetsByName[name] = ontologyAsset{
 				name: name,
-				url:  ontologyBaseURL + name,
+				url:  buildOntologyAssetURL(baseURL, name),
 			}
 		}
 	}
 	if len(assetsByName) == 0 {
-		return nil, fmt.Errorf("no ontology assets found at %s", ontologyIndexURL)
+		return nil, fmt.Errorf("no ontology assets found at %s", buildOntologyIndexURL(baseURL))
 	}
 
 	names := make([]string, 0, len(assetsByName))
@@ -243,9 +303,8 @@ func shouldIncludeOntologyAsset(name string) bool {
 func resolveOntologyAssets(
 	assetsAvailable []ontologyAsset,
 	assetNames []string,
-	shouldDownloadAll bool,
 ) ([]ontologyAsset, error) {
-	if shouldDownloadAll {
+	if len(assetNames) == 0 {
 		return assetsAvailable, nil
 	}
 
@@ -276,16 +335,28 @@ func resolveOntologyAssets(
 	return assets, nil
 }
 
+func shouldConfirmAllOntologyDownload(
+	assetsAvailable []ontologyAsset,
+	assetsResolved []ontologyAsset,
+) bool {
+	if len(assetsAvailable) == 0 {
+		return false
+	}
+	return len(assetsResolved) == len(assetsAvailable)
+}
+
 func parseOntologyAssetNames(values []string) ([]string, error) {
-	setAssets := make(map[string]struct{})
-	for _, value := range values {
-		for _, token := range strings.Split(value, ",") {
-			name := strings.TrimSpace(token)
-			if name == "" {
-				continue
-			}
-			setAssets[name] = struct{}{}
+	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	if err != nil {
+		return nil, err
+	}
+	setAssets := make(map[string]struct{}, len(valuesResolved))
+	for _, value := range valuesResolved {
+		name := strings.TrimSpace(value)
+		if name == "" {
+			continue
 		}
+		setAssets[name] = struct{}{}
 	}
 	if len(setAssets) == 0 {
 		return nil, fmt.Errorf("assets must not be empty")
@@ -294,44 +365,23 @@ func parseOntologyAssetNames(values []string) ([]string, error) {
 	return sets.SortedKeys(setAssets), nil
 }
 
-func fetchOntologyAsset(
-	clientHTTP *http.Client,
-	cfg *ontologyConfig,
-	asset ontologyAsset,
-	fileOut string,
-	pathRel string,
-) (ontologyRecord, error) {
-	if !cfg.ShouldOverwriteExisting {
-		recordExisting, ok, err := inspectExistingAsset(fileOut, pathRel, asset)
-		if err != nil {
-			return ontologyRecord{}, err
-		}
-		if ok {
-			logf("using existing %s", asset.name)
-			return recordExisting, nil
-		}
-	}
-
-	logf("downloading %s", asset.name)
-	if err := downloadFileWithRetry(clientHTTP, asset.url, fileOut, cfg.RetryMax, cfg.RetryWait); err != nil {
-		return ontologyRecord{}, err
-	}
-	return buildOntologyRecord(fileOut, pathRel, asset)
-}
-
-func inspectExistingAsset(
+func resolveExistingOntologyFetchRecord(
 	filePath string,
 	pathRel string,
 	asset ontologyAsset,
+	recordsManifestByPath map[string]ontologyRecord,
+	filesCurrentByPath map[string]ontologyFileState,
 ) (ontologyRecord, bool, error) {
-	infoFile, err := os.Stat(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ontologyRecord{}, false, nil
-		}
-		return ontologyRecord{}, false, fmt.Errorf("stat existing file: %w", err)
+	stateFile, ok := filesCurrentByPath[pathRel]
+	if !ok || stateFile.Bytes <= 0 {
+		return ontologyRecord{}, false, nil
 	}
-	if infoFile.Size() <= 0 {
+
+	recordManifest, ok := recordsManifestByPath[pathRel]
+	if ok {
+		if recordManifest.Bytes == stateFile.Bytes {
+			return recordManifest, true, nil
+		}
 		return ontologyRecord{}, false, nil
 	}
 
@@ -340,6 +390,117 @@ func inspectExistingAsset(
 		return ontologyRecord{}, false, err
 	}
 	return record, true, nil
+}
+
+func planFetchOntologyTasks(
+	assets []ontologyAsset,
+	dirRaw string,
+	shouldOverwriteExisting bool,
+	recordsManifestByPath map[string]ontologyRecord,
+	filesCurrentByPath map[string]ontologyFileState,
+) ([]ontologyRecord, []ontologyDownloadTask, error) {
+	recordsReused := make([]ontologyRecord, 0, len(assets))
+	tasksDownload := make([]ontologyDownloadTask, 0, len(assets))
+
+	for _, asset := range assets {
+		fileOut := filepath.Join(dirRaw, asset.name)
+		pathRel := filepath.ToSlash(filepath.Join("raw", asset.name))
+
+		if !shouldOverwriteExisting {
+			recordExisting, ok, err := resolveExistingOntologyFetchRecord(
+				fileOut,
+				pathRel,
+				asset,
+				recordsManifestByPath,
+				filesCurrentByPath,
+			)
+			if err != nil {
+				return nil, nil, err
+			}
+			if ok {
+				recordsReused = append(recordsReused, recordExisting)
+				continue
+			}
+		}
+
+		tasksDownload = append(tasksDownload, ontologyDownloadTask{
+			asset:      asset,
+			fileOut:    fileOut,
+			pathRel:    pathRel,
+			textAction: fmt.Sprintf("downloading %s", asset.name),
+		})
+	}
+
+	return recordsReused, tasksDownload, nil
+}
+
+func planSyncOntologyTasks(
+	dirVersion string,
+	recordsManifest []ontologyRecord,
+	shouldOverwriteExisting bool,
+	filesCurrentByPath map[string]ontologyFileState,
+) ([]ontologyRecord, []ontologyDownloadTask) {
+	recordsReused := make([]ontologyRecord, 0, len(recordsManifest))
+	tasksDownload := make([]ontologyDownloadTask, 0, len(recordsManifest))
+
+	for _, record := range recordsManifest {
+		fileOut := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
+		if !shouldOverwriteExisting && shouldReuseOntologySyncRecord(record, filesCurrentByPath) {
+			recordsReused = append(recordsReused, record)
+			continue
+		}
+
+		tasksDownload = append(tasksDownload, ontologyDownloadTask{
+			asset:      ontologyAsset{name: record.Asset, url: record.URL},
+			fileOut:    fileOut,
+			pathRel:    record.PathRel,
+			textAction: fmt.Sprintf("sync downloading %s", filepath.Base(fileOut)),
+		})
+	}
+
+	return recordsReused, tasksDownload
+}
+
+func shouldReuseOntologySyncRecord(
+	record ontologyRecord,
+	filesCurrentByPath map[string]ontologyFileState,
+) bool {
+	stateFile, ok := filesCurrentByPath[record.PathRel]
+	if !ok || stateFile.Bytes <= 0 {
+		return false
+	}
+	return stateFile.Bytes == record.Bytes
+}
+
+func runOntologyDownloadTasks(
+	clientHTTP *http.Client,
+	tasksDownload []ontologyDownloadTask,
+	retryMax int,
+	retryWait time.Duration,
+	workersMax int,
+	limiterRequest *httpx.RequestLimiter,
+) ([]ontologyRecord, error) {
+	return parallel.MapOrderedWithWorkers(
+		tasksDownload,
+		workersMax,
+		func(task ontologyDownloadTask) (ontologyRecord, error) {
+			logf("%s", task.textAction)
+			if err := os.MkdirAll(filepath.Dir(task.fileOut), 0o755); err != nil {
+				return ontologyRecord{}, fmt.Errorf("create dir for %s: %w", task.fileOut, err)
+			}
+			if err := downloadFileWithRetry(
+				clientHTTP,
+				task.asset.url,
+				task.fileOut,
+				retryMax,
+				retryWait,
+				limiterRequest,
+			); err != nil {
+				return ontologyRecord{}, err
+			}
+			return buildOntologyRecord(task.fileOut, task.pathRel, task.asset)
+		},
+	)
 }
 
 func buildOntologyRecord(
@@ -370,12 +531,14 @@ func downloadFileWithRetry(
 	fileOut string,
 	retryMax int,
 	retryWait time.Duration,
+	limiterRequest *httpx.RequestLimiter,
 ) error {
 	filePart := fileOut + ".part"
 	var errLast error
 
 	for attempt := 1; attempt <= retryMax; attempt++ {
-		if err := downloadFile(clientHTTP, urlFile, filePart); err == nil {
+		limiterRequest.Wait()
+		if err := httpx.DownloadFile(clientHTTP, urlFile, filePart); err == nil {
 			if err := os.Rename(filePart, fileOut); err != nil {
 				return fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)
 			}
@@ -391,20 +554,6 @@ func downloadFileWithRetry(
 	}
 
 	return fmt.Errorf("download failed after %d attempts for %s: %w", retryMax, urlFile, errLast)
-}
-
-func downloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error {
-	return httpx.DownloadFile(clientHTTP, urlFile, fileOut)
-}
-
-func writeManifest(
-	fileManifest string,
-	cfg *ontologyConfig,
-	records []ontologyRecord,
-	timeDownloaded time.Time,
-) error {
-	manifest := buildOntologyManifestFile(cfg, records, timeDownloaded)
-	return tomlx.WriteFileAtomic(fileManifest, manifest)
 }
 
 func buildCompleteOntologyRecords(
@@ -470,6 +619,22 @@ func readExistingOntologyRecords(fileManifest string) ([]ontologyRecord, error) 
 	return records, nil
 }
 
+func buildOntologyRecordIndex(fileManifest string) (map[string]ontologyRecord, error) {
+	records, err := readExistingOntologyRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+
+	recordsByPath := make(map[string]ontologyRecord, len(records))
+	for _, record := range records {
+		if record.PathRel == "" {
+			continue
+		}
+		recordsByPath[record.PathRel] = record
+	}
+	return recordsByPath, nil
+}
+
 func buildOntologyManifestFile(
 	cfg *ontologyConfig,
 	records []ontologyRecord,
@@ -496,10 +661,6 @@ func buildOntologyManifestFile(
 	}
 }
 
-func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
-	return httpx.NewClient(shouldAllowInsecureTLS)
-}
-
 func calculateSHA256ForFile(filePath string) (string, error) {
 	fileIn, err := os.Open(filePath)
 	if err != nil {
@@ -514,23 +675,109 @@ func calculateSHA256ForFile(filePath string) (string, error) {
 	return fmt.Sprintf("%x", hashSHA256.Sum(nil)), nil
 }
 
-func logf(format string, args ...interface{}) {
+func scanOntologyRawFileStateIndex(dirRaw string) (map[string]ontologyFileState, error) {
+	entries, err := os.ReadDir(dirRaw)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]ontologyFileState{}, nil
+		}
+		return nil, fmt.Errorf("read raw dir: %w", err)
+	}
+
+	filesByPath := make(map[string]ontologyFileState, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		infoEntry, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("stat raw file %s: %w", entry.Name(), err)
+		}
+		pathRel := filepath.ToSlash(filepath.Join("raw", entry.Name()))
+		filesByPath[pathRel] = ontologyFileState{Bytes: infoEntry.Size()}
+	}
+	return filesByPath, nil
+}
+
+func logf(format string, args ...any) {
 	logx.Logf("biofetch go", format, args...)
 }
 
-func resolveOntologyVersion(clientHTTP *http.Client) (string, string, error) {
-	data, err := downloadText(clientHTTP, ontologyBaseURL+ontologyVersionAssetName)
+func resolveOntologySource(
+	clientHTTP *http.Client,
+	versionToken string,
+	limiterRequest *httpx.RequestLimiter,
+) (ontologySource, error) {
+
+	if versionToken := strings.TrimSpace(versionToken); versionToken == "" {
+		version, err := resolveOntologyVersion(clientHTTP, ontologyCurrentBaseURL, limiterRequest)
+		if err != nil {
+			return ontologySource{}, err
+		}
+		return ontologySource{
+			version:      version,
+			versionToken: version,
+			baseURL:      ontologyCurrentBaseURL,
+		}, nil
+	}
+
+	if err := validateOptionalOntologyVersionToken(versionToken); err != nil {
+		return ontologySource{}, err
+	}
+
+	baseURL := buildOntologyReleaseBaseURL(versionToken)
+	version, err := resolveOntologyVersion(clientHTTP, baseURL, limiterRequest)
 	if err != nil {
-		return "", "", err
+		return ontologySource{}, fmt.Errorf(
+			"GO release %q not found or unreadable at %s: %w (see %s)",
+			versionToken,
+			baseURL,
+			err,
+			ontologyArchiveRootURL,
+		)
+	}
+	if version != versionToken {
+		return ontologySource{}, fmt.Errorf(
+			"GO release %q resolved to %q at %s (see %s)",
+			versionToken,
+			version,
+			baseURL,
+			ontologyArchiveRootURL,
+		)
+	}
+	return ontologySource{
+		version:      version,
+		versionToken: versionToken,
+		baseURL:      baseURL,
+	}, nil
+}
+
+func resolveOntologyVersion(
+	clientHTTP *http.Client,
+	baseURL string,
+	limiterRequest *httpx.RequestLimiter,
+) (string, error) {
+	data, err := downloadText(
+		clientHTTP,
+		buildOntologyAssetURL(baseURL, ontologyVersionAssetName),
+		limiterRequest,
+	)
+	if err != nil {
+		return "", err
 	}
 	version, err := parseOntologyVersionFromOBO(data)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	return version, version, nil
+	return version, nil
 }
 
-func downloadText(clientHTTP *http.Client, urlFile string) ([]byte, error) {
+func downloadText(
+	clientHTTP *http.Client,
+	urlFile string,
+	limiterRequest *httpx.RequestLimiter,
+) ([]byte, error) {
+	limiterRequest.Wait()
 	response, err := clientHTTP.Get(urlFile)
 	if err != nil {
 		return nil, fmt.Errorf("request %s: %w", urlFile, err)
@@ -620,4 +867,38 @@ func isDateToken(text string) bool {
 		}
 	}
 	return true
+}
+
+func validateOptionalOntologyVersionToken(versionToken string) error {
+	versionToken = strings.TrimSpace(versionToken)
+	if versionToken == "" {
+		return nil
+	}
+	if !isDateToken(versionToken) {
+		return fmt.Errorf(
+			"version must be a GO release date in YYYY-MM-DD, e.g. 2026-01-23; see %s and %s",
+			ontologyArchiveRootURL,
+			ontologyArchiveDocsURL,
+		)
+	}
+	return nil
+}
+
+func buildOntologyIndexURL(baseURL string) string {
+	return baseURL + "index.html"
+}
+
+func buildOntologyReleaseBaseURL(versionToken string) string {
+	return ontologyArchiveRootURL + versionToken + "/ontology/"
+}
+
+func buildOntologyBaseURLForVersionToken(versionToken string) string {
+	if isDateToken(strings.TrimSpace(versionToken)) {
+		return buildOntologyReleaseBaseURL(strings.TrimSpace(versionToken))
+	}
+	return ontologyCurrentBaseURL
+}
+
+func buildOntologyAssetURL(baseURL string, assetName string) string {
+	return baseURL + assetName
 }

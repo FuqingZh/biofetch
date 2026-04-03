@@ -3,7 +3,6 @@ package geneontology
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/confirm"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -16,11 +15,11 @@ type ontologyConfig struct {
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
 	cliopt.RetryConfig
+	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
-	version           string
-	assetNames        []string
-	shouldDownloadAll bool
+	version    string
+	assetNames []string
 }
 
 func NewCommand() *cobra.Command {
@@ -52,45 +51,44 @@ func createOntologyCommand() *cobra.Command {
 func createOntologyFetchCommand() *cobra.Command {
 	cfg := createDefaultOntologyConfig()
 	retryWaitSec := 3
+	requestIntervalMs := 0
 
 	commandOntology := &cobra.Command{
 		Use:           "fetch",
-		Short:         "Fetch Gene Ontology ontology raw assets and update manifest.lock",
+		Short:         "Fetch Gene Ontology ontology raw assets and update manifest.lock with cache-aware skip reuse",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateOntologyConfig(&cfg); err != nil {
 				return err
 			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllOntologyDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
-			}
-			return runFetchOntology(&cfg)
+			return runFetchOntology(&cfg, cmd.InOrStdin(), cmd.ErrOrStderr())
 		},
 	}
 
 	commandOntology.Example = strings.Join([]string{
 		"biofetch go ontology fetch --dir_out /data/go --should_dry_run",
+		"biofetch go ontology fetch --dir_out /data/go",
+		"biofetch go ontology fetch --dir_out /data/go --version 2026-01-23 --assets go-basic.obo",
 		"biofetch go ontology fetch --dir_out /data/go --assets go-basic.obo --assets go.obo",
-		"biofetch go ontology fetch --dir_out /data/go --should_download_all",
 	}, "\n")
 
 	flags := commandOntology.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
 	flags.StringSliceVar(
 		&cfg.assetNames,
 		"assets",
 		nil,
-		"Ontology assets; repeat the flag or use commas, e.g. --assets go-basic.obo --assets go.obo",
+		"Ontology assets; omit to fetch all discovered ontology files, or pass inline values, repeat the flag, or use @file with one asset per line (# comments and blank lines ignored)",
 	)
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Discover and download all ontology files")
-	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite (skip reuses manifest/cache when size matches)")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 
@@ -130,16 +128,19 @@ func createOntologySyncCommand() *cobra.Command {
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
+	cfg.WorkersMax = 1
 	retryWaitSec := 3
+	requestIntervalMs := 0
 
 	commandSync := &cobra.Command{
 		Use:           "sync",
-		Short:         "Sync GO ontology files from manifest.lock and refresh manifest",
+		Short:         "Sync GO ontology files from manifest.lock and refresh manifest with cache-aware skip reuse",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -147,6 +148,9 @@ func createOntologySyncCommand() *cobra.Command {
 				return err
 			}
 			if err := cliopt.ValidateRetryConfig(&cfg.RetryConfig); err != nil {
+				return err
+			}
+			if err := cliopt.ValidateDownloadControlConfig(&cfg.DownloadControlConfig); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
@@ -160,8 +164,9 @@ func createOntologySyncCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO ontology version token")
-	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite (skip reuses manifest/cache when size matches)")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	return commandSync
@@ -171,6 +176,7 @@ func createDefaultOntologyConfig() ontologyConfig {
 	cfg := ontologyConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
+	cfg.WorkersMax = 1
 	return cfg
 }
 
@@ -181,18 +187,14 @@ func validateOntologyConfig(cfg *ontologyConfig) error {
 	if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 		return err
 	}
+	if err := cliopt.ValidateDownloadControlConfig(&cfg.DownloadControlConfig); err != nil {
+		return err
+	}
 	if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 		return err
 	}
-	countSources := 0
-	if len(cfg.assetNames) > 0 {
-		countSources++
-	}
-	if cfg.shouldDownloadAll {
-		countSources++
-	}
-	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --assets | --should_download_all")
+	if err := validateOptionalOntologyVersionToken(cfg.VersionToken); err != nil {
+		return err
 	}
 	return nil
 }
@@ -202,6 +204,6 @@ func confirmAllOntologyDownload(reader io.Reader, writer io.Writer) error {
 		reader,
 		writer,
 		"Full ontology download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all",
+		"all_assets",
 	)
 }
