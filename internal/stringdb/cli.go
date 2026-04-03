@@ -1,10 +1,10 @@
 package stringdb
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/confirm"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -15,14 +15,14 @@ type config struct {
 	dirOut                  string
 	versionToken            string
 	taxIDs                  []string
-	fileTaxIDs              string
 	shouldDownloadAll       bool
 	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
-	shouldAllowInsecureTLS  bool
-	shouldDryRun            bool
+	cliopt.DownloadControlConfig
+	shouldAllowInsecureTLS bool
+	shouldDryRun           bool
 }
 
 func NewCommand() *cobra.Command {
@@ -57,6 +57,7 @@ func createCatalogCommand() *cobra.Command {
 func createFetchCommand() *cobra.Command {
 	cfg := createDefaultConfig()
 	retryWaitSec := 3
+	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
@@ -66,6 +67,7 @@ func createFetchCommand() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateConfig(cfg); err != nil {
 				return err
 			}
@@ -81,15 +83,14 @@ func createFetchCommand() *cobra.Command {
 	commandFetch.Example = strings.Join([]string{
 		"biofetch string fetch --dir_out /data/string --taxids 7070 --should_dry_run",
 		"biofetch string fetch --dir_out /data/string --taxids 7070 --taxids 9606",
-		"biofetch string fetch --dir_out /data/string --file_taxids taxids.txt --version v12.0",
+		"biofetch string fetch --dir_out /data/string --taxids @taxids.txt --version v12.0",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "STRING asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "STRING release version token")
-	flags.StringSliceVar(&cfg.taxIDs, "taxids", nil, "Taxids; repeat the flag or use commas, e.g. --taxids 7070 --taxids 9606")
-	flags.StringVar(&cfg.fileTaxIDs, "file_taxids", "", "File with one taxid per line")
+	flags.StringSliceVar(&cfg.taxIDs, "taxids", nil, "Taxids; pass inline values, repeat the flag, or use @file with one taxid per line (# comments and blank lines ignored)")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
 		"should_download_all",
@@ -99,6 +100,7 @@ func createFetchCommand() *cobra.Command {
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
 		"should_allow_insecure_tls",
@@ -143,7 +145,9 @@ func createSyncCommand() *cobra.Command {
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
+	cfg.WorkersMax = 1
 	retryWaitSec := 3
+	requestIntervalMs := 0
 
 	commandSync := &cobra.Command{
 		Use:           "sync",
@@ -153,6 +157,7 @@ func createSyncCommand() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if strings.TrimSpace(cfg.dirOut) == "" {
 				return fmt.Errorf("dir_out is required")
 			}
@@ -161,6 +166,9 @@ func createSyncCommand() *cobra.Command {
 			}
 			if cfg.retryMax < 1 {
 				return fmt.Errorf("retry_max must be >= 1")
+			}
+			if err := cliopt.ValidateDownloadControlConfig(&cfg.DownloadControlConfig); err != nil {
+				return err
 			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
 				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
@@ -180,6 +188,7 @@ func createSyncCommand() *cobra.Command {
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
 	return commandSync
@@ -191,6 +200,7 @@ func createDefaultConfig() *config {
 	cfg.ruleExisting = "skip"
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
+	cfg.WorkersMax = 1
 	return cfg
 }
 
@@ -200,6 +210,9 @@ func validateConfig(cfg *config) error {
 	}
 	if cfg.retryWait < 0 {
 		return fmt.Errorf("retry_wait_sec must be >= 0")
+	}
+	if err := cliopt.ValidateDownloadControlConfig(&cfg.DownloadControlConfig); err != nil {
+		return err
 	}
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("dir_out is required")
@@ -216,23 +229,17 @@ func validateConfig(cfg *config) error {
 	if len(cfg.taxIDs) > 0 {
 		countSources++
 	}
-	if strings.TrimSpace(cfg.fileTaxIDs) != "" {
-		countSources++
-	}
 	if countSources != 1 {
 		return fmt.Errorf(
-			"choose exactly one source: --taxids | --file_taxids | --should_download_all",
+			"choose exactly one source: --taxids | --should_download_all",
 		)
 	}
-	if cfg.fileTaxIDs != "" {
-		if _, err := os.Stat(cfg.fileTaxIDs); err != nil {
-			return fmt.Errorf("taxids file not found: %w", err)
-		}
-	}
 	if len(cfg.taxIDs) > 0 {
-		if _, err := parseTaxIDs(cfg.taxIDs); err != nil {
+		taxIDs, err := parseTaxIDs(cfg.taxIDs)
+		if err != nil {
 			return err
 		}
+		cfg.taxIDs = taxIDs
 	}
 
 	return nil

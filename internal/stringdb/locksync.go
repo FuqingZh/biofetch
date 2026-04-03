@@ -1,6 +1,9 @@
 package stringdb
 
 import (
+	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/parallel"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,8 +24,9 @@ type syncConfig struct {
 	shouldOverwriteExisting bool
 	retryMax                int
 	retryWait               time.Duration
-	shouldAllowInsecureTLS  bool
-	shouldDryRun            bool
+	cliopt.DownloadControlConfig
+	shouldAllowInsecureTLS bool
+	shouldDryRun           bool
 }
 
 func runLock(cfg *lockConfig) error {
@@ -61,57 +65,37 @@ func runSync(cfg *syncConfig) error {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
 	}
 
-	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	recordsCurrent := make([]fileRecord, 0, len(recordsManifest))
-
-	for _, record := range recordsManifest {
-		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.pathRel))
-		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.url, filePath)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
-		}
-
-		shouldDownload := cfg.shouldOverwriteExisting
-		if !shouldDownload {
-			recordCurrent, ok, err := inspectExistingFile(
-				filePath,
-				record.speciesID,
-				record.assetName,
-				record.pathRel,
-				record.url,
-			)
-			if err != nil {
-				return err
-			}
-			if ok && recordCurrent.sha256 == record.sha256 {
-				recordsCurrent = append(recordsCurrent, recordCurrent)
-				continue
-			}
-			shouldDownload = true
-		}
-
-		if shouldDownload {
-			logf("sync downloading %s", filepath.Base(filePath))
-			if err := downloadFileWithRetry(clientHTTP, record.url, filePath, cfg.retryMax, cfg.retryWait); err != nil {
-				return err
-			}
-		}
-
-		recordCurrent, err := buildFileRecord(filePath, record.speciesID, record.assetName, record.pathRel, record.url)
-		if err != nil {
-			return err
-		}
-		recordsCurrent = append(recordsCurrent, recordCurrent)
-	}
-
 	if cfg.shouldDryRun {
+		for _, record := range recordsManifest {
+			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.pathRel))
+			logf("[dry-run] sync %s -> %s", record.url, filePath)
+		}
 		logf("dry-run sync done (files=%d)", len(recordsManifest))
 		return nil
 	}
+
+	recordsReused, tasksDownload, err := planSyncDownloadTasks(dirVersion, recordsManifest, cfg.shouldOverwriteExisting)
+	if err != nil {
+		return err
+	}
+
+	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	limiterRequest := httpx.NewRequestLimiter(cfg.RequestInterval)
+	recordsDownloaded, err := runDownloadTasks(
+		clientHTTP,
+		tasksDownload,
+		cfg.retryMax,
+		cfg.retryWait,
+		cfg.WorkersMax,
+		limiterRequest,
+	)
+	if err != nil {
+		return err
+	}
+
+	recordsCurrent := make([]fileRecord, 0, len(recordsReused)+len(recordsDownloaded))
+	recordsCurrent = append(recordsCurrent, recordsReused...)
+	recordsCurrent = append(recordsCurrent, recordsDownloaded...)
 
 	recordsComplete, err := buildCompleteFileRecords(fileManifest, dirVersion, recordsCurrent)
 	if err != nil {
@@ -127,13 +111,21 @@ func runSync(cfg *syncConfig) error {
 }
 
 func scanVersionFileRecords(dirVersion string) ([]fileRecord, error) {
+	type taskFileRecord struct {
+		filePath  string
+		speciesID string
+		assetName string
+		pathRel   string
+		urlFile   string
+	}
+
 	dirRaw := filepath.Join(dirVersion, "raw")
 	entriesSpecies, err := os.ReadDir(dirRaw)
 	if err != nil {
 		return nil, fmt.Errorf("read raw dir: %w", err)
 	}
 
-	records := make([]fileRecord, 0)
+	tasks := make([]taskFileRecord, 0)
 	for _, entrySpecies := range entriesSpecies {
 		if !entrySpecies.IsDir() {
 			continue
@@ -159,15 +151,19 @@ func scanVersionFileRecords(dirVersion string) ([]fileRecord, error) {
 			filePath := filepath.Join(dirSpecies, fileName)
 			pathRel := filepath.ToSlash(filepath.Join("raw", speciesID, fileName))
 			urlFile := fmt.Sprintf("%s/%s.%s/%s", baseURL, assetName, filepath.Base(dirVersion), fileName)
-			record, err := buildFileRecord(filePath, speciesID, assetName, pathRel, urlFile)
-			if err != nil {
-				return nil, err
-			}
-			records = append(records, record)
+			tasks = append(tasks, taskFileRecord{
+				filePath:  filePath,
+				speciesID: speciesID,
+				assetName: assetName,
+				pathRel:   pathRel,
+				urlFile:   urlFile,
+			})
 		}
 	}
 
-	return records, nil
+	return parallel.MapOrdered(tasks, func(task taskFileRecord) (fileRecord, error) {
+		return buildFileRecord(task.filePath, task.speciesID, task.assetName, task.pathRel, task.urlFile)
+	})
 }
 
 func parseAssetNameFromFileName(fileName string, speciesID string) (string, error) {

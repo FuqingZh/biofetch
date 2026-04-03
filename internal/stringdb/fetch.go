@@ -1,8 +1,10 @@
 package stringdb
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/tomlx"
 	"bufio"
@@ -35,6 +37,15 @@ type fileRecord struct {
 	url       string
 }
 
+type downloadTask struct {
+	filePath   string
+	speciesID  string
+	assetName  string
+	pathRel    string
+	urlFile    string
+	textAction string
+}
+
 type manifestFile struct {
 	Database     string             `toml:"database"`
 	Version      string             `toml:"version"`
@@ -59,7 +70,8 @@ type manifestFileItem struct {
 }
 
 func runFetch(cfg *config) error {
-	taxIDs, err := resolveTaxIDs(cfg)
+	limiterRequest := httpx.NewRequestLimiter(cfg.RequestInterval)
+	taxIDs, err := resolveTaxIDs(cfg, limiterRequest)
 	if err != nil {
 		return err
 	}
@@ -81,69 +93,41 @@ func runFetch(cfg *config) error {
 		}
 	}
 
-	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	records := make([]fileRecord, 0, len(taxIDs)*len(assetTypes))
-
-	for _, taxID := range taxIDs {
-		dirSpeciesRaw := filepath.Join(dirRaw, taxID)
-		if !cfg.shouldDryRun {
-			if err := os.MkdirAll(dirSpeciesRaw, 0o755); err != nil {
-				return fmt.Errorf("create species raw dir: %w", err)
-			}
-		}
-
-		for _, assetName := range assetTypes {
-			fileName := fmt.Sprintf("%s.%s.%s.txt.gz", taxID, assetName, cfg.versionToken)
-			urlFile := fmt.Sprintf("%s/%s.%s/%s", baseURL, assetName, cfg.versionToken, fileName)
-			fileOut := filepath.Join(dirSpeciesRaw, fileName)
-			pathRel := filepath.ToSlash(filepath.Join("raw", taxID, fileName))
-
-			if cfg.shouldDryRun {
-				logf("[dry-run] %s -> %s", urlFile, fileOut)
-				continue
-			}
-
-			if !cfg.shouldOverwriteExisting {
-				recordExisting, ok, err := inspectExistingFile(
-					fileOut,
-					taxID,
-					assetName,
-					pathRel,
-					urlFile,
-				)
-				if err != nil {
-					return err
-				}
-				if ok {
-					logf("using existing %s", fileName)
-					records = append(records, recordExisting)
-					continue
-				}
-			}
-
-			logf("downloading %s", fileName)
-			if err := downloadFileWithRetry(
-				clientHTTP,
-				urlFile,
-				fileOut,
-				cfg.retryMax,
-				cfg.retryWait,
-			); err != nil {
-				return err
-			}
-
-			recordFile, err := buildFileRecord(fileOut, taxID, assetName, pathRel, urlFile)
-			if err != nil {
-				return err
-			}
-			records = append(records, recordFile)
-		}
-	}
-
 	if cfg.shouldDryRun {
+		for _, taxID := range taxIDs {
+			dirSpeciesRaw := filepath.Join(dirRaw, taxID)
+			for _, assetName := range assetTypes {
+				fileName := fmt.Sprintf("%s.%s.%s.txt.gz", taxID, assetName, cfg.versionToken)
+				urlFile := fmt.Sprintf("%s/%s.%s/%s", baseURL, assetName, cfg.versionToken, fileName)
+				fileOut := filepath.Join(dirSpeciesRaw, fileName)
+				logf("[dry-run] %s -> %s", urlFile, fileOut)
+			}
+		}
 		logf("dry-run done (taxids=%d, assets_per_taxid=%d)", len(taxIDs), len(assetTypes))
 		return nil
 	}
+
+	recordsReused, tasksDownload, err := planFetchDownloadTasks(cfg, taxIDs, dirRaw)
+	if err != nil {
+		return err
+	}
+
+	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	recordsDownloaded, err := runDownloadTasks(
+		clientHTTP,
+		tasksDownload,
+		cfg.retryMax,
+		cfg.retryWait,
+		cfg.WorkersMax,
+		limiterRequest,
+	)
+	if err != nil {
+		return err
+	}
+
+	records := make([]fileRecord, 0, len(recordsReused)+len(recordsDownloaded))
+	records = append(records, recordsReused...)
+	records = append(records, recordsDownloaded...)
 
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].speciesID != records[j].speciesID {
@@ -166,65 +150,48 @@ func runFetch(cfg *config) error {
 	return nil
 }
 
-func resolveTaxIDs(cfg *config) ([]string, error) {
+func resolveTaxIDs(cfg *config, limiterRequest *httpx.RequestLimiter) ([]string, error) {
 	switch {
 	case cfg.shouldDownloadAll:
-		return fetchAllSpeciesTaxIDs(cfg)
+		return fetchAllSpeciesTaxIDs(cfg, limiterRequest)
 	case len(cfg.taxIDs) > 0:
 		return parseTaxIDs(cfg.taxIDs)
 	default:
-		return readTaxIDsFromFile(cfg.fileTaxIDs)
+		return nil, fmt.Errorf("no taxids configured")
 	}
 }
 
 func parseTaxIDs(valuesInput []string) ([]string, error) {
-	setTaxIDs := make(map[string]struct{})
-	for _, valueInput := range valuesInput {
-		for _, token := range strings.Split(valueInput, ",") {
-			taxID := strings.TrimSpace(token)
-			if taxID == "" {
-				continue
-			}
-			if !isDigits(taxID) {
-				return nil, fmt.Errorf("invalid taxid: %s", taxID)
-			}
-			setTaxIDs[taxID] = struct{}{}
-		}
+	valuesResolved, err := cliopt.ExpandAtFileTokens(valuesInput, "taxids")
+	if err != nil {
+		return nil, err
 	}
-
-	return sets.SortedKeys(setTaxIDs), nil
+	valuesValid := make([]string, 0, len(valuesResolved))
+	for _, value := range valuesResolved {
+		taxID := strings.TrimSpace(value)
+		if taxID == "" {
+			continue
+		}
+		if !isDigits(taxID) {
+			return nil, fmt.Errorf("invalid taxid: %s", taxID)
+		}
+		valuesValid = append(valuesValid, taxID)
+	}
+	if len(valuesValid) == 0 {
+		return nil, fmt.Errorf("taxids must not be empty")
+	}
+	return cliopt.SortedUniqueStrings(valuesValid), nil
 }
 
 func readTaxIDsFromFile(fileTaxIDs string) ([]string, error) {
-	fileIn, err := os.Open(fileTaxIDs)
-	if err != nil {
-		return nil, fmt.Errorf("open taxids file: %w", err)
-	}
-	defer fileIn.Close()
-
-	setTaxIDs := make(map[string]struct{})
-	scanner := bufio.NewScanner(fileIn)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !isDigits(line) {
-			return nil, fmt.Errorf("invalid taxid in %s: %s", fileTaxIDs, line)
-		}
-		setTaxIDs[line] = struct{}{}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read taxids file: %w", err)
-	}
-
-	return sets.SortedKeys(setTaxIDs), nil
+	return parseTaxIDs([]string{"@" + fileTaxIDs})
 }
 
-func fetchAllSpeciesTaxIDs(cfg *config) ([]string, error) {
+func fetchAllSpeciesTaxIDs(cfg *config, limiterRequest *httpx.RequestLimiter) ([]string, error) {
 	urlSpecies := fmt.Sprintf("%s/species.%s.txt", baseURL, cfg.versionToken)
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 
+	limiterRequest.Wait()
 	response, err := clientHTTP.Get(urlSpecies)
 	if err != nil {
 		return nil, fmt.Errorf("download species list: %w", err)
@@ -269,6 +236,121 @@ func fetchAllSpeciesTaxIDs(cfg *config) ([]string, error) {
 
 func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
 	return httpx.NewClient(shouldAllowInsecureTLS)
+}
+
+func planFetchDownloadTasks(cfg *config, taxIDs []string, dirRaw string) ([]fileRecord, []downloadTask, error) {
+	recordsReused := make([]fileRecord, 0, len(taxIDs)*len(assetTypes))
+	tasksDownload := make([]downloadTask, 0, len(taxIDs)*len(assetTypes))
+
+	for _, taxID := range taxIDs {
+		dirSpeciesRaw := filepath.Join(dirRaw, taxID)
+		for _, assetName := range assetTypes {
+			fileName := fmt.Sprintf("%s.%s.%s.txt.gz", taxID, assetName, cfg.versionToken)
+			urlFile := fmt.Sprintf("%s/%s.%s/%s", baseURL, assetName, cfg.versionToken, fileName)
+			fileOut := filepath.Join(dirSpeciesRaw, fileName)
+			pathRel := filepath.ToSlash(filepath.Join("raw", taxID, fileName))
+
+			if !cfg.shouldOverwriteExisting {
+				recordExisting, ok, err := inspectExistingFile(
+					fileOut,
+					taxID,
+					assetName,
+					pathRel,
+					urlFile,
+				)
+				if err != nil {
+					return nil, nil, err
+				}
+				if ok {
+					logf("using existing %s", fileName)
+					recordsReused = append(recordsReused, recordExisting)
+					continue
+				}
+			}
+
+			tasksDownload = append(tasksDownload, downloadTask{
+				filePath:   fileOut,
+				speciesID:  taxID,
+				assetName:  assetName,
+				pathRel:    pathRel,
+				urlFile:    urlFile,
+				textAction: fmt.Sprintf("downloading %s", fileName),
+			})
+		}
+	}
+
+	return recordsReused, tasksDownload, nil
+}
+
+func planSyncDownloadTasks(
+	dirVersion string,
+	recordsManifest []fileRecord,
+	shouldOverwriteExisting bool,
+) ([]fileRecord, []downloadTask, error) {
+	recordsReused := make([]fileRecord, 0, len(recordsManifest))
+	tasksDownload := make([]downloadTask, 0, len(recordsManifest))
+
+	for _, record := range recordsManifest {
+		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.pathRel))
+		if !shouldOverwriteExisting {
+			recordCurrent, ok, err := inspectExistingFile(
+				filePath,
+				record.speciesID,
+				record.assetName,
+				record.pathRel,
+				record.url,
+			)
+			if err != nil {
+				return nil, nil, err
+			}
+			if ok && recordCurrent.sha256 == record.sha256 {
+				recordsReused = append(recordsReused, recordCurrent)
+				continue
+			}
+		}
+
+		tasksDownload = append(tasksDownload, downloadTask{
+			filePath:   filePath,
+			speciesID:  record.speciesID,
+			assetName:  record.assetName,
+			pathRel:    record.pathRel,
+			urlFile:    record.url,
+			textAction: fmt.Sprintf("sync downloading %s", filepath.Base(filePath)),
+		})
+	}
+
+	return recordsReused, tasksDownload, nil
+}
+
+func runDownloadTasks(
+	clientHTTP *http.Client,
+	tasksDownload []downloadTask,
+	retryMax int,
+	retryWait time.Duration,
+	workersMax int,
+	limiterRequest *httpx.RequestLimiter,
+) ([]fileRecord, error) {
+	return parallel.MapOrderedWithWorkers(
+		tasksDownload,
+		workersMax,
+		func(task downloadTask) (fileRecord, error) {
+			logf("%s", task.textAction)
+			if err := os.MkdirAll(filepath.Dir(task.filePath), 0o755); err != nil {
+				return fileRecord{}, fmt.Errorf("create sync dir: %w", err)
+			}
+			if err := downloadFileWithRetry(
+				clientHTTP,
+				task.urlFile,
+				task.filePath,
+				retryMax,
+				retryWait,
+				limiterRequest,
+			); err != nil {
+				return fileRecord{}, err
+			}
+			return buildFileRecord(task.filePath, task.speciesID, task.assetName, task.pathRel, task.urlFile)
+		},
+	)
 }
 
 func inspectExistingFile(
@@ -336,11 +418,13 @@ func downloadFileWithRetry(
 	fileOut string,
 	retryMax int,
 	retryWait time.Duration,
+	limiterRequest *httpx.RequestLimiter,
 ) error {
 	filePart := fileOut + ".part"
 	var errLast error
 
 	for attempt := 1; attempt <= retryMax; attempt++ {
+		limiterRequest.Wait()
 		if err := downloadFile(clientHTTP, urlFile, filePart); err == nil {
 			if err := os.Rename(filePart, fileOut); err != nil {
 				return fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)

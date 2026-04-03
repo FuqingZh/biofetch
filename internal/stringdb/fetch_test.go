@@ -2,10 +2,14 @@ package stringdb
 
 import (
 	"bytes"
+	"compress/gzip"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +18,24 @@ import (
 
 func TestParseTaxIDs(t *testing.T) {
 	values, err := parseTaxIDs([]string{"9606", "7070,9606"})
+	if err != nil {
+		t.Fatalf("parseTaxIDs returned error: %v", err)
+	}
+
+	expected := []string{"7070", "9606"}
+	if !reflect.DeepEqual(values, expected) {
+		t.Fatalf("parseTaxIDs = %#v, want %#v", values, expected)
+	}
+}
+
+func TestParseTaxIDsSupportsAtFile(t *testing.T) {
+	fileTaxIDs := filepath.Join(t.TempDir(), "taxids.txt")
+	content := "# comment\n7070\n\n9606\n"
+	if err := os.WriteFile(fileTaxIDs, []byte(content), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	values, err := parseTaxIDs([]string{"@" + fileTaxIDs})
 	if err != nil {
 		t.Fatalf("parseTaxIDs returned error: %v", err)
 	}
@@ -185,6 +207,200 @@ func TestBuildCompleteFileRecordsMergesExistingManifestAndDropsMissing(t *testin
 	if len(records) != 2 {
 		t.Fatalf("len(records) = %d, want 2", len(records))
 	}
+}
+
+func TestPlanFetchDownloadTasksPlansReuseAndDownloads(t *testing.T) {
+	dirRaw := t.TempDir()
+	dirSpecies := filepath.Join(dirRaw, "7070")
+	if err := os.MkdirAll(dirSpecies, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	fileExisting := filepath.Join(dirSpecies, "7070.protein.aliases.v12.0.txt.gz")
+	if err := writeGzipFile(fileExisting, []byte("aliases")); err != nil {
+		t.Fatalf("writeGzipFile returned error: %v", err)
+	}
+
+	cfg := createDefaultConfig()
+	cfg.versionToken = "v12.0"
+	cfg.taxIDs = []string{"7070"}
+
+	recordsReused, tasksDownload, err := planFetchDownloadTasks(cfg, []string{"7070"}, dirRaw)
+	if err != nil {
+		t.Fatalf("planFetchDownloadTasks returned error: %v", err)
+	}
+	if len(recordsReused) != 1 {
+		t.Fatalf("len(recordsReused) = %d, want 1", len(recordsReused))
+	}
+	if recordsReused[0].assetName != "protein.aliases" {
+		t.Fatalf("recordsReused = %#v", recordsReused)
+	}
+	if len(tasksDownload) != 2 {
+		t.Fatalf("len(tasksDownload) = %d, want 2", len(tasksDownload))
+	}
+	if tasksDownload[0].assetName != "protein.links" || tasksDownload[1].assetName != "protein.info" {
+		t.Fatalf("tasksDownload = %#v", tasksDownload)
+	}
+}
+
+func TestRunDownloadTasksPreservesOrderWithWorkers(t *testing.T) {
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/slow":
+			time.Sleep(20 * time.Millisecond)
+			_, _ = writer.Write(makeGzipBytes([]byte("slow")))
+		case "/fast":
+			_, _ = writer.Write(makeGzipBytes([]byte("fast")))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer serverHTTP.Close()
+
+	dirRaw := t.TempDir()
+	tasksDownload := []downloadTask{
+		{
+			filePath:   filepath.Join(dirRaw, "7070", "7070.protein.aliases.v12.0.txt.gz"),
+			speciesID:  "7070",
+			assetName:  "protein.aliases",
+			pathRel:    "raw/7070/7070.protein.aliases.v12.0.txt.gz",
+			urlFile:    serverHTTP.URL + "/slow",
+			textAction: "downloading slow",
+		},
+		{
+			filePath:   filepath.Join(dirRaw, "7070", "7070.protein.info.v12.0.txt.gz"),
+			speciesID:  "7070",
+			assetName:  "protein.info",
+			pathRel:    "raw/7070/7070.protein.info.v12.0.txt.gz",
+			urlFile:    serverHTTP.URL + "/fast",
+			textAction: "downloading fast",
+		},
+	}
+
+	recordsDownloaded, err := runDownloadTasks(serverHTTP.Client(), tasksDownload, 1, 0, 2, nil)
+	if err != nil {
+		t.Fatalf("runDownloadTasks returned error: %v", err)
+	}
+	if len(recordsDownloaded) != 2 {
+		t.Fatalf("len(recordsDownloaded) = %d, want 2", len(recordsDownloaded))
+	}
+	if recordsDownloaded[0].assetName != "protein.aliases" || recordsDownloaded[1].assetName != "protein.info" {
+		t.Fatalf("recordsDownloaded = %#v", recordsDownloaded)
+	}
+}
+
+func TestRunDownloadTasksCancelsQueuedWorkAfterError(t *testing.T) {
+	var countThird atomic.Int32
+
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/one":
+			_, _ = writer.Write(makeGzipBytes([]byte("one")))
+		case "/two":
+			http.Error(writer, "bad gateway", http.StatusBadGateway)
+		case "/three":
+			countThird.Add(1)
+			_, _ = writer.Write(makeGzipBytes([]byte("three")))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer serverHTTP.Close()
+
+	dirRaw := t.TempDir()
+	tasksDownload := []downloadTask{
+		{
+			filePath:   filepath.Join(dirRaw, "7070", "7070.protein.aliases.v12.0.txt.gz"),
+			speciesID:  "7070",
+			assetName:  "protein.aliases",
+			pathRel:    "raw/7070/7070.protein.aliases.v12.0.txt.gz",
+			urlFile:    serverHTTP.URL + "/one",
+			textAction: "downloading one",
+		},
+		{
+			filePath:   filepath.Join(dirRaw, "7070", "7070.protein.links.v12.0.txt.gz"),
+			speciesID:  "7070",
+			assetName:  "protein.links",
+			pathRel:    "raw/7070/7070.protein.links.v12.0.txt.gz",
+			urlFile:    serverHTTP.URL + "/two",
+			textAction: "downloading two",
+		},
+		{
+			filePath:   filepath.Join(dirRaw, "7070", "7070.protein.info.v12.0.txt.gz"),
+			speciesID:  "7070",
+			assetName:  "protein.info",
+			pathRel:    "raw/7070/7070.protein.info.v12.0.txt.gz",
+			urlFile:    serverHTTP.URL + "/three",
+			textAction: "downloading three",
+		},
+	}
+
+	_, err := runDownloadTasks(serverHTTP.Client(), tasksDownload, 1, 0, 1, nil)
+	if err == nil {
+		t.Fatal("runDownloadTasks returned nil error")
+	}
+	if countThird.Load() != 0 {
+		t.Fatalf("countThird = %d, want 0", countThird.Load())
+	}
+}
+
+func TestValidateConfigRejectsInvalidWorkersMax(t *testing.T) {
+	cfg := createDefaultConfig()
+	cfg.dirOut = "/tmp/string"
+	cfg.taxIDs = []string{"7070"}
+	cfg.WorkersMax = 0
+
+	err := validateConfig(cfg)
+	if err == nil || err.Error() != "workers_max must be >= 1" {
+		t.Fatalf("validateConfig error = %v", err)
+	}
+}
+
+func TestValidateConfigRejectsNegativeRequestInterval(t *testing.T) {
+	cfg := createDefaultConfig()
+	cfg.dirOut = "/tmp/string"
+	cfg.taxIDs = []string{"7070"}
+	cfg.RequestInterval = -1 * time.Millisecond
+
+	err := validateConfig(cfg)
+	if err == nil || err.Error() != "request_interval_ms must be >= 0" {
+		t.Fatalf("validateConfig error = %v", err)
+	}
+}
+
+func TestValidateConfigResolvesAtFileTaxIDs(t *testing.T) {
+	fileTaxIDs := filepath.Join(t.TempDir(), "taxids.txt")
+	if err := os.WriteFile(fileTaxIDs, []byte("9606\n7070\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	cfg := createDefaultConfig()
+	cfg.dirOut = "/tmp/string"
+	cfg.taxIDs = []string{"@" + fileTaxIDs}
+
+	err := validateConfig(cfg)
+	if err != nil {
+		t.Fatalf("validateConfig error = %v", err)
+	}
+	expected := []string{"7070", "9606"}
+	if !reflect.DeepEqual(cfg.taxIDs, expected) {
+		t.Fatalf("cfg.taxIDs = %#v, want %#v", cfg.taxIDs, expected)
+	}
+}
+
+func writeGzipFile(filePath string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filePath, makeGzipBytes(data), 0o644)
+}
+
+func makeGzipBytes(data []byte) []byte {
+	var buffer bytes.Buffer
+	writerGzip := gzip.NewWriter(&buffer)
+	_, _ = writerGzip.Write(data)
+	_ = writerGzip.Close()
+	return buffer.Bytes()
 }
 
 func assertContains(t *testing.T, text string, expected string) {
