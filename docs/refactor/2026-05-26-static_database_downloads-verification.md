@@ -172,26 +172,19 @@ Do not depend on live external HTTP in unit or A/B tests.
 
 ## Smoke Test Commands
 
-Use dry-run smoke tests first:
+Use offline-safe smoke tests first:
 
 ```bash
 go test ./...
 
-go run ./cmd/biofetch go slim fetch \
-  --dir_out /tmp/biofetch-smoke/go \
-  --subset goslim_generic \
-  --formats obo \
-  --should_dry_run
+go run ./cmd/biofetch go slim fetch --help
 
 go run ./cmd/biofetch reactome mapping fetch \
   --dir_out /tmp/biofetch-smoke/reactome \
-  --assets UniProt2Reactome_All_Levels.txt \
+  --assets ReactomePathways.txt \
   --should_dry_run
 
-go run ./cmd/biofetch wikipathways gmt fetch \
-  --dir_out /tmp/biofetch-smoke/wikipathways \
-  --species Homo_sapiens \
-  --should_dry_run
+go run ./cmd/biofetch wikipathways gmt fetch --help
 
 go run ./cmd/biofetch subcell uniprot fetch \
   --dir_out /tmp/biofetch-smoke/subcell \
@@ -201,6 +194,11 @@ go run ./cmd/biofetch subcell uniprot fetch \
 
 Live-download smoke tests should be opt-in because upstream files can be large
 or rate-limited. Keep them outside default unit tests.
+
+GO Slim and WikiPathways dry-run currently resolve source metadata from live
+upstream endpoints before planning, so the default offline smoke uses `--help`
+for those command surfaces and relies on fixture tests for source parsing and
+download behavior.
 
 ## PR Evidence Checklist
 
