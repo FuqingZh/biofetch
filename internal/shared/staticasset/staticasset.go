@@ -16,9 +16,10 @@ import (
 )
 
 type Asset struct {
-	Name string
-	Path string
-	URL  string
+	Name      string
+	Path      string
+	URL       string
+	Transform func(string) error `toml:"-"`
 }
 
 type Source struct {
@@ -328,10 +329,14 @@ func planSync(
 	trace TraceSink,
 	source Source,
 ) ([]FileRecord, []downloadTask, error) {
+	transformsByPath := buildTransformsByPath(source.Assets)
 	recordsReused := make([]FileRecord, 0, len(records))
 	tasksDownload := make([]downloadTask, 0, len(records))
 	for _, record := range records {
 		asset := Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
+		if transform := transformsByPath[record.Path]; transform != nil {
+			asset.Transform = transform
+		}
 		if err := validateSyncAsset(asset); err != nil {
 			return nil, nil, err
 		}
@@ -344,6 +349,16 @@ func planSync(
 		tasksDownload = append(tasksDownload, downloadTask{asset: asset})
 	}
 	return recordsReused, tasksDownload, nil
+}
+
+func buildTransformsByPath(assets []Asset) map[string]func(string) error {
+	transforms := make(map[string]func(string) error, len(assets))
+	for _, asset := range assets {
+		if asset.Transform != nil {
+			transforms[asset.Path] = asset.Transform
+		}
+	}
+	return transforms
 }
 
 func validateSyncAsset(asset Asset) error {
@@ -390,6 +405,11 @@ func runDownloadTasks(
 		}
 		if err := downloadFileWithRetry(clientHTTP, task.asset.URL, fileOut, options.RetryMax, options.RetryWait, limiterRequest); err != nil {
 			return FileRecord{}, err
+		}
+		if task.asset.Transform != nil {
+			if err := task.asset.Transform(fileOut); err != nil {
+				return FileRecord{}, fmt.Errorf("transform %s: %w", fileOut, err)
+			}
 		}
 		record, err := buildRecord(fileOut, task.asset)
 		if err != nil {
