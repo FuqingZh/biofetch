@@ -25,6 +25,7 @@ type Source struct {
 	Database     string
 	Asset        string
 	Source       string
+	DirName      string
 	Version      string
 	VersionToken string
 	Scope        Scope
@@ -596,7 +597,11 @@ func calculateSHA256ForFile(filePath string) (string, error) {
 }
 
 func buildVersionDir(dirOut string, source Source) string {
-	return filepath.Join(dirOut, source.Asset, source.VersionToken)
+	dirName := strings.TrimSpace(source.DirName)
+	if dirName == "" {
+		dirName = source.Asset
+	}
+	return filepath.Join(dirOut, dirName, source.VersionToken)
 }
 
 func ensureVersionDirs(dirVersion string) error {

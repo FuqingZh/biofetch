@@ -4,6 +4,7 @@ import (
 	"biofetch/internal/geneontology"
 	"biofetch/internal/kegg"
 	"biofetch/internal/omnipath"
+	"biofetch/internal/reactome"
 	"biofetch/internal/stringdb"
 
 	"github.com/spf13/cobra"
@@ -21,6 +22,7 @@ func RunCLI(args []string) error {
 	commandRoot.AddCommand(stringdb.NewCommand())
 	commandRoot.AddCommand(kegg.NewCommand())
 	commandRoot.AddCommand(omnipath.NewCommand())
+	commandRoot.AddCommand(reactome.NewCommand())
 	commandRoot.SetArgs(args)
 	return commandRoot.Execute()
 }
