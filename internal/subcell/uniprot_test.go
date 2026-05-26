@@ -147,3 +147,30 @@ func TestRunSyncUniProtRehydratesManifest(t *testing.T) {
 		t.Fatalf("synced file missing: %v", err)
 	}
 }
+
+func TestRunLockUniProtScansTidyAsset(t *testing.T) {
+	dirOut := t.TempDir()
+	dirTidy := filepath.Join(dirOut, "uniprot", "2026_03", "tidy")
+	if err := os.MkdirAll(dirTidy, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirTidy, "protein_location.tsv"), []byte("protein_id\tlocation\tsource\tsource_version\nP12345\tNucleus.\tuniprot\t2026_03\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	cfg := uniprotLockConfig{}
+	cfg.DirOut = dirOut
+	cfg.VersionToken = "2026_03"
+	if err := runLockUniProt(&cfg); err != nil {
+		t.Fatalf("runLockUniProt returned error: %v", err)
+	}
+	manifest, ok, err := staticasset.ReadManifest(filepath.Join(dirOut, "uniprot", "2026_03", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest missing")
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "tidy/protein_location.tsv" {
+		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}

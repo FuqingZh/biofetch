@@ -193,6 +193,33 @@ func TestLockScansRawRecursivelyAndIgnoresPartFiles(t *testing.T) {
 	}
 }
 
+func TestLockScansConfiguredDirectories(t *testing.T) {
+	dirOut := t.TempDir()
+	dirTidy := filepath.Join(dirOut, "fixed", "v1", "tidy")
+	if err := os.MkdirAll(dirTidy, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirTidy, "asset.tsv"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1", ScanDirs: []string{"tidy"}}
+	if err := Lock(source, options, nil); err != nil {
+		t.Fatalf("Lock returned error: %v", err)
+	}
+	manifest, ok, err := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest was not written")
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "tidy/asset.tsv" {
+		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
 func TestValidateSourceRejectsUnsafePaths(t *testing.T) {
 	base := Source{
 		Database:     "testdb",

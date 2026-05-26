@@ -77,6 +77,7 @@ func runLockUniProt(cfg *uniprotLockConfig) error {
 		Asset:        "protein_location",
 		Source:       "uniprot",
 		DirName:      "uniprot",
+		ScanDirs:     []string{"tidy"},
 		Version:      cfg.VersionToken,
 		VersionToken: cfg.VersionToken,
 	}, staticasset.Options{
@@ -102,6 +103,7 @@ func buildUniProtSource(versionToken string, scope uniprotScope) staticasset.Sou
 		Asset:        "protein_location",
 		Source:       "uniprot",
 		DirName:      "uniprot",
+		ScanDirs:     []string{"tidy"},
 		Version:      versionToken,
 		VersionToken: versionToken,
 		Scope: staticasset.Scope{

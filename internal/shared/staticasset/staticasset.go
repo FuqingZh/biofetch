@@ -27,6 +27,7 @@ type Source struct {
 	Asset        string
 	Source       string
 	DirName      string
+	ScanDirs     []string
 	Version      string
 	VersionToken string
 	Scope        Scope
@@ -160,7 +161,7 @@ func Lock(source Source, options Options, trace TraceSink) error {
 	if err != nil {
 		return err
 	}
-	records, err := scanRawRecords(dirVersion, urlsExisting)
+	records, err := scanRecords(dirVersion, source.ScanDirs, urlsExisting)
 	if err != nil {
 		return err
 	}
@@ -465,36 +466,41 @@ func buildRecord(filePath string, asset Asset) (FileRecord, error) {
 	}, nil
 }
 
-func scanRawRecords(dirVersion string, urlsExisting map[string]string) ([]FileRecord, error) {
-	dirRaw := filepath.Join(dirVersion, "raw")
+func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]string) ([]FileRecord, error) {
+	if len(scanDirs) == 0 {
+		scanDirs = []string{"raw"}
+	}
 	records := make([]FileRecord, 0)
-	if err := filepath.WalkDir(dirRaw, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
+	for _, dirName := range scanDirs {
+		dirScan := filepath.Join(dirVersion, dirName)
+		if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(entry.Name(), ".part") {
+				return nil
+			}
+			pathRel, err := filepath.Rel(dirVersion, path)
+			if err != nil {
+				return err
+			}
+			pathRel = filepath.ToSlash(pathRel)
+			urlAsset := urlsExisting[pathRel]
+			record, err := buildRecord(path, Asset{Name: filepath.Base(path), Path: pathRel, URL: urlAsset})
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
 			return nil
+		}); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("scan files: %w", err)
 		}
-		if strings.HasSuffix(entry.Name(), ".part") {
-			return nil
-		}
-		pathRel, err := filepath.Rel(dirVersion, path)
-		if err != nil {
-			return err
-		}
-		pathRel = filepath.ToSlash(pathRel)
-		urlAsset := urlsExisting[pathRel]
-		record, err := buildRecord(path, Asset{Name: filepath.Base(path), Path: pathRel, URL: urlAsset})
-		if err != nil {
-			return err
-		}
-		records = append(records, record)
-		return nil
-	}); err != nil {
-		if os.IsNotExist(err) {
-			return []FileRecord{}, nil
-		}
-		return nil, fmt.Errorf("scan raw files: %w", err)
 	}
 	sortRecords(records)
 	return records, nil
