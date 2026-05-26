@@ -33,6 +33,7 @@ type uniprotConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 	speciesCode string
 	taxID       string
 	proteomeID  string
@@ -52,6 +53,7 @@ type uniprotSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 }
 
 type uniprotScope struct {
@@ -70,7 +72,7 @@ func runFetchUniProt(cfg *uniprotConfig) error {
 		versionToken = "current"
 	}
 	source := buildUniProtSource(versionToken, scope)
-	return staticasset.Fetch(source, buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	return staticasset.Fetch(source, buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func runLockUniProt(cfg *uniprotLockConfig) error {
@@ -92,7 +94,7 @@ func runLockUniProt(cfg *uniprotLockConfig) error {
 }
 
 func runSyncUniProt(cfg *uniprotSyncConfig) error {
-	return staticasset.Sync(buildUniProtSource(cfg.VersionToken, uniprotScope{}), buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	return staticasset.Sync(buildUniProtSource(cfg.VersionToken, uniprotScope{}), buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func buildUniProtSource(versionToken string, scope uniprotScope) staticasset.Source {
@@ -338,6 +340,7 @@ func buildUniProtOptions(
 	cfgDownload cliopt.DownloadControlConfig,
 	cfgTLS cliopt.InsecureTLSConfig,
 	cfgDryRun cliopt.DryRunConfig,
+	cfgProgress cliopt.ProgressConfig,
 ) staticasset.Options {
 	return staticasset.Options{
 		DirOut:                 dirOut,
@@ -348,6 +351,7 @@ func buildUniProtOptions(
 		RequestInterval:        cfgDownload.RequestInterval,
 		ShouldAllowInsecureTLS: cfgTLS.ShouldAllowInsecureTLS,
 		ShouldDryRun:           cfgDryRun.ShouldDryRun,
+		ShouldDisableProgress:  cfgProgress.ShouldDisableProgress,
 	}
 }
 

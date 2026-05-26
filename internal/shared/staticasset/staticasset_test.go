@@ -1,6 +1,7 @@
 package staticasset
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -119,6 +120,75 @@ func TestFetchDoesNotReuseSameSizeChangedContent(t *testing.T) {
 	}
 	if string(data) != body {
 		t.Fatalf("file content = %q, want %q", string(data), body)
+	}
+}
+
+func TestFetchWritesProgressByDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Length", "5")
+		_, _ = writer.Write([]byte("alpha"))
+	}))
+	defer server.Close()
+
+	var progress bytes.Buffer
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "alpha",
+			Path: "raw/alpha.txt",
+			URL:  server.URL + "/alpha.txt",
+		}},
+	}
+	options := Options{
+		DirOut:         t.TempDir(),
+		RuleExisting:   "skip",
+		RetryMax:       1,
+		WorkersMax:     1,
+		ProgressWriter: &progress,
+	}
+	if err := Fetch(source, options, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	text := progress.String()
+	if !strings.Contains(text, "testdb fixed") || !strings.Contains(text, "100%") || !strings.Contains(text, "5 B/5 B") {
+		t.Fatalf("progress = %q", text)
+	}
+}
+
+func TestFetchCanDisableProgress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("alpha"))
+	}))
+	defer server.Close()
+
+	var progress bytes.Buffer
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "alpha",
+			Path: "raw/alpha.txt",
+			URL:  server.URL + "/alpha.txt",
+		}},
+	}
+	options := Options{
+		DirOut:                t.TempDir(),
+		RuleExisting:          "skip",
+		RetryMax:              1,
+		WorkersMax:            1,
+		ProgressWriter:        &progress,
+		ShouldDisableProgress: true,
+	}
+	if err := Fetch(source, options, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	if progress.String() != "" {
+		t.Fatalf("progress = %q, want empty", progress.String())
 	}
 }
 

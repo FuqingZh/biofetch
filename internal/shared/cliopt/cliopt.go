@@ -23,6 +23,10 @@ type DryRunConfig struct {
 	ShouldDryRun bool
 }
 
+type ProgressConfig struct {
+	ShouldDisableProgress bool
+}
+
 type ExistingRuleConfig struct {
 	RuleExisting            string
 	ShouldOverwriteExisting bool
@@ -52,6 +56,10 @@ func BindVersionFlag(flags *pflag.FlagSet, cfg *VersionConfig, usage string) {
 
 func BindDryRunFlag(flags *pflag.FlagSet, cfg *DryRunConfig, usage string) {
 	flags.BoolVar(&cfg.ShouldDryRun, "should_dry_run", cfg.ShouldDryRun, usage)
+}
+
+func BindProgressFlag(flags *pflag.FlagSet, cfg *ProgressConfig, usage string) {
+	flags.BoolVar(&cfg.ShouldDisableProgress, "should_disable_progress", cfg.ShouldDisableProgress, usage)
 }
 
 func BindRuleExistingFlag(flags *pflag.FlagSet, cfg *ExistingRuleConfig, usage string) {

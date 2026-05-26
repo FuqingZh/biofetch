@@ -6,8 +6,10 @@ import (
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,6 +18,8 @@ const mappingDefaultVersionToken = "current"
 const mappingLargeDownloadThresholdBytes = 100 * 1024 * 1024
 
 var mappingCurrentBaseURL = "https://reactome.org/download/current/"
+var mappingCurrentVersionURL = "https://reactome.org/ContentService/data/database/version"
+var patternMappingVersion = regexp.MustCompile(`(?i)^v?([0-9]+)$`)
 
 var mappingAssetsSupported = []string{
 	"ChEBI2Reactome.txt",
@@ -45,6 +49,7 @@ type mappingConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 	assetNames               []string
 	shouldAllowLargeDownload bool
 }
@@ -63,6 +68,7 @@ type mappingSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 }
 
 func runFetchMapping(cfg *mappingConfig) error {
@@ -70,20 +76,27 @@ func runFetchMapping(cfg *mappingConfig) error {
 	if err != nil {
 		return err
 	}
-	versionToken := resolveMappingVersionToken(cfg.VersionToken)
-	assetsStatic := buildMappingStaticAssets(mappingCurrentBaseURL, assets)
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
+	versionToken, err := resolveMappingFetchVersionToken(clientHTTP, cfg.VersionToken)
+	if err != nil {
+		return err
+	}
+	assetsStatic := buildMappingStaticAssets(mappingCurrentBaseURL, assets)
 	if !cfg.ShouldDryRun && !cfg.shouldAllowLargeDownload {
 		if err := validateMappingDownloadSizes(clientHTTP, assetsStatic, mappingLargeDownloadThresholdBytes); err != nil {
 			return err
 		}
 	}
 	source := buildMappingSource(versionToken, assetsStatic)
-	return staticasset.Fetch(source, buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	return staticasset.Fetch(source, buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func runLockMapping(cfg *mappingLockConfig) error {
-	return staticasset.Lock(buildMappingSource(cfg.VersionToken, nil), staticasset.Options{
+	versionToken, err := normalizeMappingFixedVersionToken(cfg.VersionToken)
+	if err != nil {
+		return err
+	}
+	return staticasset.Lock(buildMappingSource(versionToken, nil), staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
@@ -93,7 +106,11 @@ func runLockMapping(cfg *mappingLockConfig) error {
 }
 
 func runSyncMapping(cfg *mappingSyncConfig) error {
-	return staticasset.Sync(buildMappingSource(cfg.VersionToken, nil), buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	versionToken, err := normalizeMappingFixedVersionToken(cfg.VersionToken)
+	if err != nil {
+		return err
+	}
+	return staticasset.Sync(buildMappingSource(versionToken, nil), buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func resolveMappingAssets(values []string) ([]string, error) {
@@ -181,12 +198,52 @@ func buildMappingSource(versionToken string, assets []staticasset.Asset) statica
 	}
 }
 
-func resolveMappingVersionToken(value string) string {
+func resolveMappingFetchVersionToken(clientHTTP *http.Client, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return mappingDefaultVersionToken
+		value = mappingDefaultVersionToken
 	}
-	return value
+	if strings.EqualFold(value, mappingDefaultVersionToken) {
+		return resolveMappingCurrentVersionToken(clientHTTP)
+	}
+	return normalizeMappingFixedVersionToken(value)
+}
+
+func normalizeMappingFixedVersionToken(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, mappingDefaultVersionToken) {
+		return "", fmt.Errorf("Reactome mapping version must be a fixed release token for this operation, not current")
+	}
+	matches := patternMappingVersion.FindStringSubmatch(value)
+	if len(matches) != 2 {
+		return "", fmt.Errorf("Reactome mapping version must look like v96 or 96: %s", value)
+	}
+	return "v" + matches[1], nil
+}
+
+func resolveMappingCurrentVersionToken(clientHTTP *http.Client) (string, error) {
+	request, err := http.NewRequest(http.MethodGet, mappingCurrentVersionURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build Reactome current version request: %w", err)
+	}
+	request.Header.Set("Accept", "text/plain")
+	response, err := clientHTTP.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("resolve Reactome current release version: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("resolve Reactome current release version: unexpected status %s", response.Status)
+	}
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		return "", fmt.Errorf("read Reactome current release version: %w", err)
+	}
+	versionToken, err := normalizeMappingFixedVersionToken(string(data))
+	if err != nil {
+		return "", fmt.Errorf("parse Reactome current release version %q: %w", strings.TrimSpace(string(data)), err)
+	}
+	return versionToken, nil
 }
 
 func createDefaultMappingConfig() mappingConfig {
@@ -221,6 +278,7 @@ func buildMappingOptions(
 	cfgDownload cliopt.DownloadControlConfig,
 	cfgTLS cliopt.InsecureTLSConfig,
 	cfgDryRun cliopt.DryRunConfig,
+	cfgProgress cliopt.ProgressConfig,
 ) staticasset.Options {
 	return staticasset.Options{
 		DirOut:                 dirOut,
@@ -231,6 +289,7 @@ func buildMappingOptions(
 		RequestInterval:        cfgDownload.RequestInterval,
 		ShouldAllowInsecureTLS: cfgTLS.ShouldAllowInsecureTLS,
 		ShouldDryRun:           cfgDryRun.ShouldDryRun,
+		ShouldDisableProgress:  cfgProgress.ShouldDisableProgress,
 	}
 }
 

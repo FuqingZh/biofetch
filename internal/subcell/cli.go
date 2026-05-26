@@ -69,6 +69,7 @@ func createUniProtFetchCommand() *cobra.Command {
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
+	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
 	return commandFetch
 }
 
@@ -143,5 +144,6 @@ func createUniProtSyncCommand() *cobra.Command {
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
+	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
 	return commandSync
 }

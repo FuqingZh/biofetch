@@ -63,9 +63,54 @@ func TestValidateMappingDownloadSizesRejectsLargeFile(t *testing.T) {
 	}
 }
 
+func TestResolveMappingFetchVersionTokenCurrent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/ContentService/data/database/version" {
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+		_, _ = writer.Write([]byte("96"))
+	}))
+	defer server.Close()
+
+	originalURL := mappingCurrentVersionURL
+	t.Cleanup(func() { mappingCurrentVersionURL = originalURL })
+	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
+
+	versionToken, err := resolveMappingFetchVersionToken(server.Client(), "")
+	if err != nil {
+		t.Fatalf("resolveMappingFetchVersionToken returned error: %v", err)
+	}
+	if versionToken != "v96" {
+		t.Fatalf("versionToken = %q, want v96", versionToken)
+	}
+}
+
+func TestNormalizeMappingFixedVersionToken(t *testing.T) {
+	for _, input := range []string{"96", "v96", "V96"} {
+		versionToken, err := normalizeMappingFixedVersionToken(input)
+		if err != nil {
+			t.Fatalf("normalizeMappingFixedVersionToken(%q) returned error: %v", input, err)
+		}
+		if versionToken != "v96" {
+			t.Fatalf("versionToken = %q, want v96", versionToken)
+		}
+	}
+}
+
+func TestNormalizeMappingFixedVersionTokenRejectsCurrent(t *testing.T) {
+	_, err := normalizeMappingFixedVersionToken("current")
+	if err == nil {
+		t.Fatal("normalizeMappingFixedVersionToken returned nil error")
+	}
+}
+
 func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 	countGet := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/ContentService/data/database/version" {
+			_, _ = writer.Write([]byte("96"))
+			return
+		}
 		switch request.Method {
 		case http.MethodHead:
 			writer.Header().Set("Content-Length", "8")
@@ -79,8 +124,13 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 	defer server.Close()
 
 	originalBaseURL := mappingCurrentBaseURL
-	t.Cleanup(func() { mappingCurrentBaseURL = originalBaseURL })
+	originalVersionURL := mappingCurrentVersionURL
+	t.Cleanup(func() {
+		mappingCurrentBaseURL = originalBaseURL
+		mappingCurrentVersionURL = originalVersionURL
+	})
 	mappingCurrentBaseURL = server.URL + "/"
+	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
 
 	cfg := createDefaultMappingConfig()
 	cfg.DirOut = t.TempDir()
@@ -98,7 +148,7 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 		t.Fatalf("countGet = %d, want 1", countGet)
 	}
 
-	fileManifest := filepath.Join(cfg.DirOut, "mapping", "current", "manifest.lock")
+	fileManifest := filepath.Join(cfg.DirOut, "mapping", "v96", "manifest.lock")
 	manifest, ok, err := staticasset.ReadManifest(fileManifest)
 	if err != nil {
 		t.Fatalf("ReadManifest returned error: %v", err)
@@ -109,13 +159,76 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 	if manifest.Database != "reactome" || manifest.Asset != "mapping" {
 		t.Fatalf("manifest identity = %#v", manifest)
 	}
+	if manifest.Version != "v96" || manifest.VersionToken != "v96" {
+		t.Fatalf("manifest version = %#v", manifest)
+	}
 	if len(manifest.Files) != 1 || manifest.Files[0].SHA256 == "" || manifest.Files[0].Bytes != 8 {
 		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
 }
 
+func TestRunFetchMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/ContentService/data/database/version" {
+			http.Error(writer, "missing", http.StatusNotFound)
+			return
+		}
+		_, _ = writer.Write([]byte("pathways"))
+	}))
+	defer server.Close()
+
+	originalBaseURL := mappingCurrentBaseURL
+	originalVersionURL := mappingCurrentVersionURL
+	t.Cleanup(func() {
+		mappingCurrentBaseURL = originalBaseURL
+		mappingCurrentVersionURL = originalVersionURL
+	})
+	mappingCurrentBaseURL = server.URL + "/"
+	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
+
+	cfg := createDefaultMappingConfig()
+	cfg.DirOut = t.TempDir()
+	cfg.RetryMax = 1
+	cfg.WorkersMax = 1
+	cfg.assetNames = []string{"ReactomePathways.txt"}
+	err := runFetchMapping(&cfg)
+	if err == nil {
+		t.Fatal("runFetchMapping returned nil error")
+	}
+	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "mapping")); !os.IsNotExist(statErr) {
+		t.Fatalf("mapping directory exists or stat failed unexpectedly: %v", statErr)
+	}
+}
+
+func TestRunLockMappingRejectsCurrentVersion(t *testing.T) {
+	cfg := mappingLockConfig{}
+	cfg.DirOut = t.TempDir()
+	cfg.VersionToken = "current"
+	err := runLockMapping(&cfg)
+	if err == nil {
+		t.Fatal("runLockMapping returned nil error")
+	}
+}
+
+func TestRunSyncMappingRejectsCurrentVersion(t *testing.T) {
+	cfg := mappingSyncConfig{}
+	cfg.DirOut = t.TempDir()
+	cfg.VersionToken = "current"
+	cfg.RuleExisting = "skip"
+	cfg.RetryMax = 1
+	cfg.WorkersMax = 1
+	err := runSyncMapping(&cfg)
+	if err == nil {
+		t.Fatal("runSyncMapping returned nil error")
+	}
+}
+
 func TestRunSyncMappingRehydratesManifest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/ContentService/data/database/version" {
+			_, _ = writer.Write([]byte("96"))
+			return
+		}
 		switch request.Method {
 		case http.MethodHead:
 			writer.Header().Set("Content-Length", "8")
@@ -126,8 +239,13 @@ func TestRunSyncMappingRehydratesManifest(t *testing.T) {
 	defer server.Close()
 
 	originalBaseURL := mappingCurrentBaseURL
-	t.Cleanup(func() { mappingCurrentBaseURL = originalBaseURL })
+	originalVersionURL := mappingCurrentVersionURL
+	t.Cleanup(func() {
+		mappingCurrentBaseURL = originalBaseURL
+		mappingCurrentVersionURL = originalVersionURL
+	})
 	mappingCurrentBaseURL = server.URL + "/"
+	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
 
 	cfg := createDefaultMappingConfig()
 	cfg.DirOut = t.TempDir()
@@ -137,13 +255,13 @@ func TestRunSyncMappingRehydratesManifest(t *testing.T) {
 	if err := runFetchMapping(&cfg); err != nil {
 		t.Fatalf("runFetchMapping returned error: %v", err)
 	}
-	fileOut := filepath.Join(cfg.DirOut, "mapping", "current", "raw", "ReactomePathways.txt")
+	fileOut := filepath.Join(cfg.DirOut, "mapping", "v96", "raw", "ReactomePathways.txt")
 	if err := os.Remove(fileOut); err != nil {
 		t.Fatalf("os.Remove returned error: %v", err)
 	}
 	syncCfg := mappingSyncConfig{}
 	syncCfg.DirOut = cfg.DirOut
-	syncCfg.VersionToken = "current"
+	syncCfg.VersionToken = "96"
 	syncCfg.RuleExisting = "skip"
 	syncCfg.RetryMax = 1
 	syncCfg.WorkersMax = 1

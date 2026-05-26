@@ -1,4 +1,4 @@
-package wikipathways
+package uniprot
 
 import (
 	"biofetch/internal/shared/cliopt"
@@ -10,60 +10,60 @@ import (
 
 func NewCommand() *cobra.Command {
 	commandRoot := &cobra.Command{
-		Use:           "wikipathways",
-		Short:         "Manage WikiPathways raw assets and manifest.lock",
+		Use:           "uniprot",
+		Short:         "Manage UniProt raw assets and manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	commandRoot.AddCommand(createGMTCommand())
+	commandRoot.AddCommand(createIDMappingCommand())
 	return commandRoot
 }
 
-func createGMTCommand() *cobra.Command {
-	commandGMT := &cobra.Command{
-		Use:           "gmt",
-		Short:         "Manage WikiPathways GMT raw assets",
+func createIDMappingCommand() *cobra.Command {
+	commandIDMapping := &cobra.Command{
+		Use:           "idmapping",
+		Short:         "Manage UniProt ID mapping raw assets",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	commandGMT.AddCommand(createGMTFetchCommand())
-	commandGMT.AddCommand(createGMTLockCommand())
-	commandGMT.AddCommand(createGMTSyncCommand())
-	return commandGMT
+	commandIDMapping.AddCommand(createIDMappingFetchCommand())
+	commandIDMapping.AddCommand(createIDMappingLockCommand())
+	commandIDMapping.AddCommand(createIDMappingSyncCommand())
+	return commandIDMapping
 }
 
-func createGMTFetchCommand() *cobra.Command {
-	cfg := createDefaultGMTConfig()
+func createIDMappingFetchCommand() *cobra.Command {
+	cfg := createDefaultIDMappingConfig()
 	retryWaitSec := 3
 	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
-		Short:         "Fetch WikiPathways GMT raw assets and update manifest.lock",
+		Short:         "Fetch UniProt ID mapping global raw assets and update manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
 			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
-			if err := validateGMTConfig(&cfg); err != nil {
+			if err := validateIDMappingConfig(&cfg); err != nil {
 				return err
 			}
-			return runFetchGMT(&cfg, cmd.InOrStdin(), cmd.ErrOrStderr())
+			return runFetchIDMapping(&cfg)
 		},
 	}
 	commandFetch.Example = strings.Join([]string{
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species Homo_sapiens --should_dry_run",
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species @species.txt",
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --should_download_all",
+		"biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_download",
+		"biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_download",
+		"biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_download",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways release token; only current/empty is supported in this implementation")
-	flags.StringSliceVar(&cfg.speciesNames, "species", nil, "WikiPathways species labels; repeat the flag, use commas, or use @file")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch GMT files for all species in the current release")
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt release token; omit for current")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "UniProt ID mapping assets: selected|dat; repeat the flag, use commas, or use @file")
+	flags.BoolVar(&cfg.shouldAllowLargeDownload, "should_allow_large_download", false, "Allow multi-GB UniProt ID mapping downloads")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
@@ -73,11 +73,11 @@ func createGMTFetchCommand() *cobra.Command {
 	return commandFetch
 }
 
-func createGMTLockCommand() *cobra.Command {
-	cfg := gmtLockConfig{}
+func createIDMappingLockCommand() *cobra.Command {
+	cfg := idMappingLockConfig{}
 	commandLock := &cobra.Command{
 		Use:           "lock",
-		Short:         "Rebuild WikiPathways GMT manifest.lock from the current version directory",
+		Short:         "Rebuild UniProt ID mapping manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -88,19 +88,19 @@ func createGMTLockCommand() *cobra.Command {
 			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
 				return err
 			}
-			return runLockGMT(&cfg)
+			return runLockIDMapping(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways GMT version token")
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt ID mapping version token")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	return commandLock
 }
 
-func createGMTSyncCommand() *cobra.Command {
-	cfg := gmtSyncConfig{}
+func createIDMappingSyncCommand() *cobra.Command {
+	cfg := idMappingSyncConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
@@ -110,7 +110,7 @@ func createGMTSyncCommand() *cobra.Command {
 
 	commandSync := &cobra.Command{
 		Use:           "sync",
-		Short:         "Sync WikiPathways GMT files from manifest.lock and refresh manifest",
+		Short:         "Sync UniProt ID mapping files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -132,13 +132,13 @@ func createGMTSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncGMT(&cfg)
+			return runSyncIDMapping(&cfg)
 		},
 	}
 	flags := commandSync.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways GMT version token")
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt ID mapping version token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)

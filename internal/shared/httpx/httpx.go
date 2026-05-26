@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+type DownloadProgressFunc func(bytesDone int64, bytesTotal int64)
+
 type RequestLimiter struct {
 	interval        time.Duration
 	mutexLimiter    sync.Mutex
@@ -50,6 +52,10 @@ func (limiter *RequestLimiter) Wait() {
 }
 
 func DownloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error {
+	return DownloadFileWithProgress(clientHTTP, urlFile, fileOut, nil)
+}
+
+func DownloadFileWithProgress(clientHTTP *http.Client, urlFile string, fileOut string, progress DownloadProgressFunc) error {
 	response, err := clientHTTP.Get(urlFile)
 	if err != nil {
 		return fmt.Errorf("request %s: %w", urlFile, err)
@@ -65,7 +71,16 @@ func DownloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error
 		return fmt.Errorf("create %s: %w", fileOut, err)
 	}
 
-	_, errCopy := io.Copy(fileHandle, response.Body)
+	var reader io.Reader = response.Body
+	if progress != nil {
+		reader = &progressReader{
+			reader:     response.Body,
+			bytesTotal: response.ContentLength,
+			progress:   progress,
+		}
+		progress(0, response.ContentLength)
+	}
+	_, errCopy := io.Copy(fileHandle, reader)
 	errClose := fileHandle.Close()
 	if errCopy != nil {
 		return fmt.Errorf("write %s: %w", fileOut, errCopy)
@@ -74,4 +89,20 @@ func DownloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error
 		return fmt.Errorf("close %s: %w", fileOut, errClose)
 	}
 	return nil
+}
+
+type progressReader struct {
+	reader     io.Reader
+	bytesDone  int64
+	bytesTotal int64
+	progress   DownloadProgressFunc
+}
+
+func (reader *progressReader) Read(buffer []byte) (int, error) {
+	count, err := reader.reader.Read(buffer)
+	if count > 0 {
+		reader.bytesDone += int64(count)
+		reader.progress(reader.bytesDone, reader.bytesTotal)
+	}
+	return count, err
 }

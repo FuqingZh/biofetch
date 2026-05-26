@@ -31,6 +31,7 @@ type gmtConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 	speciesNames      []string
 	shouldDownloadAll bool
 }
@@ -49,6 +50,7 @@ type gmtSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 }
 
 type gmtAsset struct {
@@ -79,7 +81,7 @@ func runFetchGMT(cfg *gmtConfig, readerConfirm io.Reader, writerConfirm io.Write
 	}
 	versionToken := deriveGMTVersionToken(assetsSelected)
 	source := buildGMTSource(versionToken, assetsSelected)
-	return staticasset.Fetch(source, buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	return staticasset.Fetch(source, buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func runLockGMT(cfg *gmtLockConfig) error {
@@ -93,7 +95,7 @@ func runLockGMT(cfg *gmtLockConfig) error {
 }
 
 func runSyncGMT(cfg *gmtSyncConfig) error {
-	return staticasset.Sync(buildGMTSource(cfg.VersionToken, nil), buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	return staticasset.Sync(buildGMTSource(cfg.VersionToken, nil), buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func discoverGMTAssets(clientHTTP *http.Client, baseURL string, limiterRequest *httpx.RequestLimiter) ([]gmtAsset, error) {
@@ -328,6 +330,7 @@ func buildGMTOptions(
 	cfgDownload cliopt.DownloadControlConfig,
 	cfgTLS cliopt.InsecureTLSConfig,
 	cfgDryRun cliopt.DryRunConfig,
+	cfgProgress cliopt.ProgressConfig,
 ) staticasset.Options {
 	return staticasset.Options{
 		DirOut:                 dirOut,
@@ -338,6 +341,7 @@ func buildGMTOptions(
 		RequestInterval:        cfgDownload.RequestInterval,
 		ShouldAllowInsecureTLS: cfgTLS.ShouldAllowInsecureTLS,
 		ShouldDryRun:           cfgDryRun.ShouldDryRun,
+		ShouldDisableProgress:  cfgProgress.ShouldDisableProgress,
 	}
 }
 

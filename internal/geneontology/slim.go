@@ -24,6 +24,7 @@ type slimConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 	version     string
 	subsetNames []string
 	formatNames []string
@@ -43,6 +44,7 @@ type slimSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.ProgressConfig
 }
 
 func runFetchSlim(cfg *slimConfig) error {
@@ -75,7 +77,7 @@ func runFetchSlim(cfg *slimConfig) error {
 			Value: strings.Join(subsets, ",") + "|" + strings.Join(formats, ","),
 		},
 		Assets: assets,
-	}, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	}, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 func runLockSlim(cfg *slimLockConfig) error {
@@ -101,7 +103,7 @@ func runSyncSlim(cfg *slimSyncConfig) error {
 		Source:       "geneontology",
 		Version:      cfg.VersionToken,
 		VersionToken: cfg.VersionToken,
-	}, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig), nil)
+	}, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
 type slimSource struct {
@@ -286,6 +288,7 @@ func buildSlimOptions(
 	cfgDownload cliopt.DownloadControlConfig,
 	cfgTLS cliopt.InsecureTLSConfig,
 	cfgDryRun cliopt.DryRunConfig,
+	cfgProgress cliopt.ProgressConfig,
 ) staticasset.Options {
 	return staticasset.Options{
 		DirOut:                 dirOut,
@@ -296,6 +299,7 @@ func buildSlimOptions(
 		RequestInterval:        cfgDownload.RequestInterval,
 		ShouldAllowInsecureTLS: cfgTLS.ShouldAllowInsecureTLS,
 		ShouldDryRun:           cfgDryRun.ShouldDryRun,
+		ShouldDisableProgress:  cfgProgress.ShouldDisableProgress,
 	}
 }
 

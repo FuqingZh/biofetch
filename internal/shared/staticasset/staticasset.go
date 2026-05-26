@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,6 +49,8 @@ type Options struct {
 	RequestInterval        time.Duration
 	ShouldAllowInsecureTLS bool
 	ShouldDryRun           bool
+	ShouldDisableProgress  bool
+	ProgressWriter         io.Writer
 }
 
 type FileRecord struct {
@@ -97,6 +100,22 @@ type downloadTask struct {
 	asset Asset
 }
 
+type progressReporter struct {
+	writer        io.Writer
+	label         string
+	timeStarted   time.Time
+	timeLastDraw  time.Time
+	totalFiles    int
+	doneFiles     int
+	downloadFiles int
+	totalBytes    int64
+	doneBytes     int64
+	knownBytes    bool
+	fileBytes     map[string]int64
+	fileTotals    map[string]int64
+	mutex         sync.Mutex
+}
+
 func Fetch(source Source, options Options, trace TraceSink) error {
 	if err := validateSource(source); err != nil {
 		return err
@@ -130,10 +149,14 @@ func Fetch(source Source, options Options, trace TraceSink) error {
 
 	clientHTTP := httpx.NewClient(options.ShouldAllowInsecureTLS)
 	limiterRequest := httpx.NewRequestLimiter(options.RequestInterval)
-	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace)
+	progress := newProgressReporter(source, options, len(source.Assets), len(recordsReused))
+	progress.plan(len(recordsReused), len(tasksDownload))
+	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress)
 	if err != nil {
+		progress.finish(false)
 		return err
 	}
+	progress.finish(true)
 
 	records := append([]FileRecord{}, recordsReused...)
 	records = append(records, recordsDownloaded...)
@@ -210,10 +233,14 @@ func Sync(source Source, options Options, trace TraceSink) error {
 
 	clientHTTP := httpx.NewClient(options.ShouldAllowInsecureTLS)
 	limiterRequest := httpx.NewRequestLimiter(options.RequestInterval)
-	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace)
+	progress := newProgressReporter(source, options, len(recordsManifest), len(recordsReused))
+	progress.plan(len(recordsReused), len(tasksDownload))
+	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress)
 	if err != nil {
+		progress.finish(false)
 		return err
 	}
+	progress.finish(true)
 	records := append([]FileRecord{}, recordsReused...)
 	records = append(records, recordsDownloaded...)
 	recordsComplete, err := buildCompleteRecords(fileManifest, dirVersion, records)
@@ -398,13 +425,14 @@ func runDownloadTasks(
 	options Options,
 	limiterRequest *httpx.RequestLimiter,
 	trace TraceSink,
+	progress *progressReporter,
 ) ([]FileRecord, error) {
 	return parallel.MapOrderedWithWorkers(tasks, options.WorkersMax, func(task downloadTask) (FileRecord, error) {
 		fileOut := filepath.Join(dirVersion, filepath.FromSlash(task.asset.Path))
 		if err := os.MkdirAll(filepath.Dir(fileOut), 0o755); err != nil {
 			return FileRecord{}, fmt.Errorf("create dir for %s: %w", fileOut, err)
 		}
-		if err := downloadFileWithRetry(clientHTTP, task.asset.URL, fileOut, options.RetryMax, options.RetryWait, limiterRequest); err != nil {
+		if err := downloadFileWithRetry(clientHTTP, task.asset, fileOut, options.RetryMax, options.RetryWait, limiterRequest, progress); err != nil {
 			return FileRecord{}, err
 		}
 		if task.asset.Transform != nil {
@@ -423,29 +451,33 @@ func runDownloadTasks(
 
 func downloadFileWithRetry(
 	clientHTTP *http.Client,
-	urlFile string,
+	asset Asset,
 	fileOut string,
 	retryMax int,
 	retryWait time.Duration,
 	limiterRequest *httpx.RequestLimiter,
+	progress *progressReporter,
 ) error {
 	filePart := fileOut + ".part"
 	var errLast error
 	for attempt := 1; attempt <= retryMax; attempt++ {
 		limiterRequest.Wait()
-		if err := httpx.DownloadFile(clientHTTP, urlFile, filePart); err == nil {
+		progress.startFile(asset)
+		if err := httpx.DownloadFileWithProgress(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
 			if err := os.Rename(filePart, fileOut); err != nil {
 				return fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)
 			}
+			progress.finishFile(asset, true)
 			return nil
 		} else {
+			progress.finishFile(asset, false)
 			errLast = err
 		}
 		if attempt < retryMax && retryWait > 0 {
 			time.Sleep(retryWait)
 		}
 	}
-	return fmt.Errorf("download failed after %d attempts for %s: %w", retryMax, urlFile, errLast)
+	return fmt.Errorf("download failed after %d attempts for %s: %w", retryMax, asset.URL, errLast)
 }
 
 func buildRecord(filePath string, asset Asset) (FileRecord, error) {
@@ -671,6 +703,183 @@ func sortRecords(records []FileRecord) {
 		}
 		return records[i].Asset < records[j].Asset
 	})
+}
+
+func newProgressReporter(source Source, options Options, totalFiles int, reusedFiles int) *progressReporter {
+	if options.ShouldDisableProgress {
+		return nil
+	}
+	writer := options.ProgressWriter
+	if writer == nil {
+		writer = os.Stderr
+	}
+	return &progressReporter{
+		writer:      writer,
+		label:       strings.TrimSpace(source.Database + " " + source.Asset),
+		timeStarted: time.Now(),
+		totalFiles:  totalFiles,
+		doneFiles:   reusedFiles,
+		fileBytes:   map[string]int64{},
+		fileTotals:  map[string]int64{},
+	}
+}
+
+func (progress *progressReporter) plan(reusedFiles int, downloadFiles int) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	progress.downloadFiles = downloadFiles
+	progress.drawLocked(fmt.Sprintf("reuse=%d download=%d", reusedFiles, downloadFiles), true)
+}
+
+func (progress *progressReporter) startFile(asset Asset) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	progress.drawLocked("downloading "+asset.Path, false)
+}
+
+func (progress *progressReporter) callbackForFile(asset Asset) httpx.DownloadProgressFunc {
+	if progress == nil {
+		return nil
+	}
+	return func(bytesDone int64, bytesTotal int64) {
+		progress.updateFile(asset, bytesDone, bytesTotal)
+	}
+}
+
+func (progress *progressReporter) updateFile(asset Asset, bytesDone int64, bytesTotal int64) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	key := asset.Path
+	if bytesTotal > 0 && progress.downloadFiles <= 1 {
+		if _, ok := progress.fileTotals[key]; !ok {
+			progress.fileTotals[key] = bytesTotal
+			progress.totalBytes += bytesTotal
+			progress.knownBytes = true
+		}
+	}
+	previous := progress.fileBytes[key]
+	if bytesDone > previous {
+		progress.doneBytes += bytesDone - previous
+		progress.fileBytes[key] = bytesDone
+	}
+	progress.drawLocked("downloading "+asset.Path, false)
+}
+
+func (progress *progressReporter) finishFile(asset Asset, ok bool) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	if ok {
+		progress.doneFiles++
+		progress.drawLocked("downloaded "+asset.Path, true)
+		return
+	}
+	progress.drawLocked("retry "+asset.Path, true)
+}
+
+func (progress *progressReporter) finish(ok bool) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	status := "completed"
+	if !ok {
+		status = "failed"
+	}
+	progress.drawLocked(status, true)
+	_, _ = fmt.Fprintln(progress.writer)
+}
+
+func (progress *progressReporter) drawLocked(status string, force bool) {
+	now := time.Now()
+	if !force && !progress.timeLastDraw.IsZero() && now.Sub(progress.timeLastDraw) < 200*time.Millisecond {
+		return
+	}
+	progress.timeLastDraw = now
+	if progress.knownBytes && progress.totalBytes > 0 {
+		percent := float64(progress.doneBytes) / float64(progress.totalBytes)
+		_, _ = fmt.Fprintf(progress.writer, "\r%s  %s %3.0f%%  %s/%s  %s/s  %s",
+			progress.label,
+			renderProgressBar(percent),
+			percent*100,
+			formatBytes(progress.doneBytes),
+			formatBytes(progress.totalBytes),
+			formatBytes(progress.speedBytesPerSecond(now)),
+			status,
+		)
+		return
+	}
+	if progress.totalFiles > 0 {
+		percent := float64(progress.doneFiles) / float64(progress.totalFiles)
+		_, _ = fmt.Fprintf(progress.writer, "\r%s  %s %d/%d files  %s",
+			progress.label,
+			renderProgressBar(percent),
+			progress.doneFiles,
+			progress.totalFiles,
+			status,
+		)
+		return
+	}
+	_, _ = fmt.Fprintf(progress.writer, "\r%s  [downloading] %s  %s/s  %s",
+		progress.label,
+		formatBytes(progress.doneBytes),
+		formatBytes(progress.speedBytesPerSecond(now)),
+		status,
+	)
+}
+
+func (progress *progressReporter) speedBytesPerSecond(now time.Time) int64 {
+	elapsed := now.Sub(progress.timeStarted).Seconds()
+	if elapsed <= 0 {
+		return 0
+	}
+	return int64(float64(progress.doneBytes) / elapsed)
+}
+
+func renderProgressBar(percent float64) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	const width = 20
+	filled := int(percent * width)
+	if filled > width {
+		filled = width
+	}
+	if filled == width {
+		return "[" + strings.Repeat("=", width) + "]"
+	}
+	return "[" + strings.Repeat("=", filled) + ">" + strings.Repeat(".", width-filled-1) + "]"
+}
+
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	value := float64(bytes)
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	for _, unitName := range units {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, unitName)
+		}
+	}
+	return fmt.Sprintf("%.1f PiB", value/unit)
 }
 
 func emit(trace TraceSink, source Source, event TraceEvent) {
