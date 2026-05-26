@@ -68,10 +68,11 @@ type ontologyManifestFileItem struct {
 	URL    string `toml:"url"`
 }
 
-const ontologyCurrentBaseURL = "https://current.geneontology.org/ontology/"
 const ontologyArchiveRootURL = "https://release.geneontology.org/"
 const ontologyArchiveDocsURL = "https://geneontology.org/docs/download-ontology/"
 const ontologyVersionAssetName = "go-basic.obo"
+
+var ontologyCurrentBaseURL = "https://current.geneontology.org/ontology/"
 
 func runFetchOntology(cfg *ontologyConfig, readerConfirm io.Reader, writerConfirm io.Writer) error {
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)

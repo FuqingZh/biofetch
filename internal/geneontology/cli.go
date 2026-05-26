@@ -31,6 +31,7 @@ func NewCommand() *cobra.Command {
 	}
 
 	commandGO.AddCommand(createOntologyCommand())
+	commandGO.AddCommand(createSlimCommand())
 	return commandGO
 }
 
@@ -46,6 +47,138 @@ func createOntologyCommand() *cobra.Command {
 	commandOntology.AddCommand(createOntologyLockCommand())
 	commandOntology.AddCommand(createOntologySyncCommand())
 	return commandOntology
+}
+
+func createSlimCommand() *cobra.Command {
+	commandSlim := &cobra.Command{
+		Use:           "slim",
+		Short:         "Manage GO Slim subset raw assets",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	commandSlim.AddCommand(createSlimFetchCommand())
+	commandSlim.AddCommand(createSlimLockCommand())
+	commandSlim.AddCommand(createSlimSyncCommand())
+	return commandSlim
+}
+
+func createSlimFetchCommand() *cobra.Command {
+	cfg := createDefaultSlimConfig()
+	retryWaitSec := 3
+	requestIntervalMs := 0
+
+	commandSlim := &cobra.Command{
+		Use:           "fetch",
+		Short:         "Fetch GO Slim subset raw assets and update manifest.lock",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := validateSlimConfig(&cfg); err != nil {
+				return err
+			}
+			return runFetchSlim(&cfg)
+		},
+	}
+
+	commandSlim.Example = strings.Join([]string{
+		"biofetch go slim fetch --dir_out /data/go --should_dry_run",
+		"biofetch go slim fetch --dir_out /data/go --subsets goslim_generic --formats obo,tsv",
+		"biofetch go slim fetch --dir_out /data/go --version 2026-01-23 --subsets goslim_plant --formats obo",
+	}, "\n")
+
+	flags := commandSlim.Flags()
+	flags.SortFlags = false
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
+	flags.StringSliceVar(&cfg.subsetNames, "subsets", nil, "GO Slim subset IDs; omit for goslim_generic, repeat the flag, use commas, or use @file")
+	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO Slim formats: obo|owl|json|tsv; omit for obo, repeat the flag, use commas, or use @file")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
+	return commandSlim
+}
+
+func createSlimLockCommand() *cobra.Command {
+	cfg := slimLockConfig{}
+
+	commandLock := &cobra.Command{
+		Use:           "lock",
+		Short:         "Rebuild GO Slim manifest.lock from the current version directory",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
+				return err
+			}
+			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
+				return err
+			}
+			return runLockSlim(&cfg)
+		},
+	}
+
+	flags := commandLock.Flags()
+	flags.SortFlags = false
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO Slim version token")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
+	return commandLock
+}
+
+func createSlimSyncCommand() *cobra.Command {
+	cfg := slimSyncConfig{}
+	cfg.RetryMax = 5
+	cfg.RetryWait = 3 * time.Second
+	cfg.RuleExisting = "skip"
+	cfg.WorkersMax = 1
+	retryWaitSec := 3
+	requestIntervalMs := 0
+
+	commandSync := &cobra.Command{
+		Use:           "sync",
+		Short:         "Sync GO Slim files from manifest.lock and refresh manifest",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
+				return err
+			}
+			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
+				return err
+			}
+			if err := cliopt.ValidateRetryConfig(&cfg.RetryConfig); err != nil {
+				return err
+			}
+			if err := cliopt.ValidateDownloadControlConfig(&cfg.DownloadControlConfig); err != nil {
+				return err
+			}
+			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
+				return err
+			}
+			return runSyncSlim(&cfg)
+		},
+	}
+
+	flags := commandSync.Flags()
+	flags.SortFlags = false
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO Slim version token")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
+	return commandSync
 }
 
 func createOntologyFetchCommand() *cobra.Command {
