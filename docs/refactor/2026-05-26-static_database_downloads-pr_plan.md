@@ -312,7 +312,128 @@ HPA and COMPARTMENTS should be added as later PRs that write the same
 `protein_location` asset contract while preserving source-specific raw data,
 evidence fields, and manifest `source` values.
 
-## PR 6: End-to-End Smoke and Docs
+## PR 6: UniProt ID Mapping Raw Assets
+
+### Scope
+
+- Add `biofetch uniprot idmapping fetch|lock|sync`.
+- Download only the two official global raw files in the first implementation:
+  `idmapping_selected.tab.gz` and `idmapping.dat.gz`.
+- Keep `raw/` aligned with the official UniProt FTP layout; do not create
+  taxid subdirectories for these global assets.
+- Do not implement UniProt REST ID-mapping jobs in this PR.
+
+### Public Behavior
+
+Examples:
+
+```bash
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_download
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_download
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_download
+```
+
+The command resolves omitted `--version` and `--version current` from UniProt
+`relnotes.txt`, writes the real token such as `2026_01`, and fails without
+writing output if the release cannot be parsed.
+
+### Unit Tests
+
+- current release resolver parses `UniProt Release 2026_01`
+- current release resolver rejects malformed release notes
+- asset resolver maps `selected` to `idmapping_selected.tab.gz`
+- asset resolver maps `dat` to `idmapping.dat.gz`
+- unknown assets are rejected before network access
+- fetch requires `--should_allow_large_download`
+- fetch writes `raw/idmapping_selected.tab.gz` and/or `raw/idmapping.dat.gz`
+- lock/sync require fixed versions and reject `current`
+- manifest records `database = "uniprot"`, `asset = "idmapping"`, and
+  `source = "ftp"`
+
+### Log Traces
+
+Required trace evidence:
+
+- parsed UniProt release token
+- selected asset count
+- per-file download/reuse status
+- manifest write status
+
+### A/B Test
+
+Fixture:
+
+- fake `relnotes.txt`
+- fake selected and dat gzip payloads
+
+Acceptance:
+
+- A direct resolver expected asset list equals B command selected assets
+- B preserves official `raw/` file names
+- B refuses large downloads without the explicit large-download flag
+- second B run reuses all files
+
+## PR 7: Shared Download Progress V1
+
+### Scope
+
+- Add a shared concise progress indicator to `internal/shared/staticasset`.
+- Show progress by default for `fetch` and `sync`.
+- Write progress to stderr only.
+- Add `--should_disable_progress` to static-asset based commands.
+- Do not add `auto|always|never` modes.
+- Do not add detailed log-file output in this PR.
+
+### Public Behavior
+
+Default:
+
+```text
+uniprot idmapping  [======>.............] 34%  3.2 GiB/9.3 GiB  24.1 MiB/s
+wikipathways gmt   [==========>.........] 18/43 files
+subcell uniprot    [downloading] 812.4 MiB  12.8 MiB/s
+```
+
+Disable:
+
+```bash
+biofetch uniprot idmapping fetch \
+  --dir_out /data/uniprot \
+  --assets selected \
+  --should_allow_large_download \
+  --should_disable_progress
+```
+
+### Unit Tests
+
+- progress is emitted by default during `fetch`
+- `--should_disable_progress` suppresses progress output
+- known `Content-Length` renders byte percentage
+- unknown content length falls back to file-count or spinner progress
+- reused files count toward the completed plan but do not emit byte progress
+- progress is written to stderr, not stdout
+- existing trace events remain unchanged
+
+### Log Traces
+
+No detailed log file in v1. Existing trace events remain available to tests and
+future `--file_log`, but the user-facing progress bar is intentionally compact.
+
+### A/B Test
+
+Fixture:
+
+- fake assets with and without `Content-Length`
+- one reused file from manifest
+
+Acceptance:
+
+- A no-progress run and B progress-enabled run produce identical files and
+  manifest
+- B emits one concise progress line stream on stderr
+- B with `--should_disable_progress` emits no progress text
+
+## PR 8: End-to-End Smoke and Docs
 
 ### Scope
 

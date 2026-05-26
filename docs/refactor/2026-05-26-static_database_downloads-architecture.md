@@ -8,6 +8,7 @@ enrichment, pathway, and localization workflows:
 - GO Slim subsets
 - WikiPathways releases
 - Reactome download assets
+- UniProt ID mapping global raw assets
 - Subcellular protein-location annotations, starting with UniProt-derived
   protein annotation data and leaving HPA / COMPARTMENTS as compatible future
   sources
@@ -61,11 +62,49 @@ The kernel owns only generic behavior:
 - write `manifest.lock`
 - rebuild lock from local files
 - sync files from a manifest
+- render a concise download progress indicator to stderr by default
 - emit deterministic trace records for tests and smoke evidence
 
 The kernel must not own public Cobra command construction. Database packages
 own CLI shape and source policy; the shared package may expose small flag
 binding helpers only when they do not hide source-specific behavior.
+
+### Download Progress V1
+
+Progress is a shared-kernel concern, not a per-database implementation. Every
+command that uses `staticasset.Fetch` or `staticasset.Sync` should get the same
+minimal progress behavior.
+
+Public behavior:
+
+- show a concise loading/progress bar by default
+- write progress to stderr, never stdout
+- add one shared flag, `--should_disable_progress`, for non-interactive logs or
+  CI
+- do not add `auto|always|never` modes in v1
+- do not add detailed log-file output in v1
+
+Display rules:
+
+- if total bytes are known, show aggregate byte progress, percentage, and
+  transfer speed
+- if total bytes are unknown but file count is known, show file-count progress
+- if both byte total and meaningful file-count progress are weak, show a
+  spinner/loading line with downloaded bytes and speed
+- show reuse/download counts after planning, then update one progress line
+  during downloads
+- finish with a compact completed summary
+
+Examples:
+
+```text
+uniprot idmapping  [======>.............] 34%  3.2 GiB/9.3 GiB  24.1 MiB/s
+wikipathways gmt   [==========>.........] 18/43 files
+subcell uniprot    [downloading] 812.4 MiB  12.8 MiB/s
+```
+
+Detailed event logs can be added later with a separate `--file_log` option that
+serializes existing trace events, but that is outside the v1 progress scope.
 
 Database packages own source-specific policy:
 
@@ -81,6 +120,10 @@ internal/wikipathways/
 internal/reactome/
   cli.go
   mapping.go
+
+internal/uniprot/
+  cli.go
+  idmapping.go
 
 internal/subcell/
   cli.go
@@ -191,6 +234,53 @@ hundreds of MB or larger. Dry-run should show content length when available.
 Downloads above a named threshold must require explicit confirmation or an
 explicit large-download flag.
 
+### UniProt ID Mapping
+
+UniProt ID mapping should start as a raw mirror/cache for the two official
+global mapping files. Do not add REST ID-mapping jobs in the first
+implementation; those are request-specific conversion jobs, not static database
+downloads.
+
+Proposed command:
+
+```bash
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_download
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_download
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_download
+```
+
+Directory:
+
+```text
+<dir_out>/idmapping/<version_token>/
+  raw/
+    idmapping_selected.tab.gz
+    idmapping.dat.gz
+  manifest.lock
+```
+
+Sources:
+
+- Current release notes:
+  <https://ftp.uniprot.org/pub/databases/uniprot/current_release/relnotes.txt>
+- Current ID mapping directory:
+  <https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/>
+- ID mapping REST API:
+  <https://www.uniprot.org/help/id_mapping_prog>
+
+Implementation note: `raw/` must preserve the official file layout. Do not
+rewrite global files into taxid directories. The first implementation downloads
+only:
+
+- `idmapping_selected.tab.gz` (`--assets selected`)
+- `idmapping.dat.gz` (`--assets dat`)
+
+Both files are multi-GB assets and must require `--should_allow_large_download`,
+even when `Content-Length` is unavailable. `--version current` or an omitted
+version must resolve the real UniProt release from `relnotes.txt`, such as
+`2026_01`; if release parsing fails, fail the command and do not write a
+`current` snapshot.
+
 ### Subcellular Sources
 
 Do not expose a vague `subcell fetch` command that hides source meaning. Use
@@ -268,6 +358,9 @@ Recommended first-pass policy:
 - Reactome: use Reactome release number if discoverable from source metadata;
   otherwise use a current-date snapshot token only when the exact URLs are
   captured in `manifest.lock`.
+- UniProt ID mapping: use the UniProt release parsed from current release
+  notes, such as `2026_01`; fail rather than writing a `current` snapshot when
+  the release cannot be resolved.
 - UniProt subcell: use the UniProt release when available; otherwise use a
   deterministic snapshot token only when the exact query URL and output hashes
   are captured in `manifest.lock`.
@@ -374,6 +467,8 @@ After the PR series lands:
 - Dry-run should report planned file count and known content length.
 - Large assets require explicit confirmation independent of
   `--should_download_all`.
+- Progress display is informational only; if size detection fails, downloads
+  should continue with file-count or spinner progress rather than failing.
 - Disk-space checks are optional for first implementation, but error messages
   should include target path and partial file path on write failure.
 
