@@ -4,8 +4,10 @@ import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/staticasset"
 	"bytes"
+	"compress/gzip"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -175,11 +177,31 @@ func normalizeUniProtSubcellFile(filePath string, sourceVersion string) error {
 	if err != nil {
 		return err
 	}
+	data, err = decompressGzipIfNeeded(data)
+	if err != nil {
+		return err
+	}
 	records, err := parseUniProtProteinLocations(data, "uniprot", sourceVersion)
 	if err != nil {
 		return err
 	}
 	return writeProteinLocationTSV(filePath, records)
+}
+
+func decompressGzipIfNeeded(data []byte) ([]byte, error) {
+	if len(data) < 2 || data[0] != 0x1f || data[1] != 0x8b {
+		return data, nil
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("open gzip stream: %w", err)
+	}
+	defer reader.Close()
+	dataPlain, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read gzip stream: %w", err)
+	}
+	return dataPlain, nil
 }
 
 type proteinLocationRecord struct {
@@ -193,6 +215,7 @@ func parseUniProtProteinLocations(data []byte, source string, sourceVersion stri
 	reader := csv.NewReader(bytes.NewReader(data))
 	reader.Comma = '\t'
 	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
 	rows, err := reader.ReadAll()
 	if err != nil {
 		return nil, fmt.Errorf("read UniProt TSV: %w", err)
@@ -239,6 +262,7 @@ var patternEvidence = regexp.MustCompile(`\s*\{[^}]+\}`)
 func extractUniProtLocations(value string) []string {
 	value = patternSubcellPrefix.ReplaceAllString(strings.TrimSpace(value), "")
 	value = patternEvidence.ReplaceAllString(value, "")
+	value = strings.ReplaceAll(value, ". ", ";")
 	parts := strings.Split(value, ";")
 	locations := make([]string, 0, len(parts))
 	seen := map[string]struct{}{}

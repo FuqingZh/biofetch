@@ -1,6 +1,8 @@
 package subcell
 
 import (
+	"bytes"
+	"compress/gzip"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +65,35 @@ func TestParseUniProtProteinLocations(t *testing.T) {
 	}
 	if records[0].proteinID != "P12345" || records[0].location != "Nucleus." || records[0].sourceVersion != "2026_03" {
 		t.Fatalf("records[0] = %#v", records[0])
+	}
+}
+
+func TestParseUniProtProteinLocationsAllowsBareQuotes(t *testing.T) {
+	data := []byte("Entry\tSubcellular location [CC]\nP12345\tSUBCELLULAR LOCATION: Nucleus \"speckle\"; Cytoplasm.\n")
+	records, err := parseUniProtProteinLocations(data, "uniprot", "2026_03")
+	if err != nil {
+		t.Fatalf("parseUniProtProteinLocations returned error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("len(records) = %d, want 2: %#v", len(records), records)
+	}
+}
+
+func TestDecompressGzipIfNeeded(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	if _, err := writer.Write([]byte("Entry\tSubcellular location [CC]\n")); err != nil {
+		t.Fatalf("gzip Write returned error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("gzip Close returned error: %v", err)
+	}
+	data, err := decompressGzipIfNeeded(buffer.Bytes())
+	if err != nil {
+		t.Fatalf("decompressGzipIfNeeded returned error: %v", err)
+	}
+	if string(data) != "Entry\tSubcellular location [CC]\n" {
+		t.Fatalf("data = %q", string(data))
 	}
 }
 
