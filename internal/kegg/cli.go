@@ -86,9 +86,139 @@ func NewCommand() *cobra.Command {
 	}
 
 	commandRoot.AddCommand(createCatalogCommand())
+	commandRoot.AddCommand(createMappingCommand())
 	commandRoot.AddCommand(createPathwayCommand())
 	commandRoot.AddCommand(createBriteCommand())
 	return commandRoot
+}
+
+func createMappingCommand() *cobra.Command {
+	commandMapping := &cobra.Command{
+		Use:           "mapping",
+		Short:         "Manage KEGG organism and gene mapping raw assets",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	commandMapping.AddCommand(createMappingFetchCommand())
+	commandMapping.AddCommand(createMappingLockCommand())
+	commandMapping.AddCommand(createMappingSyncCommand())
+	return commandMapping
+}
+
+func createMappingFetchCommand() *cobra.Command {
+	cfg := createDefaultMappingConfig()
+	retryWaitSec := 3
+	requestIntervalMs := 350
+
+	commandFetch := &cobra.Command{
+		Use:           "fetch",
+		Short:         "Fetch KEGG mapping raw assets and update manifest.lock",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := validateMappingFetchConfig(&cfg); err != nil {
+				return err
+			}
+			if cfg.shouldDownloadAll {
+				if err := confirmAllOrganismsDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+			}
+			return runFetchMapping(&cfg)
+		},
+	}
+
+	commandFetch.Example = strings.Join([]string{
+		"biofetch kegg mapping fetch --dir_out /data/kegg --organisms hsa --assets conv_uniprot,gene_ko,gene_pathway",
+		"biofetch kegg mapping fetch --dir_out /data/kegg --organisms hsa,mmu --assets organism,conv_uniprot,conv_ncbi_geneid,gene_list,gene_ko,gene_pathway,ko_pathway",
+		"biofetch kegg mapping fetch --dir_out /data/kegg --should_download_all --assets conv_uniprot,gene_ko --should_dry_run",
+	}, "\n")
+
+	flags := commandFetch.Flags()
+	flags.SortFlags = false
+	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Mapping assets: organism|conv_uniprot|conv_ncbi_geneid|gene_list|gene_ko|gene_pathway|ko_pathway; omit to fetch all supported assets")
+	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
+	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch organism-scoped mapping assets for all KEGG organisms")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
+	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
+	flags.IntVar(&cfg.workersMax, "workers_max", cfg.workersMax, "Max concurrent download workers")
+	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.BoolVar(&cfg.shouldDisableProgress, "should_disable_progress", false, "Disable download progress display")
+	return commandFetch
+}
+
+func createMappingLockCommand() *cobra.Command {
+	cfg := mappingLockConfig{}
+
+	commandLock := &cobra.Command{
+		Use:           "lock",
+		Short:         "Rebuild KEGG mapping manifest.lock from the current version directory",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateMappingLockConfig(&cfg); err != nil {
+				return err
+			}
+			return runLockMapping(&cfg)
+		},
+	}
+
+	flags := commandLock.Flags()
+	flags.SortFlags = false
+	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
+	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	return commandLock
+}
+
+func createMappingSyncCommand() *cobra.Command {
+	cfg := mappingSyncConfig{}
+	cfg.ruleExisting = "skip"
+	cfg.retryMax = defaultKEGGRetryMax
+	cfg.retryWait = defaultKEGGRetryWait
+	cfg.workersMax = 1
+	requestIntervalMs := 350
+	retryWaitSec := 3
+
+	commandSync := &cobra.Command{
+		Use:           "sync",
+		Short:         "Sync KEGG mapping files from manifest.lock and refresh manifest",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := validateMappingSyncConfig(&cfg); err != nil {
+				return err
+			}
+			return runSyncMapping(&cfg)
+		},
+	}
+
+	flags := commandSync.Flags()
+	flags.SortFlags = false
+	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
+	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
+	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
+	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
+	flags.IntVar(&cfg.workersMax, "workers_max", cfg.workersMax, "Max concurrent download workers")
+	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.BoolVar(&cfg.shouldDisableProgress, "should_disable_progress", false, "Disable download progress display")
+	return commandSync
 }
 
 func createCatalogCommand() *cobra.Command {
