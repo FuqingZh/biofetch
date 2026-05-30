@@ -51,11 +51,11 @@ func TestResolveIDMappingAssetsRejectsUnknown(t *testing.T) {
 }
 
 func TestBuildIDMappingStaticAssets(t *testing.T) {
-	assets := buildIDMappingStaticAssets("https://example.test/idmapping/", []string{"selected"})
+	assets := buildIDMappingStaticAssets("https://example.test/current_release/", []string{"selected"})
 	expected := []staticasset.Asset{{
 		Name: "selected",
 		Path: "raw/idmapping_selected.tab.gz",
-		URL:  "https://example.test/idmapping/idmapping_selected.tab.gz",
+		URL:  "https://example.test/current_release/knowledgebase/idmapping/idmapping_selected.tab.gz",
 	}}
 	if !reflect.DeepEqual(assets, expected) {
 		t.Fatalf("assets = %#v, want %#v", assets, expected)
@@ -71,11 +71,7 @@ func TestResolveIDMappingFetchVersionTokenCurrent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	originalURL := idMappingCurrentReleaseNotesURL
-	t.Cleanup(func() { idMappingCurrentReleaseNotesURL = originalURL })
-	idMappingCurrentReleaseNotesURL = server.URL + "/relnotes.txt"
-
-	versionToken, err := resolveIDMappingFetchVersionToken(server.Client(), "")
+	versionToken, err := resolveIDMappingFetchVersionToken(server.Client(), "", server.URL)
 	if err != nil {
 		t.Fatalf("resolveIDMappingFetchVersionToken returned error: %v", err)
 	}
@@ -113,7 +109,7 @@ func TestRunFetchIDMappingDownloadsAndReuses(t *testing.T) {
 		switch request.URL.Path {
 		case "/relnotes.txt":
 			_, _ = writer.Write([]byte("UniProt Release 2026_01\n"))
-		case "/idmapping/idmapping_selected.tab.gz":
+		case "/knowledgebase/idmapping/idmapping_selected.tab.gz":
 			countGetSelected++
 			_, _ = writer.Write([]byte("selected"))
 		default:
@@ -122,20 +118,12 @@ func TestRunFetchIDMappingDownloadsAndReuses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	originalBaseURL := idMappingCurrentBaseURL
-	originalReleaseNotesURL := idMappingCurrentReleaseNotesURL
-	t.Cleanup(func() {
-		idMappingCurrentBaseURL = originalBaseURL
-		idMappingCurrentReleaseNotesURL = originalReleaseNotesURL
-	})
-	idMappingCurrentBaseURL = server.URL + "/idmapping/"
-	idMappingCurrentReleaseNotesURL = server.URL + "/relnotes.txt"
-
 	cfg := createDefaultIDMappingConfig()
 	cfg.DirOut = t.TempDir()
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
 	cfg.assetNames = []string{"selected"}
+	cfg.baseURLCurrentRelease = server.URL
 	cfg.shouldAllowLargeDownload = true
 	if err := runFetchIDMapping(&cfg); err != nil {
 		t.Fatalf("runFetchIDMapping first run returned error: %v", err)
@@ -179,20 +167,12 @@ func TestRunFetchIDMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
 	}))
 	defer server.Close()
 
-	originalBaseURL := idMappingCurrentBaseURL
-	originalReleaseNotesURL := idMappingCurrentReleaseNotesURL
-	t.Cleanup(func() {
-		idMappingCurrentBaseURL = originalBaseURL
-		idMappingCurrentReleaseNotesURL = originalReleaseNotesURL
-	})
-	idMappingCurrentBaseURL = server.URL + "/idmapping/"
-	idMappingCurrentReleaseNotesURL = server.URL + "/relnotes.txt"
-
 	cfg := createDefaultIDMappingConfig()
 	cfg.DirOut = t.TempDir()
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
 	cfg.assetNames = []string{"selected"}
+	cfg.baseURLCurrentRelease = server.URL
 	cfg.shouldAllowLargeDownload = true
 	err := runFetchIDMapping(&cfg)
 	if err == nil {
