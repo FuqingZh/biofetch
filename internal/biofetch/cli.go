@@ -2,6 +2,7 @@ package biofetch
 
 import (
 	"biofetch/internal/geneontology"
+	"biofetch/internal/interpro"
 	"biofetch/internal/kegg"
 	"biofetch/internal/omnipath"
 	"biofetch/internal/reactome"
@@ -22,6 +23,7 @@ func RunCLI(args []string) error {
 	}
 
 	commandRoot.AddCommand(geneontology.NewCommand())
+	commandRoot.AddCommand(interpro.NewCommand())
 	commandRoot.AddCommand(stringdb.NewCommand())
 	commandRoot.AddCommand(kegg.NewCommand())
 	commandRoot.AddCommand(omnipath.NewCommand())
