@@ -1,6 +1,7 @@
 package biofetch
 
 import (
+	"biofetch/internal/eggnog"
 	"biofetch/internal/geneontology"
 	"biofetch/internal/interpro"
 	"biofetch/internal/kegg"
@@ -22,6 +23,7 @@ func RunCLI(args []string) error {
 		SilenceErrors: true,
 	}
 
+	commandRoot.AddCommand(eggnog.NewCommand())
 	commandRoot.AddCommand(geneontology.NewCommand())
 	commandRoot.AddCommand(interpro.NewCommand())
 	commandRoot.AddCommand(stringdb.NewCommand())
