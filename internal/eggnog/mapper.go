@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultMapperVersion = "7.0.0"
+	defaultMapperVersion = "5.0.2"
 	defaultMapperBaseURL = "https://downloads.eggnogdb.org/emapper"
 )
 
@@ -20,10 +20,9 @@ var patternMapperVersionMajor = regexp.MustCompile(`^[0-9]+$`)
 var patternMapperVersionFull = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 var mapperAssetFiles = map[string]string{
-	"db":       "eggnog.db.gz",
-	"diamond":  "eggnog_proteins.dmnd.gz",
-	"manifest": "manifest.json",
-	"taxa":     "eggnog.taxa.tar.gz",
+	"db":      "eggnog.db.gz",
+	"diamond": "eggnog_proteins.dmnd.gz",
+	"taxa":    "eggnog.taxa.tar.gz",
 }
 
 type mapperConfig struct {
@@ -134,12 +133,7 @@ func sortedMapperAssetNames() []string {
 }
 
 func hasLargeMapperAsset(assets []string) bool {
-	for _, asset := range assets {
-		if asset != "manifest" {
-			return true
-		}
-	}
-	return false
+	return len(assets) > 0
 }
 
 func normalizeMapperVersionToken(value string) (string, error) {
@@ -151,6 +145,9 @@ func normalizeMapperVersionToken(value string) (string, error) {
 		return "", fmt.Errorf("eggNOG mapper version must be a fixed database version, not current")
 	}
 	if patternMapperVersionMajor.MatchString(value) {
+		if value == "5" {
+			return defaultMapperVersion, nil
+		}
 		return value + ".0.0", nil
 	}
 	if !patternMapperVersionFull.MatchString(value) {

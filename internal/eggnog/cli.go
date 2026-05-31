@@ -182,15 +182,15 @@ func createMapperFetchCommand() *cobra.Command {
 		},
 	}
 	commandFetch.Example = strings.Join([]string{
-		"biofetch eggnog mapper fetch --dir_out /data/eggnog --version 7 --assets manifest",
-		"biofetch eggnog mapper fetch --dir_out /data/eggnog --version 7 --assets db,taxa,diamond --should_allow_large_download",
+		"biofetch eggnog mapper fetch --dir_out /data/eggnog --version 5 --assets taxa --should_allow_large_download",
+		"biofetch eggnog mapper fetch --dir_out /data/eggnog --version 5.0.2 --assets db,taxa,diamond --should_allow_large_download",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "eggNOG-mapper database version; default 7.0.0")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "eggNOG-mapper assets: db|taxa|diamond|manifest; repeat the flag, use commas, or use @file")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "eggNOG-mapper database version; default 5.0.2")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "eggNOG-mapper assets: db|taxa|diamond; repeat the flag, use commas, or use @file")
 	flags.BoolVar(&cfg.shouldAllowLargeDownload, "should_allow_large_download", false, "Allow large eggNOG-mapper database downloads")
 	flags.StringVar(&cfg.baseURL, "base_url", cfg.baseURL, "eggNOG-mapper download base URL")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")

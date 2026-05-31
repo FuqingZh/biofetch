@@ -13,12 +13,12 @@ import (
 )
 
 func TestNormalizeMapperVersionToken(t *testing.T) {
-	versionToken, err := normalizeMapperVersionToken("7")
+	versionToken, err := normalizeMapperVersionToken("5")
 	if err != nil {
 		t.Fatalf("normalizeMapperVersionToken returned error: %v", err)
 	}
-	if versionToken != "7.0.0" {
-		t.Fatalf("versionToken = %q, want 7.0.0", versionToken)
+	if versionToken != "5.0.2" {
+		t.Fatalf("versionToken = %q, want 5.0.2", versionToken)
 	}
 }
 
@@ -51,11 +51,11 @@ func TestResolveMapperAssetsRejectsUnknown(t *testing.T) {
 }
 
 func TestBuildMapperStaticAssets(t *testing.T) {
-	assets := buildMapperStaticAssets("https://example.test/emapper", "7.0.0", []string{"manifest"})
+	assets := buildMapperStaticAssets("https://example.test/emapper", "5.0.2", []string{"taxa"})
 	expected := []staticasset.Asset{{
-		Name: "manifest",
-		Path: "raw/manifest.json",
-		URL:  "https://example.test/emapper/emapperdb-7.0.0/manifest.json",
+		Name: "taxa",
+		Path: "raw/eggnog.taxa.tar.gz",
+		URL:  "https://example.test/emapper/emapperdb-5.0.2/eggnog.taxa.tar.gz",
 	}}
 	if !reflect.DeepEqual(assets, expected) {
 		t.Fatalf("assets = %#v, want %#v", assets, expected)
@@ -79,12 +79,12 @@ func TestRunFetchMapperRequiresLargeDownloadFlag(t *testing.T) {
 }
 
 func TestRunFetchMapperDownloadsAndReuses(t *testing.T) {
-	countManifest := 0
+	countTaxa := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/emapperdb-7.0.0/manifest.json":
-			countManifest++
-			_, _ = writer.Write([]byte(`{"schema_version":1}`))
+		case "/emapperdb-5.0.2/eggnog.taxa.tar.gz":
+			countTaxa++
+			_, _ = writer.Write([]byte("taxa"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)
 		}
@@ -95,7 +95,8 @@ func TestRunFetchMapperDownloadsAndReuses(t *testing.T) {
 	cfg.DirOut = t.TempDir()
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
-	cfg.assetNames = []string{"manifest"}
+	cfg.assetNames = []string{"taxa"}
+	cfg.shouldAllowLargeDownload = true
 	cfg.baseURL = server.URL
 	if err := runFetchMapper(&cfg); err != nil {
 		t.Fatalf("runFetchMapper first run returned error: %v", err)
@@ -103,15 +104,15 @@ func TestRunFetchMapperDownloadsAndReuses(t *testing.T) {
 	if err := runFetchMapper(&cfg); err != nil {
 		t.Fatalf("runFetchMapper second run returned error: %v", err)
 	}
-	if countManifest != 1 {
-		t.Fatalf("countManifest = %d, want 1", countManifest)
+	if countTaxa != 1 {
+		t.Fatalf("countTaxa = %d, want 1", countTaxa)
 	}
 
-	fileOut := filepath.Join(cfg.DirOut, "mapper", "7.0.0", "raw", "manifest.json")
+	fileOut := filepath.Join(cfg.DirOut, "mapper", "5.0.2", "raw", "eggnog.taxa.tar.gz")
 	if _, err := os.Stat(fileOut); err != nil {
 		t.Fatalf("fileOut missing: %v", err)
 	}
-	manifest, ok, err := staticasset.ReadManifest(filepath.Join(cfg.DirOut, "mapper", "7.0.0", "manifest.lock"))
+	manifest, ok, err := staticasset.ReadManifest(filepath.Join(cfg.DirOut, "mapper", "5.0.2", "manifest.lock"))
 	if err != nil {
 		t.Fatalf("ReadManifest returned error: %v", err)
 	}
