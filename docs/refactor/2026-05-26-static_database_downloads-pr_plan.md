@@ -195,7 +195,7 @@ Acceptance:
 - Add `biofetch wikipathways gmt fetch|lock|sync`.
 - Parse current GMT directory listings.
 - Support organism selection by species label.
-- Add confirmation for `--should_download_all`.
+- Add confirmation for `--should_download_all_organisms`.
 - Do not silently map unsupported historical `--version` values to `current`.
 
 ### Public Behavior
@@ -328,9 +328,9 @@ evidence fields, and manifest `source` values.
 Examples:
 
 ```bash
-biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_download
-biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_download
-biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_download
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_assets
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_assets
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_assets
 ```
 
 The command resolves omitted `--version` and `--version current` from UniProt
@@ -344,7 +344,7 @@ writing output if the release cannot be parsed.
 - asset resolver maps `selected` to `idmapping_selected.tab.gz`
 - asset resolver maps `dat` to `idmapping.dat.gz`
 - unknown assets are rejected before network access
-- fetch requires `--should_allow_large_download`
+- fetch requires `--should_allow_large_assets`
 - fetch writes `raw/idmapping_selected.tab.gz` and/or `raw/idmapping.dat.gz`
 - lock/sync require fixed versions and reject `current`
 - manifest records `database = "uniprot"`, `asset = "idmapping"`, and
@@ -400,7 +400,7 @@ Disable:
 biofetch uniprot idmapping fetch \
   --dir_out /data/uniprot \
   --assets selected \
-  --should_allow_large_download \
+  --should_allow_large_assets \
   --should_disable_progress
 ```
 

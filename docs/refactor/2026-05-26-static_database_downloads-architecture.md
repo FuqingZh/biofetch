@@ -181,7 +181,7 @@ Proposed command:
 ```bash
 biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species Homo_sapiens
 biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species @species.txt
-biofetch wikipathways gmt fetch --dir_out /data/wikipathways --should_download_all
+biofetch wikipathways gmt fetch --dir_out /data/wikipathways --should_download_all_organisms
 ```
 
 Directory:
@@ -244,9 +244,9 @@ downloads.
 Proposed command:
 
 ```bash
-biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_download
-biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_download
-biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_download
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected --should_allow_large_assets
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets dat --should_allow_large_assets
+biofetch uniprot idmapping fetch --dir_out /data/uniprot --assets selected,dat --should_allow_large_assets
 ```
 
 Directory:
@@ -275,7 +275,7 @@ only:
 - `idmapping_selected.tab.gz` (`--assets selected`)
 - `idmapping.dat.gz` (`--assets dat`)
 
-Both files are multi-GB assets and must require `--should_allow_large_download`,
+Both files are multi-GB assets and must require `--should_allow_large_assets`,
 even when `Content-Length` is unavailable. `--version current` or an omitted
 version must resolve the real UniProt release from `relnotes.txt`, such as
 `2026_01`; if release parsing fails, fail the command and do not write a
@@ -466,7 +466,7 @@ After the PR series lands:
 
 - Dry-run should report planned file count and known content length.
 - Large assets require explicit confirmation independent of
-  `--should_download_all`.
+  `--should_download_all_organisms`.
 - Progress display is informational only; if size detection fails, downloads
   should continue with file-count or spinner progress rather than failing.
 - Disk-space checks are optional for first implementation, but error messages

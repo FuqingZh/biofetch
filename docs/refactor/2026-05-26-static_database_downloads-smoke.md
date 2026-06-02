@@ -53,7 +53,7 @@ Result: `/tmp/biofetch-smoke` was not created by the dry-run commands.
 - `--dir_out`
 - `--version`
 - `--species`
-- `--should_download_all`
+- `--should_download_all_organisms`
 - `--rule_existing`
 - retry, worker, request interval, TLS, and dry-run flags
 
@@ -104,5 +104,5 @@ go run ./cmd/biofetch wikipathways gmt fetch \
 ```
 
 Reactome live downloads can be large. Use `--should_dry_run` first and pass
-`--should_allow_large_download` only when the requested files and disk impact
+`--should_allow_large_assets` only when the requested files and disk impact
 are intentional.
