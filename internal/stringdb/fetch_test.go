@@ -114,7 +114,7 @@ func TestBuildManifestFile(t *testing.T) {
 func TestConfirmAllSpeciesDownload(t *testing.T) {
 	var buffer bytes.Buffer
 	err := confirmAllSpeciesDownload(
-		strings.NewReader("should_download_all\n"),
+		strings.NewReader("should_download_all_organisms\n"),
 		&buffer,
 	)
 	if err != nil {
@@ -122,7 +122,7 @@ func TestConfirmAllSpeciesDownload(t *testing.T) {
 	}
 
 	assertContains(t, buffer.String(), "Full-species download may fetch a large number of files")
-	assertContains(t, buffer.String(), `Type "should_download_all" to continue.`)
+	assertContains(t, buffer.String(), `Type "should_download_all_organisms" to continue.`)
 	assertContains(t, buffer.String(), "> ")
 }
 
@@ -135,7 +135,7 @@ func TestConfirmAllSpeciesDownloadRejectsWrongInput(t *testing.T) {
 		t.Fatal("confirmAllSpeciesDownload returned nil error for wrong confirmation text")
 	}
 
-	assertContains(t, err.Error(), `expected "should_download_all"`)
+	assertContains(t, err.Error(), `expected "should_download_all_organisms"`)
 }
 
 func TestBuildCompleteFileRecordsMergesExistingManifestAndDropsMissing(t *testing.T) {

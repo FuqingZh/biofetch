@@ -135,16 +135,16 @@ func createMappingFetchCommand() *cobra.Command {
 	commandFetch.Example = strings.Join([]string{
 		"biofetch kegg mapping fetch --dir_out /data/kegg --organisms hsa --assets conv_uniprot,gene_ko,gene_pathway",
 		"biofetch kegg mapping fetch --dir_out /data/kegg --organisms hsa,mmu --assets organism,conv_uniprot,conv_ncbi_geneid,gene_list,gene_ko,gene_pathway,ko_pathway",
-		"biofetch kegg mapping fetch --dir_out /data/kegg --should_download_all --assets conv_uniprot,gene_ko --should_dry_run",
+		"biofetch kegg mapping fetch --dir_out /data/kegg --should_download_all_organisms --assets conv_uniprot,gene_ko --should_dry_run",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Mapping assets: organism|conv_uniprot|conv_ncbi_geneid|gene_list|gene_ko|gene_pathway|ko_pathway; omit to fetch all supported assets")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Mapping assets: all|organism|conv_uniprot|conv_ncbi_geneid|gene_list|gene_ko|gene_pathway|ko_pathway; omit or pass all to fetch all supported assets")
 	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch organism-scoped mapping assets for all KEGG organisms")
+	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch organism-scoped mapping assets for all KEGG organisms")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
@@ -289,7 +289,7 @@ func createPathwayFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: list|entry|kgml|conf|image; omit to fetch all supported assets within the selected scope; repeat the flag or use commas")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: all|list|entry|kgml|conf|image; omit or pass all to fetch all supported assets within the selected scope")
 	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
 	flags.StringSliceVar(&cfg.pathwayIDs, "pathway_ids", nil, "Pathway IDs; pass inline values, repeat the flag, or use @file with one pathway ID per line (# comments and blank lines ignored)")
 	flags.BoolVar(
@@ -300,7 +300,7 @@ func createPathwayFetchCommand() *cobra.Command {
 	)
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
-		"should_download_all",
+		"should_download_all_organisms",
 		false,
 		"Fetch PATHWAY assets for all KEGG organisms",
 	)
@@ -468,7 +468,7 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	}
 	if countScope != 1 {
 		return fmt.Errorf(
-			"choose exactly one scope: --organisms | --should_download_all | --should_fetch_reference",
+			"choose exactly one scope: --organisms | --should_download_all_organisms | --should_fetch_reference",
 		)
 	}
 	if cfg.shouldDownloadAll {
@@ -489,10 +489,15 @@ func resolvePathwayAssetNames(valuesInput []string) ([]string, error) {
 
 func parsePathwayAssetNames(valuesInput []string) ([]string, error) {
 	setAssets := make(map[string]struct{})
+	hasAll := false
 	for _, valueInput := range valuesInput {
 		for _, token := range strings.Split(valueInput, ",") {
 			assetName := strings.ToLower(strings.TrimSpace(token))
 			if assetName == "" {
+				continue
+			}
+			if assetName == "all" {
+				hasAll = true
 				continue
 			}
 			if !isSupportedPathwayAssetName(assetName) {
@@ -500,6 +505,12 @@ func parsePathwayAssetNames(valuesInput []string) ([]string, error) {
 			}
 			setAssets[assetName] = struct{}{}
 		}
+	}
+	if hasAll {
+		if len(setAssets) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific PATHWAY assets")
+		}
+		return append([]string(nil), pathwayAssetNamesSupported...), nil
 	}
 	if len(setAssets) == 0 {
 		return nil, fmt.Errorf("assets must not be empty")
@@ -562,7 +573,7 @@ func createBriteFetchCommand() *cobra.Command {
 		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --brite_ids @brite_ids.txt",
 		"biofetch kegg brite fetch --dir_out /data/kegg --organisms @organisms.txt --rule_order desc",
 		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --organisms tca",
-		"biofetch kegg brite fetch --dir_out /data/kegg --should_download_all",
+		"biofetch kegg brite fetch --dir_out /data/kegg --should_download_all_organisms",
 	}, "\n")
 
 	flags := commandBrite.Flags()
@@ -573,7 +584,7 @@ func createBriteFetchCommand() *cobra.Command {
 	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
-		"should_download_all",
+		"should_download_all_organisms",
 		false,
 		"Fetch BRITE assets for all KEGG organisms",
 	)
@@ -728,13 +739,13 @@ func validateBriteConfig(cfg *briteConfig) error {
 
 	if cfg.shouldDownloadAll {
 		if strings.TrimSpace(cfg.catalogCode) != "" {
-			return fmt.Errorf("catalog must not be set with --should_download_all")
+			return fmt.Errorf("catalog must not be set with --should_download_all_organisms")
 		}
 		if len(cfg.organismCodes) > 0 {
-			return fmt.Errorf("organisms must not be set with --should_download_all")
+			return fmt.Errorf("organisms must not be set with --should_download_all_organisms")
 		}
 		if len(cfg.briteIDs) > 0 {
-			return fmt.Errorf("brite_ids is not allowed with --should_download_all")
+			return fmt.Errorf("brite_ids is not allowed with --should_download_all_organisms")
 		}
 	} else {
 		countSources := 0
@@ -745,7 +756,7 @@ func validateBriteConfig(cfg *briteConfig) error {
 			countSources++
 		}
 		if countSources != 1 {
-			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --should_download_all")
+			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --should_download_all_organisms")
 		}
 	}
 
@@ -765,7 +776,7 @@ func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
 		reader,
 		writer,
 		"Multi-organism download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all",
+		"should_download_all_organisms",
 	)
 }
 

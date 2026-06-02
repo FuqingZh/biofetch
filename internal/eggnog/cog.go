@@ -91,7 +91,7 @@ func runSyncCOG(cfg *cogSyncConfig) error {
 
 func resolveCOGAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("assets must not be empty")
+		return sortedCOGAssetNames(), nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
 	if err != nil {
@@ -99,9 +99,14 @@ func resolveCOGAssets(values []string) ([]string, error) {
 	}
 	assets := make([]string, 0, len(valuesResolved))
 	unknown := make([]string, 0)
+	hasAll := false
 	for _, value := range valuesResolved {
 		asset := strings.ToLower(strings.TrimSpace(value))
 		if asset == "" {
+			continue
+		}
+		if asset == "all" {
+			hasAll = true
 			continue
 		}
 		if _, ok := cogAssetFiles[asset]; !ok {
@@ -109,6 +114,12 @@ func resolveCOGAssets(values []string) ([]string, error) {
 			continue
 		}
 		assets = append(assets, asset)
+	}
+	if hasAll {
+		if len(assets) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific COG assets")
+		}
+		return sortedCOGAssetNames(), nil
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("unknown COG asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(sortedCOGAssetNames(), ", "))

@@ -40,6 +40,19 @@ func TestResolveIDMappingAssets(t *testing.T) {
 	}
 }
 
+func TestResolveIDMappingAssetsAll(t *testing.T) {
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveIDMappingAssets(values)
+		if err != nil {
+			t.Fatalf("resolveIDMappingAssets(%#v) returned error: %v", values, err)
+		}
+		expected := []string{"dat", "selected"}
+		if !reflect.DeepEqual(assets, expected) {
+			t.Fatalf("assets = %#v, want %#v", assets, expected)
+		}
+	}
+}
+
 func TestResolveIDMappingAssetsRejectsUnknown(t *testing.T) {
 	_, err := resolveIDMappingAssets([]string{"by_organism"})
 	if err == nil {
@@ -95,7 +108,7 @@ func TestRunFetchIDMappingRequiresLargeDownloadFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchIDMapping returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_download") {
+	if !strings.Contains(err.Error(), "should_allow_large_assets") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "idmapping")); !os.IsNotExist(statErr) {
@@ -124,7 +137,7 @@ func TestRunFetchIDMappingDownloadsAndReuses(t *testing.T) {
 	cfg.WorkersMax = 1
 	cfg.assetNames = []string{"selected"}
 	cfg.baseURLCurrentRelease = server.URL
-	cfg.shouldAllowLargeDownload = true
+	cfg.shouldAllowLargeAssets = true
 	if err := runFetchIDMapping(&cfg); err != nil {
 		t.Fatalf("runFetchIDMapping first run returned error: %v", err)
 	}
@@ -173,7 +186,7 @@ func TestRunFetchIDMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
 	cfg.WorkersMax = 1
 	cfg.assetNames = []string{"selected"}
 	cfg.baseURLCurrentRelease = server.URL
-	cfg.shouldAllowLargeDownload = true
+	cfg.shouldAllowLargeAssets = true
 	err := runFetchIDMapping(&cfg)
 	if err == nil {
 		t.Fatal("runFetchIDMapping returned nil error")

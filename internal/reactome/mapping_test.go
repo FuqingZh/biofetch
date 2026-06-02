@@ -23,6 +23,18 @@ func TestResolveMappingAssets(t *testing.T) {
 	}
 }
 
+func TestResolveMappingAssetsAll(t *testing.T) {
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveMappingAssets(values)
+		if err != nil {
+			t.Fatalf("resolveMappingAssets(%#v) returned error: %v", values, err)
+		}
+		if !reflect.DeepEqual(assets, mappingAssetsSupported) {
+			t.Fatalf("assets = %#v, want %#v", assets, mappingAssetsSupported)
+		}
+	}
+}
+
 func TestResolveMappingAssetsRejectsUnknown(t *testing.T) {
 	_, err := resolveMappingAssets([]string{"reactome.graphdb.dump"})
 	if err == nil {

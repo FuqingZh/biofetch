@@ -28,9 +28,9 @@ type idMappingConfig struct {
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
 	cliopt.ProgressConfig
-	assetNames               []string
-	baseURLCurrentRelease    string
-	shouldAllowLargeDownload bool
+	assetNames             []string
+	baseURLCurrentRelease  string
+	shouldAllowLargeAssets bool
 }
 
 type idMappingLockConfig struct {
@@ -55,8 +55,8 @@ func runFetchIDMapping(cfg *idMappingConfig) error {
 	if err != nil {
 		return err
 	}
-	if !cfg.shouldAllowLargeDownload {
-		return fmt.Errorf("UniProt ID mapping global assets are multi-GB files; pass --should_allow_large_download to fetch")
+	if !cfg.shouldAllowLargeAssets {
+		return fmt.Errorf("selected UniProt ID mapping assets are multi-GB files; pass --should_allow_large_assets to fetch")
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
 	versionToken, err := resolveIDMappingFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
@@ -91,7 +91,7 @@ func runSyncIDMapping(cfg *idMappingSyncConfig) error {
 
 func resolveIDMappingAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("assets must not be empty")
+		return sortedIDMappingAssetNames(), nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
 	if err != nil {
@@ -99,9 +99,14 @@ func resolveIDMappingAssets(values []string) ([]string, error) {
 	}
 	assets := make([]string, 0, len(valuesResolved))
 	unknown := make([]string, 0)
+	hasAll := false
 	for _, value := range valuesResolved {
 		asset := strings.ToLower(strings.TrimSpace(value))
 		if asset == "" {
+			continue
+		}
+		if asset == "all" {
+			hasAll = true
 			continue
 		}
 		if _, ok := idMappingAssetFiles[asset]; !ok {
@@ -109,6 +114,12 @@ func resolveIDMappingAssets(values []string) ([]string, error) {
 			continue
 		}
 		assets = append(assets, asset)
+	}
+	if hasAll {
+		if len(assets) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific UniProt ID mapping assets")
+		}
+		return sortedIDMappingAssetNames(), nil
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("unknown UniProt ID mapping asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(sortedIDMappingAssetNames(), ", "))

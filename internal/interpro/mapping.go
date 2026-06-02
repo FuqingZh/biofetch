@@ -37,9 +37,9 @@ type mappingConfig struct {
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
 	cliopt.ProgressConfig
-	assetNames               []string
-	baseURLCurrentRelease    string
-	shouldAllowLargeDownload bool
+	assetNames             []string
+	baseURLCurrentRelease  string
+	shouldAllowLargeAssets bool
 }
 
 type mappingLockConfig struct {
@@ -64,8 +64,8 @@ func runFetchMapping(cfg *mappingConfig) error {
 	if err != nil {
 		return err
 	}
-	if hasLargeMappingAsset(assets) && !cfg.shouldAllowLargeDownload {
-		return fmt.Errorf("InterPro protein2ipr is a large download; pass --should_allow_large_download to fetch")
+	if hasLargeMappingAsset(assets) && !cfg.shouldAllowLargeAssets {
+		return fmt.Errorf("selected InterPro mapping assets include large files; pass --should_allow_large_assets to fetch")
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
 	versionToken, err := resolveMappingFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
@@ -100,7 +100,7 @@ func runSyncMapping(cfg *mappingSyncConfig) error {
 
 func resolveMappingAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("assets must not be empty")
+		return sortedMappingAssetNames(), nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
 	if err != nil {
@@ -108,9 +108,14 @@ func resolveMappingAssets(values []string) ([]string, error) {
 	}
 	assets := make([]string, 0, len(valuesResolved))
 	unknown := make([]string, 0)
+	hasAll := false
 	for _, value := range valuesResolved {
 		asset := strings.ToLower(strings.TrimSpace(value))
 		if asset == "" {
+			continue
+		}
+		if asset == "all" {
+			hasAll = true
 			continue
 		}
 		if _, ok := mappingAssetFiles[asset]; !ok {
@@ -118,6 +123,12 @@ func resolveMappingAssets(values []string) ([]string, error) {
 			continue
 		}
 		assets = append(assets, asset)
+	}
+	if hasAll {
+		if len(assets) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific InterPro mapping assets")
+		}
+		return sortedMappingAssetNames(), nil
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("unknown InterPro mapping asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(sortedMappingAssetNames(), ", "))

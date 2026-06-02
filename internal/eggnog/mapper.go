@@ -34,9 +34,9 @@ type mapperConfig struct {
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
 	cliopt.ProgressConfig
-	assetNames               []string
-	baseURL                  string
-	shouldAllowLargeDownload bool
+	assetNames             []string
+	baseURL                string
+	shouldAllowLargeAssets bool
 }
 
 type mapperLockConfig struct {
@@ -61,8 +61,8 @@ func runFetchMapper(cfg *mapperConfig) error {
 	if err != nil {
 		return err
 	}
-	if hasLargeMapperAsset(assets) && !cfg.shouldAllowLargeDownload {
-		return fmt.Errorf("eggNOG mapper database assets are large downloads; pass --should_allow_large_download to fetch")
+	if hasLargeMapperAsset(assets) && !cfg.shouldAllowLargeAssets {
+		return fmt.Errorf("selected eggNOG mapper assets are large downloads; pass --should_allow_large_assets to fetch")
 	}
 	versionToken, err := normalizeMapperVersionToken(firstNonEmpty(cfg.VersionToken, defaultMapperVersion))
 	if err != nil {
@@ -96,7 +96,7 @@ func runSyncMapper(cfg *mapperSyncConfig) error {
 
 func resolveMapperAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("assets must not be empty")
+		return sortedMapperAssetNames(), nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
 	if err != nil {
@@ -104,9 +104,14 @@ func resolveMapperAssets(values []string) ([]string, error) {
 	}
 	assets := make([]string, 0, len(valuesResolved))
 	unknown := make([]string, 0)
+	hasAll := false
 	for _, value := range valuesResolved {
 		asset := strings.ToLower(strings.TrimSpace(value))
 		if asset == "" {
+			continue
+		}
+		if asset == "all" {
+			hasAll = true
 			continue
 		}
 		if _, ok := mapperAssetFiles[asset]; !ok {
@@ -114,6 +119,12 @@ func resolveMapperAssets(values []string) ([]string, error) {
 			continue
 		}
 		assets = append(assets, asset)
+	}
+	if hasAll {
+		if len(assets) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific eggNOG mapper assets")
+		}
+		return sortedMapperAssetNames(), nil
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("unknown eggNOG mapper asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(sortedMapperAssetNames(), ", "))

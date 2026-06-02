@@ -55,15 +55,15 @@ func createMappingFetchCommand() *cobra.Command {
 	commandFetch.Example = strings.Join([]string{
 		"biofetch reactome mapping fetch --dir_out /data/reactome --assets UniProt2Reactome_All_Levels.txt --should_dry_run",
 		"biofetch reactome mapping fetch --dir_out /data/reactome --assets ReactomePathways.txt",
-		"biofetch reactome mapping fetch --dir_out /data/reactome --assets @reactome_assets.txt --should_allow_large_download",
+		"biofetch reactome mapping fetch --dir_out /data/reactome --should_allow_large_assets",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "Reactome asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "Reactome snapshot token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Reactome mapping assets; repeat the flag, use commas, or use @file")
-	flags.BoolVar(&cfg.shouldAllowLargeDownload, "should_allow_large_download", false, "Allow mapping downloads larger than the configured safety threshold")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Reactome mapping assets; omit or pass all to fetch all supported assets; repeat the flag, use commas, or use @file")
+	flags.BoolVar(&cfg.shouldAllowLargeAssets, "should_allow_large_assets", false, "Allow Reactome mapping assets larger than the configured safety threshold")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)

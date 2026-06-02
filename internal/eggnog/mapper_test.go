@@ -40,6 +40,19 @@ func TestResolveMapperAssets(t *testing.T) {
 	}
 }
 
+func TestResolveMapperAssetsAll(t *testing.T) {
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveMapperAssets(values)
+		if err != nil {
+			t.Fatalf("resolveMapperAssets(%#v) returned error: %v", values, err)
+		}
+		expected := []string{"db", "diamond", "taxa"}
+		if !reflect.DeepEqual(assets, expected) {
+			t.Fatalf("assets = %#v, want %#v", assets, expected)
+		}
+	}
+}
+
 func TestResolveMapperAssetsRejectsUnknown(t *testing.T) {
 	_, err := resolveMapperAssets([]string{"cog"})
 	if err == nil {
@@ -70,7 +83,7 @@ func TestRunFetchMapperRequiresLargeDownloadFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchMapper returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_download") {
+	if !strings.Contains(err.Error(), "should_allow_large_assets") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "mapper")); !os.IsNotExist(statErr) {
@@ -96,7 +109,7 @@ func TestRunFetchMapperDownloadsAndReuses(t *testing.T) {
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
 	cfg.assetNames = []string{"taxa"}
-	cfg.shouldAllowLargeDownload = true
+	cfg.shouldAllowLargeAssets = true
 	cfg.baseURL = server.URL
 	if err := runFetchMapper(&cfg); err != nil {
 		t.Fatalf("runFetchMapper first run returned error: %v", err)

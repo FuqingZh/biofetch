@@ -55,7 +55,7 @@ func createGMTFetchCommand() *cobra.Command {
 	commandFetch.Example = strings.Join([]string{
 		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species Homo_sapiens --should_dry_run",
 		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species @species.txt",
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --should_download_all",
+		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --should_download_all_organisms",
 	}, "\n")
 
 	flags := commandFetch.Flags()
@@ -63,7 +63,7 @@ func createGMTFetchCommand() *cobra.Command {
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways release token; only current/empty is supported in this implementation")
 	flags.StringSliceVar(&cfg.speciesNames, "species", nil, "WikiPathways species labels; repeat the flag, use commas, or use @file")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch GMT files for all species in the current release")
+	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch GMT files for all species in the current release")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)

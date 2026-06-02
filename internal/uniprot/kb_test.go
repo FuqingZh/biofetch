@@ -23,6 +23,19 @@ func TestResolveKBAssets(t *testing.T) {
 	}
 }
 
+func TestResolveKBAssetsAll(t *testing.T) {
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveKBAssets(values)
+		if err != nil {
+			t.Fatalf("resolveKBAssets(%#v) returned error: %v", values, err)
+		}
+		expected := []string{"sprot", "trembl", "varsplic"}
+		if !reflect.DeepEqual(assets, expected) {
+			t.Fatalf("assets = %#v, want %#v", assets, expected)
+		}
+	}
+}
+
 func TestResolveKBAssetsRejectsUnknown(t *testing.T) {
 	_, err := resolveKBAssets([]string{"uniref90"})
 	if err == nil {
@@ -53,7 +66,7 @@ func TestRunFetchKBRequiresLargeDownloadFlagForTrEMBL(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchKB returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_download") {
+	if !strings.Contains(err.Error(), "should_allow_large_assets") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "kb")); !os.IsNotExist(statErr) {

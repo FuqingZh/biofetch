@@ -93,7 +93,7 @@ func createFetchCommand() *cobra.Command {
 	flags.StringSliceVar(&cfg.taxIDs, "taxids", nil, "Taxids; pass inline values, repeat the flag, or use @file with one taxid per line (# comments and blank lines ignored)")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
-		"should_download_all",
+		"should_download_all_organisms",
 		false,
 		"Download all species listed by STRING",
 	)
@@ -231,7 +231,7 @@ func validateConfig(cfg *config) error {
 	}
 	if countSources != 1 {
 		return fmt.Errorf(
-			"choose exactly one source: --taxids | --should_download_all",
+			"choose exactly one source: --taxids | --should_download_all_organisms",
 		)
 	}
 	if len(cfg.taxIDs) > 0 {
@@ -250,6 +250,6 @@ func confirmAllSpeciesDownload(reader io.Reader, writer io.Writer) error {
 		reader,
 		writer,
 		"Full-species download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all",
+		"should_download_all_organisms",
 	)
 }

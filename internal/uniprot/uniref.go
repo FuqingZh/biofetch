@@ -12,15 +12,13 @@ import (
 	"time"
 )
 
-const kbLabel = "UniProtKB"
+const unirefLabel = "UniRef"
 
-var kbAssetFiles = map[string]string{
-	"sprot":    "uniprot_sprot.fasta.gz",
-	"trembl":   "uniprot_trembl.fasta.gz",
-	"varsplic": "uniprot_sprot_varsplic.fasta.gz",
+var unirefAssetFiles = map[string]string{
+	"uniref90": "uniref90.fasta.gz",
 }
 
-type kbConfig struct {
+type unirefConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -34,13 +32,13 @@ type kbConfig struct {
 	shouldAllowLargeAssets bool
 }
 
-type kbLockConfig struct {
+type unirefLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
 }
 
-type kbSyncConfig struct {
+type unirefSyncConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -51,29 +49,29 @@ type kbSyncConfig struct {
 	cliopt.ProgressConfig
 }
 
-func runFetchKB(cfg *kbConfig) error {
-	assets, err := resolveKBAssets(cfg.assetNames)
+func runFetchUniRef(cfg *unirefConfig) error {
+	assets, err := resolveUniRefAssets(cfg.assetNames)
 	if err != nil {
 		return err
 	}
-	if hasLargeKBAsset(assets) && !cfg.shouldAllowLargeAssets {
-		return fmt.Errorf("selected UniProtKB assets include large files; pass --should_allow_large_assets to fetch")
+	if !cfg.shouldAllowLargeAssets {
+		return fmt.Errorf("selected UniRef assets are large files; pass --should_allow_large_assets to fetch")
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
-	versionToken, err := resolveKBFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
+	versionToken, err := resolveUniRefFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
 	if err != nil {
 		return err
 	}
-	source := buildKBSource(versionToken, buildKBStaticAssets(cfg.baseURLCurrentRelease, assets))
+	source := buildUniRefSource(versionToken, buildUniRefStaticAssets(cfg.baseURLCurrentRelease, assets))
 	return staticasset.Fetch(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
-func runLockKB(cfg *kbLockConfig) error {
-	versionToken, err := normalizeKBFixedVersionToken(cfg.VersionToken)
+func runLockUniRef(cfg *unirefLockConfig) error {
+	versionToken, err := normalizeUniRefFixedVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
-	return staticasset.Lock(buildKBSource(versionToken, nil), staticasset.Options{
+	return staticasset.Lock(buildUniRefSource(versionToken, nil), staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
@@ -82,17 +80,17 @@ func runLockKB(cfg *kbLockConfig) error {
 	}, nil)
 }
 
-func runSyncKB(cfg *kbSyncConfig) error {
-	versionToken, err := normalizeKBFixedVersionToken(cfg.VersionToken)
+func runSyncUniRef(cfg *unirefSyncConfig) error {
+	versionToken, err := normalizeUniRefFixedVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
-	return staticasset.Sync(buildKBSource(versionToken, nil), buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	return staticasset.Sync(buildUniRefSource(versionToken, nil), buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
 }
 
-func resolveKBAssets(values []string) ([]string, error) {
+func resolveUniRefAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return sortedKBAssetNames(), nil
+		return sortedUniRefAssetNames(), nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
 	if err != nil {
@@ -110,7 +108,7 @@ func resolveKBAssets(values []string) ([]string, error) {
 			hasAll = true
 			continue
 		}
-		if _, ok := kbAssetFiles[asset]; !ok {
+		if _, ok := unirefAssetFiles[asset]; !ok {
 			unknown = append(unknown, asset)
 			continue
 		}
@@ -118,12 +116,12 @@ func resolveKBAssets(values []string) ([]string, error) {
 	}
 	if hasAll {
 		if len(assets) > 0 {
-			return nil, fmt.Errorf("assets=all cannot be combined with specific UniProtKB assets")
+			return nil, fmt.Errorf("assets=all cannot be combined with specific UniRef assets")
 		}
-		return sortedKBAssetNames(), nil
+		return sortedUniRefAssetNames(), nil
 	}
 	if len(unknown) > 0 {
-		return nil, fmt.Errorf("unknown UniProtKB asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(sortedKBAssetNames(), ", "))
+		return nil, fmt.Errorf("unknown UniRef asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(sortedUniRefAssetNames(), ", "))
 	}
 	if len(assets) == 0 {
 		return nil, fmt.Errorf("assets must not be empty")
@@ -131,40 +129,31 @@ func resolveKBAssets(values []string) ([]string, error) {
 	return sets.SortedKeys(stringSet(assets)), nil
 }
 
-func sortedKBAssetNames() []string {
-	names := make([]string, 0, len(kbAssetFiles))
-	for name := range kbAssetFiles {
+func sortedUniRefAssetNames() []string {
+	names := make([]string, 0, len(unirefAssetFiles))
+	for name := range unirefAssetFiles {
 		names = append(names, name)
 	}
 	return sets.SortedKeys(stringSet(names))
 }
 
-func hasLargeKBAsset(assets []string) bool {
-	for _, asset := range assets {
-		if asset == "trembl" {
-			return true
-		}
-	}
-	return false
-}
-
-func buildKBStaticAssets(baseURLCurrentRelease string, assets []string) []staticasset.Asset {
+func buildUniRefStaticAssets(baseURLCurrentRelease string, assets []string) []staticasset.Asset {
 	result := make([]staticasset.Asset, 0, len(assets))
 	for _, asset := range assets {
-		fileName := kbAssetFiles[asset]
+		fileName := unirefAssetFiles[asset]
 		result = append(result, staticasset.Asset{
 			Name: asset,
-			Path: filepath.ToSlash(filepath.Join("raw", "knowledgebase", "complete", fileName)),
-			URL:  buildUniProtCurrentReleaseURL(baseURLCurrentRelease, "knowledgebase", "complete", fileName),
+			Path: filepath.ToSlash(filepath.Join("raw", "uniref", asset, fileName)),
+			URL:  buildUniProtCurrentReleaseURL(baseURLCurrentRelease, "uniref", asset, fileName),
 		})
 	}
 	return result
 }
 
-func buildKBSource(versionToken string, assets []staticasset.Asset) staticasset.Source {
+func buildUniRefSource(versionToken string, assets []staticasset.Asset) staticasset.Source {
 	return staticasset.Source{
 		Database:     "uniprot",
-		Asset:        "kb",
+		Asset:        "uniref",
 		Source:       "ftp",
 		Version:      versionToken,
 		VersionToken: versionToken,
@@ -172,16 +161,16 @@ func buildKBSource(versionToken string, assets []staticasset.Asset) staticasset.
 	}
 }
 
-func resolveKBFetchVersionToken(clientHTTP *http.Client, value string, baseURLCurrentRelease string) (string, error) {
-	return resolveUniProtFetchVersionToken(clientHTTP, value, baseURLCurrentRelease, kbLabel)
+func resolveUniRefFetchVersionToken(clientHTTP *http.Client, value string, baseURLCurrentRelease string) (string, error) {
+	return resolveUniProtFetchVersionToken(clientHTTP, value, baseURLCurrentRelease, unirefLabel)
 }
 
-func normalizeKBFixedVersionToken(value string) (string, error) {
-	return normalizeUniProtFixedVersionToken(value, kbLabel)
+func normalizeUniRefFixedVersionToken(value string) (string, error) {
+	return normalizeUniProtFixedVersionToken(value, unirefLabel)
 }
 
-func createDefaultKBConfig() kbConfig {
-	cfg := kbConfig{}
+func createDefaultUniRefConfig() unirefConfig {
+	cfg := unirefConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.WorkersMax = 1
@@ -190,7 +179,7 @@ func createDefaultKBConfig() kbConfig {
 	return cfg
 }
 
-func validateKBConfig(cfg *kbConfig) error {
+func validateUniRefConfig(cfg *unirefConfig) error {
 	if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 		return err
 	}

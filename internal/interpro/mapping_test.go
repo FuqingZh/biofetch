@@ -40,6 +40,19 @@ func TestResolveMappingAssets(t *testing.T) {
 	}
 }
 
+func TestResolveMappingAssetsAll(t *testing.T) {
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveMappingAssets(values)
+		if err != nil {
+			t.Fatalf("resolveMappingAssets(%#v) returned error: %v", values, err)
+		}
+		expected := []string{"entries", "protein2ipr"}
+		if !reflect.DeepEqual(assets, expected) {
+			t.Fatalf("assets = %#v, want %#v", assets, expected)
+		}
+	}
+}
+
 func TestResolveMappingAssetsRejectsUnknown(t *testing.T) {
 	_, err := resolveMappingAssets([]string{"match_complete"})
 	if err == nil {
@@ -88,7 +101,7 @@ func TestRunFetchMappingRequiresLargeDownloadFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchMapping returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_download") {
+	if !strings.Contains(err.Error(), "should_allow_large_assets") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "mapping")); !os.IsNotExist(statErr) {

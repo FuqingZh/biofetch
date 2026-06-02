@@ -40,6 +40,19 @@ func TestResolveCOGAssets(t *testing.T) {
 	}
 }
 
+func TestResolveCOGAssetsAll(t *testing.T) {
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveCOGAssets(values)
+		if err != nil {
+			t.Fatalf("resolveCOGAssets(%#v) returned error: %v", values, err)
+		}
+		expected := []string{"category_definition", "definition", "readme"}
+		if !reflect.DeepEqual(assets, expected) {
+			t.Fatalf("assets = %#v, want %#v", assets, expected)
+		}
+	}
+}
+
 func TestResolveCOGAssetsRejectsUnknown(t *testing.T) {
 	_, err := resolveCOGAssets([]string{"mapping"})
 	if err == nil {

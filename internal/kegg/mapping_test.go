@@ -13,12 +13,14 @@ import (
 )
 
 func TestResolveMappingAssetNamesDefaultsToAll(t *testing.T) {
-	assets, err := resolveMappingAssetNames(nil)
-	if err != nil {
-		t.Fatalf("resolveMappingAssetNames returned error: %v", err)
-	}
-	if !reflect.DeepEqual(assets, mappingAssetNamesSupported) {
-		t.Fatalf("assets = %#v, want %#v", assets, mappingAssetNamesSupported)
+	for _, values := range [][]string{nil, []string{"all"}} {
+		assets, err := resolveMappingAssetNames(values)
+		if err != nil {
+			t.Fatalf("resolveMappingAssetNames(%#v) returned error: %v", values, err)
+		}
+		if !reflect.DeepEqual(assets, mappingAssetNamesSupported) {
+			t.Fatalf("assets = %#v, want %#v", assets, mappingAssetNamesSupported)
+		}
 	}
 }
 
@@ -35,14 +37,29 @@ func TestBuildMappingStaticAssets(t *testing.T) {
 	keggMappingBaseURL = "https://example.test"
 
 	assets := buildMappingStaticAssets([]string{"organism", "conv_uniprot", "gene_ko", "ko_pathway"}, []string{"hsa"})
-	expected := []staticasset.Asset{
-		{Name: "organism", Path: "raw/organism/list_organism.tsv", URL: "https://example.test/list/organism"},
-		{Name: "hsa.conv_uniprot", Path: "raw/hsa/conv_uniprot.tsv", URL: "https://example.test/conv/hsa/uniprot"},
-		{Name: "hsa.gene_ko", Path: "raw/hsa/gene_ko.tsv", URL: "https://example.test/link/ko/hsa"},
-		{Name: "ko_pathway", Path: "raw/ko/ko_pathway.tsv", URL: "https://example.test/link/pathway/ko"},
+	type assetFields struct {
+		name string
+		path string
+		url  string
 	}
-	if !reflect.DeepEqual(assets, expected) {
-		t.Fatalf("assets = %#v, want %#v", assets, expected)
+	got := make([]assetFields, 0, len(assets))
+	for _, asset := range assets {
+		got = append(got, assetFields{name: asset.Name, path: asset.Path, url: asset.URL})
+	}
+	expected := []assetFields{
+		{name: "organism", path: "raw/organism/list_organism.tsv", url: "https://example.test/list/organism"},
+		{name: "hsa.conv_uniprot", path: "raw/hsa/conv_uniprot.tsv", url: "https://example.test/conv/hsa/uniprot"},
+		{name: "hsa.gene_ko", path: "raw/hsa/gene_ko.tsv", url: "https://example.test/link/ko/hsa"},
+		{name: "ko_pathway", path: "raw/ko/ko_pathway.tsv", url: "https://example.test/link/pathway/ko"},
+	}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("assets = %#v, want %#v", got, expected)
+	}
+	if assets[1].RecoverDownloadError == nil {
+		t.Fatal("conv_uniprot recoverer is nil")
+	}
+	if assets[2].RecoverDownloadError != nil {
+		t.Fatal("gene_ko recoverer is not nil")
 	}
 }
 
@@ -162,6 +179,85 @@ func TestRunFetchMappingDownloadAllResolvesOrganisms(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg.dirOut, "mapping", "2026-05", "raw", "mmu", "gene_ko.tsv")); err != nil {
 		t.Fatalf("mmu gene_ko missing: %v", err)
+	}
+}
+
+func TestRunFetchMappingWritesEmptyConversionFileOnStatus400(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/conv/aacd/uniprot":
+			http.Error(writer, "no conversion", http.StatusBadRequest)
+		default:
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	originalBaseURL := keggMappingBaseURL
+	t.Cleanup(func() { keggMappingBaseURL = originalBaseURL })
+	keggMappingBaseURL = server.URL
+
+	cfg := createDefaultMappingConfig()
+	cfg.dirOut = t.TempDir()
+	cfg.versionToken = "2026-05"
+	cfg.retryMax = 1
+	cfg.workersMax = 1
+	cfg.requestInterval = 0
+	cfg.assetNames = []string{"conv_uniprot"}
+	cfg.organismCodes = []string{"aacd"}
+	if err := runFetchMapping(&cfg); err != nil {
+		t.Fatalf("runFetchMapping returned error: %v", err)
+	}
+
+	fileOut := filepath.Join(cfg.dirOut, "mapping", "2026-05", "raw", "aacd", "conv_uniprot.tsv")
+	info, err := os.Stat(fileOut)
+	if err != nil {
+		t.Fatalf("fileOut missing: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("file size = %d, want 0", info.Size())
+	}
+	manifest, ok, err := staticasset.ReadManifest(filepath.Join(cfg.dirOut, "mapping", "2026-05", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest was not written")
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Bytes != 0 {
+		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
+func TestRunFetchMappingDoesNotRecoverNonConversionStatus400(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/link/ko/aacd":
+			http.Error(writer, "bad organism", http.StatusBadRequest)
+		default:
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	originalBaseURL := keggMappingBaseURL
+	t.Cleanup(func() { keggMappingBaseURL = originalBaseURL })
+	keggMappingBaseURL = server.URL
+
+	cfg := createDefaultMappingConfig()
+	cfg.dirOut = t.TempDir()
+	cfg.versionToken = "2026-05"
+	cfg.retryMax = 1
+	cfg.workersMax = 1
+	cfg.requestInterval = 0
+	cfg.assetNames = []string{"gene_ko"}
+	cfg.organismCodes = []string{"aacd"}
+	err := runFetchMapping(&cfg)
+	if err == nil {
+		t.Fatal("runFetchMapping returned nil error")
+	}
+	if _, statErr := os.Stat(filepath.Join(cfg.dirOut, "mapping", "2026-05", "raw", "aacd", "gene_ko.tsv")); !os.IsNotExist(statErr) {
+		t.Fatalf("gene_ko file exists or stat failed unexpectedly: %v", statErr)
 	}
 }
 

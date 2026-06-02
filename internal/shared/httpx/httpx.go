@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,24 @@ import (
 )
 
 type DownloadProgressFunc func(bytesDone int64, bytesTotal int64)
+
+type UnexpectedStatusError struct {
+	URL    string
+	Status string
+	Code   int
+}
+
+func (err UnexpectedStatusError) Error() string {
+	return fmt.Sprintf("request %s: unexpected status %s", err.URL, err.Status)
+}
+
+func IsUnexpectedStatus(err error, code int) bool {
+	var statusErr UnexpectedStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.Code == code
+}
 
 type RequestLimiter struct {
 	interval        time.Duration
@@ -63,7 +82,7 @@ func DownloadFileWithProgress(clientHTTP *http.Client, urlFile string, fileOut s
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("request %s: unexpected status %s", urlFile, response.Status)
+		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
 	}
 
 	fileHandle, err := os.Create(fileOut)

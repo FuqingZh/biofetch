@@ -145,7 +145,7 @@ func parseGMTAssetsFromIndex(data []byte, baseURL string) ([]gmtAsset, error) {
 func resolveGMTAssets(assetsAvailable []gmtAsset, speciesNames []string, shouldDownloadAll bool) ([]gmtAsset, error) {
 	if shouldDownloadAll {
 		if len(speciesNames) > 0 {
-			return nil, fmt.Errorf("species cannot be combined with should_download_all")
+			return nil, fmt.Errorf("species cannot be combined with should_download_all_organisms")
 		}
 		return assetsAvailable, nil
 	}
@@ -175,7 +175,7 @@ func resolveGMTAssets(assetsAvailable []gmtAsset, speciesNames []string, shouldD
 
 func parseGMTSpecies(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("species must be provided unless should_download_all is set")
+		return nil, fmt.Errorf("species must be provided unless should_download_all_organisms is set")
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "species")
 	if err != nil {

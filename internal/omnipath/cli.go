@@ -97,7 +97,7 @@ func createEnzSubFetchCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
 	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag, or use @file with one organism per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch all supported organisms")
+	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
@@ -154,7 +154,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
 	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag, or use @file with one organism per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all", false, "Fetch all supported organisms")
+	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
 	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
 	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
@@ -330,7 +330,7 @@ func validateEnzSubConfig(cfg *configEnzSub) error {
 		countSources++
 	}
 	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all")
+		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all_organisms")
 	}
 	if len(cfg.organisms) > 0 {
 		organisms, err := parseOrganisms(cfg.organisms)
@@ -370,7 +370,7 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 		countSources++
 	}
 	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all")
+		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all_organisms")
 	}
 	if len(cfg.organisms) > 0 {
 		organisms, err := parseOrganisms(cfg.organisms)
@@ -399,7 +399,7 @@ func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
 		reader,
 		writer,
 		"Multi-organism download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all",
+		"should_download_all_organisms",
 	)
 }
 

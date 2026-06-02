@@ -17,10 +17,11 @@ import (
 )
 
 type Asset struct {
-	Name      string
-	Path      string
-	URL       string
-	Transform func(string) error `toml:"-"`
+	Name                 string
+	Path                 string
+	URL                  string
+	Transform            func(string) error                `toml:"-"`
+	RecoverDownloadError func(string, error) (bool, error) `toml:"-"`
 }
 
 type Source struct {
@@ -358,12 +359,16 @@ func planSync(
 	source Source,
 ) ([]FileRecord, []downloadTask, error) {
 	transformsByPath := buildTransformsByPath(source.Assets)
+	recoverersByPath := buildRecoverersByPath(source.Assets)
 	recordsReused := make([]FileRecord, 0, len(records))
 	tasksDownload := make([]downloadTask, 0, len(records))
 	for _, record := range records {
 		asset := Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
 		if transform := transformsByPath[record.Path]; transform != nil {
 			asset.Transform = transform
+		}
+		if recoverer := recoverersByPath[record.Path]; recoverer != nil {
+			asset.RecoverDownloadError = recoverer
 		}
 		if err := validateSyncAsset(asset); err != nil {
 			return nil, nil, err
@@ -377,6 +382,16 @@ func planSync(
 		tasksDownload = append(tasksDownload, downloadTask{asset: asset})
 	}
 	return recordsReused, tasksDownload, nil
+}
+
+func buildRecoverersByPath(assets []Asset) map[string]func(string, error) (bool, error) {
+	recoverers := make(map[string]func(string, error) (bool, error), len(assets))
+	for _, asset := range assets {
+		if asset.RecoverDownloadError != nil {
+			recoverers[asset.Path] = asset.RecoverDownloadError
+		}
+	}
+	return recoverers
 }
 
 func buildTransformsByPath(assets []Asset) map[string]func(string) error {
@@ -470,8 +485,20 @@ func downloadFileWithRetry(
 			progress.finishFile(asset, true)
 			return nil
 		} else {
-			progress.finishFile(asset, false)
 			errLast = err
+			if asset.RecoverDownloadError != nil {
+				_ = os.Remove(filePart)
+				recovered, errRecover := asset.RecoverDownloadError(fileOut, err)
+				if errRecover != nil {
+					progress.finishFile(asset, false)
+					return errRecover
+				}
+				if recovered {
+					progress.finishFile(asset, true)
+					return nil
+				}
+			}
+			progress.finishFile(asset, false)
 		}
 		if attempt < retryMax && retryWait > 0 {
 			time.Sleep(retryWait)

@@ -50,8 +50,8 @@ type mappingConfig struct {
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
 	cliopt.ProgressConfig
-	assetNames               []string
-	shouldAllowLargeDownload bool
+	assetNames             []string
+	shouldAllowLargeAssets bool
 }
 
 type mappingLockConfig struct {
@@ -82,7 +82,7 @@ func runFetchMapping(cfg *mappingConfig) error {
 		return err
 	}
 	assetsStatic := buildMappingStaticAssets(mappingCurrentBaseURL, assets)
-	if !cfg.ShouldDryRun && !cfg.shouldAllowLargeDownload {
+	if !cfg.ShouldDryRun && !cfg.shouldAllowLargeAssets {
 		if err := validateMappingDownloadSizes(clientHTTP, assetsStatic, mappingLargeDownloadThresholdBytes); err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ func runSyncMapping(cfg *mappingSyncConfig) error {
 
 func resolveMappingAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("assets must not be empty")
+		return append([]string(nil), mappingAssetsSupported...), nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
 	if err != nil {
@@ -124,9 +124,14 @@ func resolveMappingAssets(values []string) ([]string, error) {
 	supported := stringSet(mappingAssetsSupported)
 	selected := make([]string, 0, len(valuesResolved))
 	unknown := make([]string, 0)
+	hasAll := false
 	for _, value := range valuesResolved {
 		asset := strings.TrimSpace(value)
 		if asset == "" {
+			continue
+		}
+		if strings.EqualFold(asset, "all") {
+			hasAll = true
 			continue
 		}
 		if _, ok := supported[asset]; !ok {
@@ -134,6 +139,12 @@ func resolveMappingAssets(values []string) ([]string, error) {
 			continue
 		}
 		selected = append(selected, asset)
+	}
+	if hasAll {
+		if len(selected) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific Reactome mapping assets")
+		}
+		return append([]string(nil), mappingAssetsSupported...), nil
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("unknown Reactome mapping asset(s): %s; supported: %s", strings.Join(unknown, ", "), strings.Join(mappingAssetsSupported, ", "))
@@ -163,7 +174,7 @@ func validateMappingDownloadSizes(clientHTTP *http.Client, assets []staticasset.
 			return err
 		}
 		if ok && bytes > thresholdBytes {
-			return fmt.Errorf("Reactome mapping asset %s is %d bytes, above threshold %d; pass --should_allow_large_download to fetch", asset.Name, bytes, thresholdBytes)
+			return fmt.Errorf("Reactome mapping asset %s is %d bytes, above threshold %d; pass --should_allow_large_assets to fetch", asset.Name, bytes, thresholdBytes)
 		}
 	}
 	return nil

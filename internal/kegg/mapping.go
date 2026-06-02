@@ -1,9 +1,11 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -144,14 +146,14 @@ func validateMappingFetchConfig(cfg *mappingConfig) error {
 		return fmt.Errorf("request_interval_ms must be >= 0")
 	}
 	if cfg.shouldDownloadAll && len(cfg.organismCodes) > 0 {
-		return fmt.Errorf("choose either --organisms or --should_download_all, not both")
+		return fmt.Errorf("choose either --organisms or --should_download_all_organisms, not both")
 	}
 	assets, err := resolveMappingAssetNames(cfg.assetNames)
 	if err != nil {
 		return err
 	}
 	if hasOrganismScopedMappingAsset(assets) && !cfg.shouldDownloadAll && len(cfg.organismCodes) == 0 {
-		return fmt.Errorf("organism-scoped mapping assets require --organisms or --should_download_all")
+		return fmt.Errorf("organism-scoped mapping assets require --organisms or --should_download_all_organisms")
 	}
 	return nil
 }
@@ -203,10 +205,15 @@ func resolveMappingAssetNames(valuesInput []string) ([]string, error) {
 		return append([]string(nil), mappingAssetNamesSupported...), nil
 	}
 	setAssets := make(map[string]struct{})
+	hasAll := false
 	for _, valueInput := range valuesInput {
 		for _, token := range strings.Split(valueInput, ",") {
 			assetName := strings.ToLower(strings.TrimSpace(token))
 			if assetName == "" {
+				continue
+			}
+			if assetName == "all" {
+				hasAll = true
 				continue
 			}
 			if !isSupportedMappingAssetName(assetName) {
@@ -214,6 +221,12 @@ func resolveMappingAssetNames(valuesInput []string) ([]string, error) {
 			}
 			setAssets[assetName] = struct{}{}
 		}
+	}
+	if hasAll {
+		if len(setAssets) > 0 {
+			return nil, fmt.Errorf("assets=all cannot be combined with specific KEGG mapping assets")
+		}
+		return append([]string(nil), mappingAssetNamesSupported...), nil
 	}
 	if len(setAssets) == 0 {
 		return nil, fmt.Errorf("assets must not be empty")
@@ -306,15 +319,17 @@ func buildOrganismMappingAsset(asset string, organismCode string) staticasset.As
 	switch asset {
 	case "conv_uniprot":
 		return staticasset.Asset{
-			Name: organismCode + ".conv_uniprot",
-			Path: filepath.ToSlash(filepath.Join("raw", organismCode, "conv_uniprot.tsv")),
-			URL:  keggMappingBaseURL + "/conv/" + organismCode + "/uniprot",
+			Name:                 organismCode + ".conv_uniprot",
+			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "conv_uniprot.tsv")),
+			URL:                  keggMappingBaseURL + "/conv/" + organismCode + "/uniprot",
+			RecoverDownloadError: recoverMissingKEGGConversionMapping,
 		}
 	case "conv_ncbi_geneid":
 		return staticasset.Asset{
-			Name: organismCode + ".conv_ncbi_geneid",
-			Path: filepath.ToSlash(filepath.Join("raw", organismCode, "conv_ncbi_geneid.tsv")),
-			URL:  keggMappingBaseURL + "/conv/" + organismCode + "/ncbi-geneid",
+			Name:                 organismCode + ".conv_ncbi_geneid",
+			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "conv_ncbi_geneid.tsv")),
+			URL:                  keggMappingBaseURL + "/conv/" + organismCode + "/ncbi-geneid",
+			RecoverDownloadError: recoverMissingKEGGConversionMapping,
 		}
 	case "gene_list":
 		return staticasset.Asset{
@@ -337,6 +352,16 @@ func buildOrganismMappingAsset(asset string, organismCode string) staticasset.As
 	default:
 		return staticasset.Asset{}
 	}
+}
+
+func recoverMissingKEGGConversionMapping(fileOut string, err error) (bool, error) {
+	if !httpx.IsUnexpectedStatus(err, 400) {
+		return false, nil
+	}
+	if err := os.WriteFile(fileOut, nil, 0o644); err != nil {
+		return false, fmt.Errorf("write empty KEGG conversion mapping %s: %w", fileOut, err)
+	}
+	return true, nil
 }
 
 func buildMappingSource(versionToken string, assets []staticasset.Asset, scope staticasset.Scope) staticasset.Source {

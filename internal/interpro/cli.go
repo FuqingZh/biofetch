@@ -54,16 +54,16 @@ func createMappingFetchCommand() *cobra.Command {
 	}
 	commandFetch.Example = strings.Join([]string{
 		"biofetch interpro mapping fetch --dir_out /data/interpro --assets entries",
-		"biofetch interpro mapping fetch --dir_out /data/interpro --assets protein2ipr --should_allow_large_download",
-		"biofetch interpro mapping fetch --dir_out /data/interpro --assets protein2ipr,entries --should_allow_large_download",
+		"biofetch interpro mapping fetch --dir_out /data/interpro --assets protein2ipr --should_allow_large_assets",
+		"biofetch interpro mapping fetch --dir_out /data/interpro --should_allow_large_assets",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "InterPro asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "InterPro release token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "InterPro mapping assets: protein2ipr|entries; repeat the flag, use commas, or use @file")
-	flags.BoolVar(&cfg.shouldAllowLargeDownload, "should_allow_large_download", false, "Allow large InterPro protein2ipr download")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "InterPro mapping assets: all|protein2ipr|entries; omit or pass all to fetch all supported assets")
+	flags.BoolVar(&cfg.shouldAllowLargeAssets, "should_allow_large_assets", false, "Allow large InterPro mapping assets")
 	flags.StringVar(&cfg.baseURLCurrentRelease, "base_url_current_release", cfg.baseURLCurrentRelease, "InterPro current_release base URL, including mirror URLs")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
