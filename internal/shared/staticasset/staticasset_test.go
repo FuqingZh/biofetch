@@ -158,6 +158,48 @@ func TestFetchWritesProgressByDefault(t *testing.T) {
 	}
 }
 
+func TestFetchWritesCurrentFileProgressForMultipleFiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Length", "5")
+		_, _ = writer.Write([]byte("alpha"))
+	}))
+	defer server.Close()
+
+	var progress bytes.Buffer
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{
+			{
+				Name: "alpha",
+				Path: "raw/alpha.txt",
+				URL:  server.URL + "/alpha.txt",
+			},
+			{
+				Name: "bravo",
+				Path: "raw/bravo.txt",
+				URL:  server.URL + "/bravo.txt",
+			},
+		},
+	}
+	options := Options{
+		DirOut:         t.TempDir(),
+		RuleExisting:   "skip",
+		RetryMax:       1,
+		WorkersMax:     1,
+		ProgressWriter: &progress,
+	}
+	if err := Fetch(source, options, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	text := progress.String()
+	if !strings.Contains(text, "2/2 files") || !strings.Contains(text, "current") || !strings.Contains(text, "5 B/5 B") {
+		t.Fatalf("progress = %q", text)
+	}
+}
+
 func TestFetchCanDisableProgress(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte("alpha"))
@@ -287,6 +329,65 @@ func TestLockScansConfiguredDirectories(t *testing.T) {
 	}
 	if len(manifest.Files) != 1 || manifest.Files[0].Path != "tidy/asset.tsv" {
 		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
+func TestLockWritesHashProgress(t *testing.T) {
+	dirOut := t.TempDir()
+	dirRaw := filepath.Join(dirOut, "fixed", "v1", "raw")
+	if err := os.MkdirAll(dirRaw, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirRaw, "asset.tsv"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	var progress bytes.Buffer
+	options := Options{
+		DirOut:         dirOut,
+		RuleExisting:   "skip",
+		RetryMax:       1,
+		WorkersMax:     1,
+		ProgressWriter: &progress,
+	}
+	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
+	if err := Lock(source, options, nil); err != nil {
+		t.Fatalf("Lock returned error: %v", err)
+	}
+	text := progress.String()
+	if !strings.Contains(text, "testdb fixed") || !strings.Contains(text, "100%") || !strings.Contains(text, "7 B/7 B") {
+		t.Fatalf("progress = %q", text)
+	}
+}
+
+func TestLockWritesCurrentFileProgressForMultipleFiles(t *testing.T) {
+	dirOut := t.TempDir()
+	dirRaw := filepath.Join(dirOut, "fixed", "v1", "raw")
+	if err := os.MkdirAll(dirRaw, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirRaw, "alpha.tsv"), []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirRaw, "bravo.tsv"), []byte("bravo"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	var progress bytes.Buffer
+	options := Options{
+		DirOut:         dirOut,
+		RuleExisting:   "skip",
+		RetryMax:       1,
+		WorkersMax:     1,
+		ProgressWriter: &progress,
+	}
+	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
+	if err := Lock(source, options, nil); err != nil {
+		t.Fatalf("Lock returned error: %v", err)
+	}
+	text := progress.String()
+	if !strings.Contains(text, "2/2 files") || !strings.Contains(text, "current") || !strings.Contains(text, "5 B/5 B") {
+		t.Fatalf("progress = %q", text)
 	}
 }
 

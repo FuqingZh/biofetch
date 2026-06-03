@@ -101,6 +101,13 @@ type downloadTask struct {
 	asset Asset
 }
 
+type scanTask struct {
+	filePath string
+	pathRel  string
+	url      string
+	bytes    int64
+}
+
 type progressReporter struct {
 	writer        io.Writer
 	label         string
@@ -114,6 +121,9 @@ type progressReporter struct {
 	knownBytes    bool
 	fileBytes     map[string]int64
 	fileTotals    map[string]int64
+	currentPath   string
+	currentBytes  int64
+	currentTotal  int64
 	mutex         sync.Mutex
 }
 
@@ -185,10 +195,13 @@ func Lock(source Source, options Options, trace TraceSink) error {
 	if err != nil {
 		return err
 	}
-	records, err := scanRecords(dirVersion, source.ScanDirs, urlsExisting)
+	progress := newProgressReporter(source, options, 0, 0)
+	records, err := scanRecords(dirVersion, source.ScanDirs, urlsExisting, progress)
 	if err != nil {
+		progress.finish(false)
 		return err
 	}
+	progress.finish(true)
 	emit(trace, source, TraceEvent{Event: "scan_files", Path: filepath.Join(dirVersion, "raw"), Status: fmt.Sprintf("files=%d", len(records))})
 	if options.ShouldDryRun {
 		emit(trace, source, TraceEvent{Event: "lock_rebuild", Path: fileManifest, Status: "dry_run"})
@@ -425,7 +438,7 @@ func shouldReuseRecord(filePath string, record FileRecord) bool {
 	if record.SHA256 == "" {
 		return false
 	}
-	sha256File, err := calculateSHA256ForFile(filePath)
+	sha256File, err := calculateSHA256ForFile(filePath, nil)
 	if err != nil {
 		return false
 	}
@@ -508,11 +521,15 @@ func downloadFileWithRetry(
 }
 
 func buildRecord(filePath string, asset Asset) (FileRecord, error) {
+	return buildRecordWithProgress(filePath, asset, nil)
+}
+
+func buildRecordWithProgress(filePath string, asset Asset, progress *progressReporter) (FileRecord, error) {
 	infoFile, err := os.Stat(filePath)
 	if err != nil {
 		return FileRecord{}, fmt.Errorf("stat file: %w", err)
 	}
-	sha256File, err := calculateSHA256ForFile(filePath)
+	sha256File, err := calculateSHA256ForFile(filePath, progress.callbackForFile(asset))
 	if err != nil {
 		return FileRecord{}, err
 	}
@@ -525,11 +542,32 @@ func buildRecord(filePath string, asset Asset) (FileRecord, error) {
 	}, nil
 }
 
-func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]string) ([]FileRecord, error) {
+func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]string, progress *progressReporter) ([]FileRecord, error) {
+	tasks, err := planScanRecords(dirVersion, scanDirs, urlsExisting)
+	if err != nil {
+		return nil, err
+	}
+	progress.planScan(tasks)
+	records := make([]FileRecord, 0, len(tasks))
+	for _, task := range tasks {
+		asset := Asset{Name: filepath.Base(task.filePath), Path: task.pathRel, URL: task.url}
+		progress.startScanFile(asset)
+		record, err := buildRecordWithProgress(task.filePath, asset, progress)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+		progress.finishFile(asset, true)
+	}
+	sortRecords(records)
+	return records, nil
+}
+
+func planScanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]string) ([]scanTask, error) {
 	if len(scanDirs) == 0 {
 		scanDirs = []string{"raw"}
 	}
-	records := make([]FileRecord, 0)
+	tasks := make([]scanTask, 0)
 	for _, dirName := range scanDirs {
 		dirScan := filepath.Join(dirVersion, dirName)
 		if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
@@ -542,17 +580,21 @@ func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]s
 			if strings.HasSuffix(entry.Name(), ".part") {
 				return nil
 			}
+			infoFile, err := entry.Info()
+			if err != nil {
+				return err
+			}
 			pathRel, err := filepath.Rel(dirVersion, path)
 			if err != nil {
 				return err
 			}
 			pathRel = filepath.ToSlash(pathRel)
-			urlAsset := urlsExisting[pathRel]
-			record, err := buildRecord(path, Asset{Name: filepath.Base(path), Path: pathRel, URL: urlAsset})
-			if err != nil {
-				return err
-			}
-			records = append(records, record)
+			tasks = append(tasks, scanTask{
+				filePath: path,
+				pathRel:  pathRel,
+				url:      urlsExisting[pathRel],
+				bytes:    infoFile.Size(),
+			})
 			return nil
 		}); err != nil {
 			if os.IsNotExist(err) {
@@ -561,8 +603,10 @@ func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]s
 			return nil, fmt.Errorf("scan files: %w", err)
 		}
 	}
-	sortRecords(records)
-	return records, nil
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].pathRel < tasks[j].pathRel
+	})
+	return tasks, nil
 }
 
 func buildCompleteRecords(fileManifest string, dirVersion string, recordsCurrent []FileRecord) ([]FileRecord, error) {
@@ -668,17 +712,46 @@ func writeManifest(fileManifest string, source Source, records []FileRecord, tim
 	})
 }
 
-func calculateSHA256ForFile(filePath string) (string, error) {
+func calculateSHA256ForFile(filePath string, progress httpx.DownloadProgressFunc) (string, error) {
 	fileIn, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open %s for sha256: %w", filePath, err)
 	}
 	defer fileIn.Close()
 	hashSHA256 := sha256.New()
-	if _, err := io.Copy(hashSHA256, fileIn); err != nil {
+	var reader io.Reader = fileIn
+	if progress != nil {
+		infoFile, err := fileIn.Stat()
+		if err != nil {
+			return "", fmt.Errorf("stat %s for sha256: %w", filePath, err)
+		}
+		reader = &hashProgressReader{
+			reader:     fileIn,
+			bytesTotal: infoFile.Size(),
+			progress:   progress,
+		}
+		progress(0, infoFile.Size())
+	}
+	if _, err := io.Copy(hashSHA256, reader); err != nil {
 		return "", fmt.Errorf("hash %s: %w", filePath, err)
 	}
 	return fmt.Sprintf("%x", hashSHA256.Sum(nil)), nil
+}
+
+type hashProgressReader struct {
+	reader     io.Reader
+	bytesDone  int64
+	bytesTotal int64
+	progress   httpx.DownloadProgressFunc
+}
+
+func (reader *hashProgressReader) Read(buffer []byte) (int, error) {
+	count, err := reader.reader.Read(buffer)
+	if count > 0 {
+		reader.bytesDone += int64(count)
+		reader.progress(reader.bytesDone, reader.bytesTotal)
+	}
+	return count, err
 }
 
 func buildVersionDir(dirOut string, source Source) string {
@@ -761,13 +834,55 @@ func (progress *progressReporter) plan(reusedFiles int, downloadFiles int) {
 	progress.drawLocked(fmt.Sprintf("reuse=%d download=%d", reusedFiles, downloadFiles), true)
 }
 
+func (progress *progressReporter) planScan(tasks []scanTask) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	progress.totalFiles = len(tasks)
+	progress.doneFiles = 0
+	progress.downloadFiles = len(tasks)
+	progress.totalBytes = 0
+	progress.doneBytes = 0
+	progress.knownBytes = false
+	progress.fileBytes = map[string]int64{}
+	progress.fileTotals = map[string]int64{}
+	progress.currentPath = ""
+	progress.currentBytes = 0
+	progress.currentTotal = 0
+	for _, task := range tasks {
+		if task.bytes > 0 {
+			progress.totalBytes += task.bytes
+			progress.fileTotals[task.pathRel] = task.bytes
+		}
+	}
+	progress.knownBytes = progress.totalBytes > 0
+	progress.drawLocked(fmt.Sprintf("scanning %d files", len(tasks)), true)
+}
+
 func (progress *progressReporter) startFile(asset Asset) {
 	if progress == nil {
 		return
 	}
 	progress.mutex.Lock()
 	defer progress.mutex.Unlock()
+	progress.currentPath = asset.Path
+	progress.currentBytes = 0
+	progress.currentTotal = progress.fileTotals[asset.Path]
 	progress.drawLocked("downloading "+asset.Path, false)
+}
+
+func (progress *progressReporter) startScanFile(asset Asset) {
+	if progress == nil {
+		return
+	}
+	progress.mutex.Lock()
+	defer progress.mutex.Unlock()
+	progress.currentPath = asset.Path
+	progress.currentBytes = 0
+	progress.currentTotal = progress.fileTotals[asset.Path]
+	progress.drawLocked("hashing "+asset.Path, false)
 }
 
 func (progress *progressReporter) callbackForFile(asset Asset) httpx.DownloadProgressFunc {
@@ -793,6 +908,15 @@ func (progress *progressReporter) updateFile(asset Asset, bytesDone int64, bytes
 			progress.knownBytes = true
 		}
 	}
+	if bytesTotal > 0 {
+		progress.fileTotals[key] = bytesTotal
+	}
+	progress.currentPath = key
+	progress.currentBytes = bytesDone
+	progress.currentTotal = bytesTotal
+	if progress.currentTotal == 0 {
+		progress.currentTotal = progress.fileTotals[key]
+	}
 	previous := progress.fileBytes[key]
 	if bytesDone > previous {
 		progress.doneBytes += bytesDone - previous
@@ -807,6 +931,11 @@ func (progress *progressReporter) finishFile(asset Asset, ok bool) {
 	}
 	progress.mutex.Lock()
 	defer progress.mutex.Unlock()
+	progress.currentPath = asset.Path
+	if total := progress.fileTotals[asset.Path]; total > 0 {
+		progress.currentBytes = total
+		progress.currentTotal = total
+	}
 	if ok {
 		progress.doneFiles++
 		progress.drawLocked("downloaded "+asset.Path, true)
@@ -835,6 +964,10 @@ func (progress *progressReporter) drawLocked(status string, force bool) {
 		return
 	}
 	progress.timeLastDraw = now
+	if progress.totalFiles > 1 && progress.currentPath != "" {
+		progress.drawMultiFileLocked(status, now)
+		return
+	}
 	if progress.knownBytes && progress.totalBytes > 0 {
 		percent := float64(progress.doneBytes) / float64(progress.totalBytes)
 		_, _ = fmt.Fprintf(progress.writer, "\r%s  %s %3.0f%%  %s/%s  %s/s  %s",
@@ -862,6 +995,35 @@ func (progress *progressReporter) drawLocked(status string, force bool) {
 	_, _ = fmt.Fprintf(progress.writer, "\r%s  [downloading] %s  %s/s  %s",
 		progress.label,
 		formatBytes(progress.doneBytes),
+		formatBytes(progress.speedBytesPerSecond(now)),
+		status,
+	)
+}
+
+func (progress *progressReporter) drawMultiFileLocked(status string, now time.Time) {
+	percentFiles := float64(progress.doneFiles) / float64(progress.totalFiles)
+	if progress.currentTotal > 0 {
+		percentCurrent := float64(progress.currentBytes) / float64(progress.currentTotal)
+		_, _ = fmt.Fprintf(progress.writer, "\r%s  %s %d/%d files  current %s %3.0f%%  %s/%s  %s/s  %s",
+			progress.label,
+			renderProgressBar(percentFiles),
+			progress.doneFiles,
+			progress.totalFiles,
+			renderProgressBar(percentCurrent),
+			percentCurrent*100,
+			formatBytes(progress.currentBytes),
+			formatBytes(progress.currentTotal),
+			formatBytes(progress.speedBytesPerSecond(now)),
+			status,
+		)
+		return
+	}
+	_, _ = fmt.Fprintf(progress.writer, "\r%s  %s %d/%d files  current %s  %s/s  %s",
+		progress.label,
+		renderProgressBar(percentFiles),
+		progress.doneFiles,
+		progress.totalFiles,
+		formatBytes(progress.currentBytes),
 		formatBytes(progress.speedBytesPerSecond(now)),
 		status,
 	)
