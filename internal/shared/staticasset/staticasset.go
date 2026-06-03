@@ -108,6 +108,8 @@ type scanTask struct {
 	bytes    int64
 }
 
+const manifestFlushInterval = 5 * time.Second
+
 type progressReporter struct {
 	writer        io.Writer
 	label         string
@@ -125,6 +127,17 @@ type progressReporter struct {
 	currentBytes  int64
 	currentTotal  int64
 	mutex         sync.Mutex
+}
+
+type incrementalManifestWriter struct {
+	mutex         sync.Mutex
+	fileManifest  string
+	source        Source
+	dirVersion    string
+	recordsByPath map[string]FileRecord
+	flushInterval time.Duration
+	timeLastFlush time.Time
+	isDirty       bool
 }
 
 func Fetch(source Source, options Options, trace TraceSink) error {
@@ -162,8 +175,18 @@ func Fetch(source Source, options Options, trace TraceSink) error {
 	limiterRequest := httpx.NewRequestLimiter(options.RequestInterval)
 	progress := newProgressReporter(source, options, len(source.Assets), len(recordsReused))
 	progress.plan(len(recordsReused), len(tasksDownload))
-	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress)
+	writerManifest, err := newIncrementalManifestWriter(fileManifest, source, dirVersion)
 	if err != nil {
+		progress.finish(false)
+		return err
+	}
+	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress, writerManifest)
+	if err != nil {
+		_ = writerManifest.flush()
+		progress.finish(false)
+		return err
+	}
+	if err := writerManifest.flush(); err != nil {
 		progress.finish(false)
 		return err
 	}
@@ -249,8 +272,18 @@ func Sync(source Source, options Options, trace TraceSink) error {
 	limiterRequest := httpx.NewRequestLimiter(options.RequestInterval)
 	progress := newProgressReporter(source, options, len(recordsManifest), len(recordsReused))
 	progress.plan(len(recordsReused), len(tasksDownload))
-	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress)
+	writerManifest, err := newIncrementalManifestWriter(fileManifest, source, dirVersion)
 	if err != nil {
+		progress.finish(false)
+		return err
+	}
+	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress, writerManifest)
+	if err != nil {
+		_ = writerManifest.flush()
+		progress.finish(false)
+		return err
+	}
+	if err := writerManifest.flush(); err != nil {
 		progress.finish(false)
 		return err
 	}
@@ -454,6 +487,7 @@ func runDownloadTasks(
 	limiterRequest *httpx.RequestLimiter,
 	trace TraceSink,
 	progress *progressReporter,
+	writerManifest *incrementalManifestWriter,
 ) ([]FileRecord, error) {
 	return parallel.MapOrderedWithWorkers(tasks, options.WorkersMax, func(task downloadTask) (FileRecord, error) {
 		fileOut := filepath.Join(dirVersion, filepath.FromSlash(task.asset.Path))
@@ -471,6 +505,11 @@ func runDownloadTasks(
 		record, err := buildRecord(fileOut, task.asset)
 		if err != nil {
 			return FileRecord{}, err
+		}
+		if writerManifest != nil {
+			if err := writerManifest.add(record); err != nil {
+				return FileRecord{}, err
+			}
 		}
 		emit(trace, source, TraceEvent{Event: "download_file", Asset: record.Asset, Path: record.Path, URL: record.URL, Bytes: record.Bytes, SHA256: record.SHA256, Status: "ok"})
 		return record, nil
@@ -634,6 +673,97 @@ func buildCompleteRecords(fileManifest string, dirVersion string, recordsCurrent
 		if !infoFile.IsDir() {
 			records = append(records, record)
 		}
+	}
+	sortRecords(records)
+	return records, nil
+}
+
+func newIncrementalManifestWriter(fileManifest string, source Source, dirVersion string) (*incrementalManifestWriter, error) {
+	recordsExisting, err := readRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+	recordsByPath := make(map[string]FileRecord, len(recordsExisting))
+	for _, record := range recordsExisting {
+		if strings.TrimSpace(record.Path) != "" {
+			recordsByPath[record.Path] = record
+		}
+	}
+	return &incrementalManifestWriter{
+		fileManifest:  fileManifest,
+		source:        source,
+		dirVersion:    dirVersion,
+		recordsByPath: recordsByPath,
+		flushInterval: manifestFlushInterval,
+	}, nil
+}
+
+func (writer *incrementalManifestWriter) add(record FileRecord) error {
+	if writer == nil {
+		return nil
+	}
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	writer.recordsByPath[record.Path] = record
+	writer.isDirty = true
+	if !writer.shouldFlushLocked(time.Now()) {
+		return nil
+	}
+	return writer.flushLocked(time.Now())
+}
+
+func (writer *incrementalManifestWriter) flush() error {
+	if writer == nil {
+		return nil
+	}
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	if !writer.isDirty {
+		return nil
+	}
+	return writer.flushLocked(time.Now())
+}
+
+func (writer *incrementalManifestWriter) shouldFlushLocked(now time.Time) bool {
+	if writer.flushInterval <= 0 {
+		return true
+	}
+	if writer.timeLastFlush.IsZero() {
+		return true
+	}
+	return now.Sub(writer.timeLastFlush) >= writer.flushInterval
+}
+
+func (writer *incrementalManifestWriter) flushLocked(now time.Time) error {
+	records, err := writer.buildRecordsLocked()
+	if err != nil {
+		return err
+	}
+	if err := writeManifest(writer.fileManifest, writer.source, records, now); err != nil {
+		return err
+	}
+	writer.timeLastFlush = now
+	writer.isDirty = false
+	return nil
+}
+
+func (writer *incrementalManifestWriter) buildRecordsLocked() ([]FileRecord, error) {
+	records := make([]FileRecord, 0, len(writer.recordsByPath))
+	for pathRel, record := range writer.recordsByPath {
+		filePath := filepath.Join(writer.dirVersion, filepath.FromSlash(pathRel))
+		infoFile, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				delete(writer.recordsByPath, pathRel)
+				continue
+			}
+			return nil, fmt.Errorf("stat manifest file %s: %w", filePath, err)
+		}
+		if infoFile.IsDir() {
+			delete(writer.recordsByPath, pathRel)
+			continue
+		}
+		records = append(records, record)
 	}
 	sortRecords(records)
 	return records, nil

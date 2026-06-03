@@ -78,6 +78,49 @@ func TestFetchDownloadsAndReusesBySHA256(t *testing.T) {
 	}
 }
 
+func TestFetchWritesManifestAfterEachDownloadedFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/alpha.txt":
+			_, _ = writer.Write([]byte("alpha"))
+		case "/bravo.txt":
+			http.Error(writer, "failed", http.StatusInternalServerError)
+		default:
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Source:       "fixture",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{
+			{Name: "alpha", Path: "raw/alpha.txt", URL: server.URL + "/alpha.txt"},
+			{Name: "bravo", Path: "raw/bravo.txt", URL: server.URL + "/bravo.txt"},
+		},
+	}
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+
+	err := Fetch(source, options, nil)
+	if err == nil {
+		t.Fatal("Fetch returned nil error")
+	}
+	manifest, ok, err := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest was not written")
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[0].Bytes != 5 {
+		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
 func TestFetchDoesNotReuseSameSizeChangedContent(t *testing.T) {
 	body := "bravo"
 	countRequests := 0
@@ -270,6 +313,50 @@ func TestSyncRehydratesFromManifest(t *testing.T) {
 	}
 	if string(data) != "synced" {
 		t.Fatalf("file content = %q, want synced", string(data))
+	}
+}
+
+func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/alpha.txt":
+			_, _ = writer.Write([]byte("alpha"))
+		case "/bravo.txt":
+			http.Error(writer, "failed", http.StatusInternalServerError)
+		default:
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	dirVersion := filepath.Join(dirOut, "fixed", "v1")
+	if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	source := Source{Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1"}
+	records := []FileRecord{
+		{Asset: "alpha", Path: "raw/alpha.txt", SHA256: "old", Bytes: 5, URL: server.URL + "/alpha.txt"},
+		{Asset: "bravo", Path: "raw/bravo.txt", SHA256: "old", Bytes: 5, URL: server.URL + "/bravo.txt"},
+	}
+	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, records, time.Now()); err != nil {
+		t.Fatalf("writeManifest returned error: %v", err)
+	}
+
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	err := Sync(source, options, nil)
+	if err == nil {
+		t.Fatal("Sync returned nil error")
+	}
+	manifest, ok, err := ReadManifest(filepath.Join(dirVersion, "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest was not written")
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[0].SHA256 == "old" {
+		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
 }
 
