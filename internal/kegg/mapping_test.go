@@ -58,8 +58,8 @@ func TestBuildMappingStaticAssets(t *testing.T) {
 	if assets[1].RecoverDownloadError == nil {
 		t.Fatal("conv_uniprot recoverer is nil")
 	}
-	if assets[2].RecoverDownloadError != nil {
-		t.Fatal("gene_ko recoverer is not nil")
+	if assets[2].RecoverDownloadError == nil {
+		t.Fatal("gene_ko recoverer is nil")
 	}
 }
 
@@ -229,10 +229,14 @@ func TestRunFetchMappingWritesEmptyConversionFileOnStatus400(t *testing.T) {
 	}
 }
 
-func TestRunFetchMappingDoesNotRecoverNonConversionStatus400(t *testing.T) {
+func TestRunFetchMappingWritesEmptyOrganismScopedFileOnStatus400(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
+		case "/list/aacu":
+			http.Error(writer, "bad organism", http.StatusBadRequest)
 		case "/link/ko/aacd":
+			http.Error(writer, "bad organism", http.StatusBadRequest)
+		case "/link/pathway/aacp":
 			http.Error(writer, "bad organism", http.StatusBadRequest)
 		default:
 			t.Fatalf("path = %s", request.URL.Path)
@@ -244,20 +248,34 @@ func TestRunFetchMappingDoesNotRecoverNonConversionStatus400(t *testing.T) {
 	t.Cleanup(func() { keggMappingBaseURL = originalBaseURL })
 	keggMappingBaseURL = server.URL
 
-	cfg := createDefaultMappingConfig()
-	cfg.dirOut = t.TempDir()
-	cfg.versionToken = "2026-05"
-	cfg.retryMax = 1
-	cfg.workersMax = 1
-	cfg.requestInterval = 0
-	cfg.assetNames = []string{"gene_ko"}
-	cfg.organismCodes = []string{"aacd"}
-	err := runFetchMapping(&cfg)
-	if err == nil {
-		t.Fatal("runFetchMapping returned nil error")
+	cases := []struct {
+		asset        string
+		organismCode string
+		pathRel      string
+	}{
+		{asset: "gene_list", organismCode: "aacu", pathRel: filepath.Join("raw", "aacu", "gene_list.tsv")},
+		{asset: "gene_ko", organismCode: "aacd", pathRel: filepath.Join("raw", "aacd", "gene_ko.tsv")},
+		{asset: "gene_pathway", organismCode: "aacp", pathRel: filepath.Join("raw", "aacp", "gene_pathway.tsv")},
 	}
-	if _, statErr := os.Stat(filepath.Join(cfg.dirOut, "mapping", "2026-05", "raw", "aacd", "gene_ko.tsv")); !os.IsNotExist(statErr) {
-		t.Fatalf("gene_ko file exists or stat failed unexpectedly: %v", statErr)
+	for _, tc := range cases {
+		cfg := createDefaultMappingConfig()
+		cfg.dirOut = t.TempDir()
+		cfg.versionToken = "2026-05"
+		cfg.retryMax = 1
+		cfg.workersMax = 1
+		cfg.requestInterval = 0
+		cfg.assetNames = []string{tc.asset}
+		cfg.organismCodes = []string{tc.organismCode}
+		if err := runFetchMapping(&cfg); err != nil {
+			t.Fatalf("runFetchMapping %s returned error: %v", tc.asset, err)
+		}
+		info, err := os.Stat(filepath.Join(cfg.dirOut, "mapping", "2026-05", tc.pathRel))
+		if err != nil {
+			t.Fatalf("%s missing: %v", tc.pathRel, err)
+		}
+		if info.Size() != 0 {
+			t.Fatalf("%s size = %d, want 0", tc.pathRel, info.Size())
+		}
 	}
 }
 

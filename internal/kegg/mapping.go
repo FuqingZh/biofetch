@@ -322,44 +322,47 @@ func buildOrganismMappingAsset(asset string, organismCode string) staticasset.As
 			Name:                 organismCode + ".conv_uniprot",
 			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "conv_uniprot.tsv")),
 			URL:                  keggMappingBaseURL + "/conv/" + organismCode + "/uniprot",
-			RecoverDownloadError: recoverMissingKEGGConversionMapping,
+			RecoverDownloadError: recoverMissingKEGGOrganismScopedMapping,
 		}
 	case "conv_ncbi_geneid":
 		return staticasset.Asset{
 			Name:                 organismCode + ".conv_ncbi_geneid",
 			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "conv_ncbi_geneid.tsv")),
 			URL:                  keggMappingBaseURL + "/conv/" + organismCode + "/ncbi-geneid",
-			RecoverDownloadError: recoverMissingKEGGConversionMapping,
+			RecoverDownloadError: recoverMissingKEGGOrganismScopedMapping,
 		}
 	case "gene_list":
 		return staticasset.Asset{
-			Name: organismCode + ".gene_list",
-			Path: filepath.ToSlash(filepath.Join("raw", organismCode, "gene_list.tsv")),
-			URL:  keggMappingBaseURL + "/list/" + organismCode,
+			Name:                 organismCode + ".gene_list",
+			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "gene_list.tsv")),
+			URL:                  keggMappingBaseURL + "/list/" + organismCode,
+			RecoverDownloadError: recoverMissingKEGGOrganismScopedMapping,
 		}
 	case "gene_ko":
 		return staticasset.Asset{
-			Name: organismCode + ".gene_ko",
-			Path: filepath.ToSlash(filepath.Join("raw", organismCode, "gene_ko.tsv")),
-			URL:  keggMappingBaseURL + "/link/ko/" + organismCode,
+			Name:                 organismCode + ".gene_ko",
+			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "gene_ko.tsv")),
+			URL:                  keggMappingBaseURL + "/link/ko/" + organismCode,
+			RecoverDownloadError: recoverMissingKEGGOrganismScopedMapping,
 		}
 	case "gene_pathway":
 		return staticasset.Asset{
-			Name: organismCode + ".gene_pathway",
-			Path: filepath.ToSlash(filepath.Join("raw", organismCode, "gene_pathway.tsv")),
-			URL:  keggMappingBaseURL + "/link/pathway/" + organismCode,
+			Name:                 organismCode + ".gene_pathway",
+			Path:                 filepath.ToSlash(filepath.Join("raw", organismCode, "gene_pathway.tsv")),
+			URL:                  keggMappingBaseURL + "/link/pathway/" + organismCode,
+			RecoverDownloadError: recoverMissingKEGGOrganismScopedMapping,
 		}
 	default:
 		return staticasset.Asset{}
 	}
 }
 
-func recoverMissingKEGGConversionMapping(fileOut string, err error) (bool, error) {
+func recoverMissingKEGGOrganismScopedMapping(fileOut string, err error) (bool, error) {
 	if !httpx.IsUnexpectedStatus(err, 400) {
 		return false, nil
 	}
 	if err := os.WriteFile(fileOut, nil, 0o644); err != nil {
-		return false, fmt.Errorf("write empty KEGG conversion mapping %s: %w", fileOut, err)
+		return false, fmt.Errorf("write empty KEGG organism-scoped mapping %s: %w", fileOut, err)
 	}
 	return true, nil
 }
