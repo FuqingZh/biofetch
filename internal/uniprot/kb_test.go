@@ -109,7 +109,9 @@ func TestRunFetchKBDownloadsAndReuses(t *testing.T) {
 		case "/relnotes.txt":
 			_, _ = writer.Write([]byte("UniProt Release 2026_01\n"))
 		case "/knowledgebase/complete/uniprot_sprot.fasta.gz":
-			countGetSProt++
+			if request.Method == http.MethodGet {
+				countGetSProt++
+			}
 			_, _ = writer.Write([]byte(">sp|P12345|TEST\nM\n"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)
@@ -162,7 +164,9 @@ func TestRunFetchKBDownloadsDAT(t *testing.T) {
 		case "/relnotes.txt":
 			_, _ = writer.Write([]byte("UniProt Release 2026_01\n"))
 		case "/knowledgebase/complete/uniprot_sprot.dat.gz":
-			countGetDAT++
+			if request.Method == http.MethodGet {
+				countGetDAT++
+			}
 			_, _ = writer.Write([]byte("ID   TEST_HUMAN\n"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)

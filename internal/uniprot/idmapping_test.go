@@ -123,7 +123,9 @@ func TestRunFetchIDMappingDownloadsAndReuses(t *testing.T) {
 		case "/relnotes.txt":
 			_, _ = writer.Write([]byte("UniProt Release 2026_01\n"))
 		case "/knowledgebase/idmapping/idmapping_selected.tab.gz":
-			countGetSelected++
+			if request.Method == http.MethodGet {
+				countGetSelected++
+			}
 			_, _ = writer.Write([]byte("selected"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)

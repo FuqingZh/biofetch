@@ -96,7 +96,9 @@ func TestRunFetchMapperDownloadsAndReuses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/emapperdb-5.0.2/eggnog.taxa.tar.gz":
-			countTaxa++
+			if request.Method == http.MethodGet {
+				countTaxa++
+			}
 			_, _ = writer.Write([]byte("taxa"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)

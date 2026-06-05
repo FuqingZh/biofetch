@@ -69,7 +69,9 @@ func TestRunFetchUniRefDownloadsAndReuses(t *testing.T) {
 		case "/relnotes.txt":
 			_, _ = writer.Write([]byte("UniProt Release 2026_01\n"))
 		case "/uniref/uniref90/uniref90.fasta.gz":
-			countGetUniRef90++
+			if request.Method == http.MethodGet {
+				countGetUniRef90++
+			}
 			_, _ = writer.Write([]byte(">UniRef90_P12345 Cluster\nM\n"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)

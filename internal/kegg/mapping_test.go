@@ -92,7 +92,9 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 		case "/list/organism":
 			_, _ = writer.Write([]byte("T01001\thsa\tHomo sapiens\tEukaryotes;Animals\n"))
 		case "/conv/hsa/uniprot":
-			countConv++
+			if request.Method == http.MethodGet {
+				countConv++
+			}
 			_, _ = writer.Write([]byte("hsa:10458\tup:P12345\n"))
 		case "/link/pathway/ko":
 			_, _ = writer.Write([]byte("ko:K00001\tpath:map00010\n"))

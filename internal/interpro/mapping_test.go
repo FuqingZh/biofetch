@@ -116,7 +116,9 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 		case "/release_notes.txt":
 			_, _ = writer.Write([]byte("Release 108.0, 29th January 2026\n"))
 		case "/interpro.xml.gz":
-			countGetEntries++
+			if request.Method == http.MethodGet {
+				countGetEntries++
+			}
 			_, _ = writer.Write([]byte("<interprodb></interprodb>"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)

@@ -90,7 +90,9 @@ func TestRunFetchGMTDownloadsAndReuses(t *testing.T) {
 		case "/gmt/":
 			_, _ = writer.Write([]byte(`<a href="wikipathways-20260510-gmt-Homo_sapiens.gmt">hsa</a>`))
 		case "/gmt/wikipathways-20260510-gmt-Homo_sapiens.gmt":
-			countGMT++
+			if request.Method == http.MethodGet {
+				countGMT++
+			}
 			_, _ = writer.Write([]byte("WP1\tPathway\tA\tB\n"))
 		default:
 			t.Fatalf("unexpected path: %s", request.URL.Path)

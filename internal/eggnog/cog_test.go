@@ -80,7 +80,9 @@ func TestRunFetchCOGDownloadsAndReuses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/COG2024/data/cog-24.fun.tab":
-			countCategory++
+			if request.Method == http.MethodGet {
+				countCategory++
+			}
 			_, _ = writer.Write([]byte("J\tINFORMATION STORAGE AND PROCESSING\tTranslation, ribosomal structure and biogenesis\n"))
 		default:
 			t.Fatalf("path = %s", request.URL.Path)

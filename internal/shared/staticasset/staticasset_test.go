@@ -23,7 +23,9 @@ func (trace *traceBuffer) EmitStaticAssetTrace(event TraceEvent) {
 func TestFetchDownloadsAndReusesBySHA256(t *testing.T) {
 	countRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		countRequests++
+		if request.Method == http.MethodGet && request.Header.Get("Range") == "" {
+			countRequests++
+		}
 		_, _ = writer.Write([]byte("alpha"))
 	}))
 	defer server.Close()
@@ -125,7 +127,9 @@ func TestFetchDoesNotReuseSameSizeChangedContent(t *testing.T) {
 	body := "bravo"
 	countRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		countRequests++
+		if request.Method == http.MethodGet && request.Header.Get("Range") == "" {
+			countRequests++
+		}
 		_, _ = writer.Write([]byte(body))
 	}))
 	defer server.Close()
