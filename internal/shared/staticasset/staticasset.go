@@ -530,7 +530,7 @@ func downloadFileWithRetry(
 	for attempt := 1; attempt <= retryMax; attempt++ {
 		limiterRequest.Wait()
 		progress.startFile(asset)
-		if err := httpx.DownloadFileWithProgress(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
+		if err := httpx.DownloadFileWithResume(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
 			if err := os.Rename(filePart, fileOut); err != nil {
 				return fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)
 			}

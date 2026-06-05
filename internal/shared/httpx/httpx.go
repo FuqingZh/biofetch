@@ -110,6 +110,78 @@ func DownloadFileWithProgress(clientHTTP *http.Client, urlFile string, fileOut s
 	return nil
 }
 
+func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut string, progress DownloadProgressFunc) error {
+	bytesExisting := existingFileSize(fileOut)
+	request, err := http.NewRequest(http.MethodGet, urlFile, nil)
+	if err != nil {
+		return fmt.Errorf("create request %s: %w", urlFile, err)
+	}
+	if bytesExisting > 0 {
+		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", bytesExisting))
+	}
+
+	response, err := clientHTTP.Do(request)
+	if err != nil {
+		return fmt.Errorf("request %s: %w", urlFile, err)
+	}
+	defer response.Body.Close()
+
+	shouldAppend := false
+	bytesDoneStart := int64(0)
+	bytesTotal := response.ContentLength
+	switch {
+	case bytesExisting > 0 && response.StatusCode == http.StatusPartialContent:
+		shouldAppend = true
+		bytesDoneStart = bytesExisting
+		if response.ContentLength >= 0 {
+			bytesTotal = bytesExisting + response.ContentLength
+		}
+	case response.StatusCode >= 200 && response.StatusCode < 300:
+		shouldAppend = false
+	default:
+		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+	}
+
+	flagFile := os.O_CREATE | os.O_WRONLY
+	if shouldAppend {
+		flagFile |= os.O_APPEND
+	} else {
+		flagFile |= os.O_TRUNC
+	}
+	fileHandle, err := os.OpenFile(fileOut, flagFile, 0o644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", fileOut, err)
+	}
+
+	var reader io.Reader = response.Body
+	if progress != nil {
+		reader = &progressReader{
+			reader:     response.Body,
+			bytesDone:  bytesDoneStart,
+			bytesTotal: bytesTotal,
+			progress:   progress,
+		}
+		progress(bytesDoneStart, bytesTotal)
+	}
+	_, errCopy := io.Copy(fileHandle, reader)
+	errClose := fileHandle.Close()
+	if errCopy != nil {
+		return fmt.Errorf("write %s: %w", fileOut, errCopy)
+	}
+	if errClose != nil {
+		return fmt.Errorf("close %s: %w", fileOut, errClose)
+	}
+	return nil
+}
+
+func existingFileSize(filePath string) int64 {
+	infoFile, err := os.Stat(filePath)
+	if err != nil || infoFile.IsDir() {
+		return 0
+	}
+	return infoFile.Size()
+}
+
 type progressReader struct {
 	reader     io.Reader
 	bytesDone  int64
