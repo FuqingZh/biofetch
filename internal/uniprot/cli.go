@@ -66,7 +66,7 @@ func createDMNDRegisterCommand() *cobra.Command {
 func createKBCommand() *cobra.Command {
 	commandKB := &cobra.Command{
 		Use:           "kb",
-		Short:         "Manage UniProtKB FASTA raw assets",
+		Short:         "Manage UniProtKB raw assets",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -83,7 +83,7 @@ func createKBFetchCommand() *cobra.Command {
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
-		Short:         "Fetch UniProtKB FASTA raw assets and update manifest.lock",
+		Short:         "Fetch UniProtKB raw assets and update manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -100,14 +100,15 @@ func createKBFetchCommand() *cobra.Command {
 		"biofetch uniprot kb fetch --dir_out /data/uniprot --assets sprot",
 		"biofetch uniprot kb fetch --dir_out /data/uniprot --assets sprot,trembl --should_allow_large_assets",
 		"biofetch uniprot kb fetch --dir_out /data/uniprot --assets varsplic",
+		"biofetch uniprot kb fetch --dir_out /data/uniprot --assets sprot_dat,trembl_dat --should_allow_large_assets",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt release token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "UniProtKB FASTA assets: all|sprot|trembl|varsplic; omit or pass all to fetch all supported assets")
-	flags.BoolVar(&cfg.shouldAllowLargeAssets, "should_allow_large_assets", false, "Allow large UniProtKB FASTA assets")
+	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "UniProtKB assets: all|sprot|trembl|varsplic|sprot_dat|trembl_dat; omit or pass all to fetch all supported assets")
+	flags.BoolVar(&cfg.shouldAllowLargeAssets, "should_allow_large_assets", false, "Allow large UniProtKB assets")
 	flags.StringVar(&cfg.baseURLCurrentRelease, "base_url_current_release", cfg.baseURLCurrentRelease, "UniProt current_release base URL, including mirror URLs")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)

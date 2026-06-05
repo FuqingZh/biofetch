@@ -15,9 +15,11 @@ import (
 const kbLabel = "UniProtKB"
 
 var kbAssetFiles = map[string]string{
-	"sprot":    "uniprot_sprot.fasta.gz",
-	"trembl":   "uniprot_trembl.fasta.gz",
-	"varsplic": "uniprot_sprot_varsplic.fasta.gz",
+	"sprot":      "uniprot_sprot.fasta.gz",
+	"sprot_dat":  "uniprot_sprot.dat.gz",
+	"trembl":     "uniprot_trembl.fasta.gz",
+	"trembl_dat": "uniprot_trembl.dat.gz",
+	"varsplic":   "uniprot_sprot_varsplic.fasta.gz",
 }
 
 type kbConfig struct {
@@ -141,7 +143,7 @@ func sortedKBAssetNames() []string {
 
 func hasLargeKBAsset(assets []string) bool {
 	for _, asset := range assets {
-		if asset == "trembl" {
+		if asset == "trembl" || asset == "trembl_dat" {
 			return true
 		}
 	}
