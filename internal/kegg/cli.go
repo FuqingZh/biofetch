@@ -1,11 +1,9 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/confirm"
 	"biofetch/internal/shared/sets"
 	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strings"
@@ -122,11 +120,6 @@ func createMappingFetchCommand() *cobra.Command {
 			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateMappingFetchConfig(&cfg); err != nil {
 				return err
-			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllOrganismsDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
 			}
 			return runFetchMapping(&cfg)
 		},
@@ -265,11 +258,6 @@ func createPathwayFetchCommand() *cobra.Command {
 			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validatePathwayConfig(&cfg); err != nil {
 				return err
-			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllOrganismsDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
 			}
 			return runFetchPathway(&cfg)
 		},
@@ -558,11 +546,6 @@ func createBriteFetchCommand() *cobra.Command {
 			if err := validateBriteConfig(&cfg); err != nil {
 				return err
 			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllOrganismsDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
-			}
 			return runFetchBrite(&cfg)
 		},
 	}
@@ -769,15 +752,6 @@ func validateBriteConfig(cfg *briteConfig) error {
 		return fmt.Errorf("invalid catalog: %s", cfg.catalogCode)
 	}
 	return nil
-}
-
-func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
-	return confirm.RequireLiteral(
-		reader,
-		writer,
-		"Multi-organism download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all_organisms",
-	)
 }
 
 type orderedListInputSpec struct {

@@ -2,8 +2,6 @@ package geneontology
 
 import (
 	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/confirm"
-	"io"
 	"strings"
 	"time"
 
@@ -332,13 +330,4 @@ func validateOntologyConfig(cfg *ontologyConfig) error {
 		return err
 	}
 	return nil
-}
-
-func confirmAllOntologyDownload(reader io.Reader, writer io.Writer) error {
-	return confirm.RequireLiteral(
-		reader,
-		writer,
-		"Full ontology download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"all_assets",
-	)
 }

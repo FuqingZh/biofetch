@@ -2,9 +2,7 @@ package omnipath
 
 import (
 	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/confirm"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -83,11 +81,6 @@ func createEnzSubFetchCommand() *cobra.Command {
 			if err := validateEnzSubConfig(&cfg); err != nil {
 				return err
 			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllOrganismsDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
-			}
 			return runFetchEnzSub(&cfg)
 		},
 	}
@@ -139,11 +132,6 @@ func createInteractionsFetchCommand() *cobra.Command {
 			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
 			if err := validateInteractionsConfig(&cfg); err != nil {
 				return err
-			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllOrganismsDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
 			}
 			return runFetchInteractions(&cfg)
 		},
@@ -392,15 +380,6 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 		return fmt.Errorf("retry_wait_sec must be >= 0")
 	}
 	return nil
-}
-
-func confirmAllOrganismsDownload(reader io.Reader, writer io.Writer) error {
-	return confirm.RequireLiteral(
-		reader,
-		writer,
-		"Multi-organism download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all_organisms",
-	)
 }
 
 func parseOrganisms(valuesInput []string) ([]string, error) {

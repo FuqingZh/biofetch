@@ -2,9 +2,7 @@ package stringdb
 
 import (
 	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/confirm"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -70,11 +68,6 @@ func createFetchCommand() *cobra.Command {
 			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateConfig(cfg); err != nil {
 				return err
-			}
-			if cfg.shouldDownloadAll {
-				if err := confirmAllSpeciesDownload(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
-					return err
-				}
 			}
 			return runFetch(cfg)
 		},
@@ -243,13 +236,4 @@ func validateConfig(cfg *config) error {
 	}
 
 	return nil
-}
-
-func confirmAllSpeciesDownload(reader io.Reader, writer io.Writer) error {
-	return confirm.RequireLiteral(
-		reader,
-		writer,
-		"Full-species download may fetch a large number of files and consume substantial disk, time, and bandwidth.",
-		"should_download_all_organisms",
-	)
 }

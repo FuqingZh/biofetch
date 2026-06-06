@@ -172,7 +172,7 @@ func TestRunSyncGMTRehydratesManifest(t *testing.T) {
 	}
 }
 
-func TestRunFetchGMTAllSpeciesRequiresConfirmation(t *testing.T) {
+func TestRunFetchGMTAllSpeciesDoesNotRequireConfirmation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte(`<a href="wikipathways-20260510-gmt-Homo_sapiens.gmt">hsa</a>`))
 	}))
@@ -189,8 +189,8 @@ func TestRunFetchGMTAllSpeciesRequiresConfirmation(t *testing.T) {
 	cfg.ShouldDryRun = true
 	cfg.shouldDownloadAll = true
 	err := runFetchGMT(&cfg, strings.NewReader("no\n"), ioDiscard{})
-	if err == nil {
-		t.Fatal("runFetchGMT returned nil error without confirmation")
+	if err != nil {
+		t.Fatalf("runFetchGMT returned error: %v", err)
 	}
 }
 

@@ -2,7 +2,6 @@ package wikipathways
 
 import (
 	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/confirm"
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
@@ -73,11 +72,6 @@ func runFetchGMT(cfg *gmtConfig, readerConfirm io.Reader, writerConfirm io.Write
 	assetsSelected, err := resolveGMTAssets(assetsAvailable, cfg.speciesNames, cfg.shouldDownloadAll)
 	if err != nil {
 		return err
-	}
-	if cfg.shouldDownloadAll {
-		if err := confirmAllGMTDownload(readerConfirm, writerConfirm); err != nil {
-			return err
-		}
 	}
 	versionToken := deriveGMTVersionToken(assetsSelected)
 	source := buildGMTSource(versionToken, assetsSelected)
@@ -284,15 +278,6 @@ func downloadText(clientHTTP *http.Client, urlFile string, limiterRequest *httpx
 		return nil, fmt.Errorf("read %s: %w", urlFile, err)
 	}
 	return data, nil
-}
-
-func confirmAllGMTDownload(reader io.Reader, writer io.Writer) error {
-	return confirm.RequireLiteral(
-		reader,
-		writer,
-		"Full WikiPathways GMT download may fetch all species in the current release.",
-		"all_species",
-	)
 }
 
 func createDefaultGMTConfig() gmtConfig {

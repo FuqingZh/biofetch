@@ -111,33 +111,6 @@ func TestBuildManifestFile(t *testing.T) {
 	}
 }
 
-func TestConfirmAllSpeciesDownload(t *testing.T) {
-	var buffer bytes.Buffer
-	err := confirmAllSpeciesDownload(
-		strings.NewReader("should_download_all_organisms\n"),
-		&buffer,
-	)
-	if err != nil {
-		t.Fatalf("confirmAllSpeciesDownload returned error: %v", err)
-	}
-
-	assertContains(t, buffer.String(), "Full-species download may fetch a large number of files")
-	assertContains(t, buffer.String(), `Type "should_download_all_organisms" to continue.`)
-	assertContains(t, buffer.String(), "> ")
-}
-
-func TestConfirmAllSpeciesDownloadRejectsWrongInput(t *testing.T) {
-	err := confirmAllSpeciesDownload(
-		strings.NewReader("yes\n"),
-		&bytes.Buffer{},
-	)
-	if err == nil {
-		t.Fatal("confirmAllSpeciesDownload returned nil error for wrong confirmation text")
-	}
-
-	assertContains(t, err.Error(), `expected "should_download_all_organisms"`)
-}
-
 func TestBuildCompleteFileRecordsMergesExistingManifestAndDropsMissing(t *testing.T) {
 	dirVersion := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dirVersion, "raw", "7070"), 0o755); err != nil {

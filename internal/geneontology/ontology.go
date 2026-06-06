@@ -89,11 +89,6 @@ func runFetchOntology(cfg *ontologyConfig, readerConfirm io.Reader, writerConfir
 	if err != nil {
 		return err
 	}
-	if shouldConfirmAllOntologyDownload(assetsAvailable, assets) {
-		if err := confirmAllOntologyDownload(readerConfirm, writerConfirm); err != nil {
-			return err
-		}
-	}
 	cfg.version = source.version
 	cfg.VersionToken = source.versionToken
 
@@ -334,16 +329,6 @@ func resolveOntologyAssets(
 		return nil, fmt.Errorf("unknown ontology asset(s): %s", strings.Join(namesUnknown, ", "))
 	}
 	return assets, nil
-}
-
-func shouldConfirmAllOntologyDownload(
-	assetsAvailable []ontologyAsset,
-	assetsResolved []ontologyAsset,
-) bool {
-	if len(assetsAvailable) == 0 {
-		return false
-	}
-	return len(assetsResolved) == len(assetsAvailable)
 }
 
 func parseOntologyAssetNames(values []string) ([]string, error) {

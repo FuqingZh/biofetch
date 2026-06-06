@@ -504,27 +504,6 @@ func TestRunOntologyDownloadTasksCancelsQueuedWorkAfterError(t *testing.T) {
 	}
 }
 
-func TestConfirmAllOntologyDownload(t *testing.T) {
-	var buffer bytes.Buffer
-	err := confirmAllOntologyDownload(strings.NewReader("all_assets\n"), &buffer)
-	if err != nil {
-		t.Fatalf("confirmAllOntologyDownload returned error: %v", err)
-	}
-
-	assertContains(t, buffer.String(), "Full ontology download may fetch a large number of files")
-	assertContains(t, buffer.String(), `Type "all_assets" to continue.`)
-	assertContains(t, buffer.String(), "> ")
-}
-
-func TestConfirmAllOntologyDownloadRejectsWrongInput(t *testing.T) {
-	err := confirmAllOntologyDownload(strings.NewReader("yes\n"), &bytes.Buffer{})
-	if err == nil {
-		t.Fatal("confirmAllOntologyDownload returned nil error for wrong confirmation text")
-	}
-
-	assertContains(t, err.Error(), `expected "all_assets"`)
-}
-
 func TestValidateOntologyConfigRejectsInvalidVersionToken(t *testing.T) {
 	cfg := ontologyConfig{
 		DirOutConfig:       cliopt.DirOutConfig{DirOut: "/tmp/go"},
@@ -578,19 +557,6 @@ func TestValidateOntologyConfigAllowsAssetsOmitted(t *testing.T) {
 	err := validateOntologyConfig(&cfg)
 	if err != nil {
 		t.Fatalf("validateOntologyConfig returned error: %v", err)
-	}
-}
-
-func TestShouldConfirmAllOntologyDownload(t *testing.T) {
-	assetsAvailable := []ontologyAsset{
-		{name: "go-basic.obo", url: ontologyCurrentBaseURL + "go-basic.obo"},
-		{name: "go.obo", url: ontologyCurrentBaseURL + "go.obo"},
-	}
-	if !shouldConfirmAllOntologyDownload(assetsAvailable, assetsAvailable) {
-		t.Fatal("shouldConfirmAllOntologyDownload returned false for full asset set")
-	}
-	if shouldConfirmAllOntologyDownload(assetsAvailable, assetsAvailable[:1]) {
-		t.Fatal("shouldConfirmAllOntologyDownload returned true for partial asset set")
 	}
 }
 
