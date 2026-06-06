@@ -287,11 +287,10 @@ func fetchBriteAsset(
 	}
 
 	logf("downloading %s", filepath.Base(fileOut))
-	data, err := clientKegg.download(urlFile)
-	if err != nil {
+	if err := clientKegg.downloadFile(urlFile, fileOut); err != nil {
 		return briteRecord{}, err
 	}
-	return writeBriteFile(fileOut, pathRel, briteID, assetName, urlFile, data)
+	return buildBriteRecord(fileOut, pathRel, briteID, assetName, urlFile)
 }
 
 func writeBriteFile(

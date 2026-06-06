@@ -233,11 +233,10 @@ func runFetchCatalog(cfg *catalogConfig) error {
 	}
 	if !ok {
 		logf("downloading %s", keggCatalogFileName)
-		data, err := clientKegg.download(keggCatalogURL)
-		if err != nil {
+		if err := clientKegg.downloadFile(keggCatalogURL, fileOut); err != nil {
 			return err
 		}
-		record, err = writeCatalogFile(fileOut, pathRel, keggCatalogAsset, keggCatalogURL, data)
+		record, err = buildCatalogRecord(fileOut, pathRel, keggCatalogAsset, keggCatalogURL)
 		if err != nil {
 			return err
 		}
@@ -345,11 +344,10 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 		}
 		if !ok || recordCurrent.SHA256 != record.SHA256 {
 			logf("sync downloading %s", filepath.Base(filePath))
-			data, err := clientKegg.download(record.URL)
-			if err != nil {
+			if err := clientKegg.downloadFile(record.URL, filePath); err != nil {
 				return err
 			}
-			recordCurrent, err = writeCatalogFile(filePath, record.PathRel, record.Asset, record.URL, data)
+			recordCurrent, err = buildCatalogRecord(filePath, record.PathRel, record.Asset, record.URL)
 			if err != nil {
 				return err
 			}

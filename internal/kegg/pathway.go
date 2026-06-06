@@ -3,6 +3,7 @@ package kegg
 import (
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/logx"
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/tomlx"
 	"bufio"
@@ -21,9 +22,10 @@ import (
 )
 
 const (
-	baseURL              = "https://rest.kegg.jp"
-	defaultKEGGRetryMax  = 5
-	defaultKEGGRetryWait = 3 * time.Second
+	baseURL                  = "https://rest.kegg.jp"
+	defaultKEGGRetryMax      = 5
+	defaultKEGGRetryWait     = 3 * time.Second
+	pathwayInspectWorkersMax = 8
 )
 
 type pathwayRecord struct {
@@ -33,6 +35,40 @@ type pathwayRecord struct {
 	SHA256    string
 	Bytes     int64
 	URL       string
+}
+
+type pathwayFileInfo struct {
+	size  int64
+	isDir bool
+}
+
+type pathwayLocalPlanningStats struct {
+	expectedAssets       int
+	reusedManifestAssets int
+	rebuiltHashAssets    int
+	downloadAssets       int
+	elapsed              time.Duration
+}
+
+type pathwayAssetInspectTask struct {
+	pathwayID string
+	spec      pathwayAssetSpec
+}
+
+type pathwayAssetInspectResult struct {
+	record         pathwayRecord
+	task           pathwayAssetInspectTask
+	shouldDownload bool
+	wasManifest    bool
+	wasHash        bool
+}
+
+func (stats *pathwayLocalPlanningStats) add(other pathwayLocalPlanningStats) {
+	stats.expectedAssets += other.expectedAssets
+	stats.reusedManifestAssets += other.reusedManifestAssets
+	stats.rebuiltHashAssets += other.rebuiltHashAssets
+	stats.downloadAssets += other.downloadAssets
+	stats.elapsed += other.elapsed
 }
 
 type manifestFile struct {
@@ -100,14 +136,25 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		}
 	}
 
+	reuseIndex := map[string]pathwayRecord{}
+	if !cfg.shouldDryRun {
+		var err error
+		reuseIndex, err = buildPathwayManifestReuseIndex(fileManifest)
+		if err != nil {
+			return err
+		}
+	}
+
 	records := make([]pathwayRecord, 0)
+	statsPlanning := pathwayLocalPlanningStats{}
 	countPathways := 0
 	for _, scopeKey := range scopeKeys {
-		recordsScope, countScopePathways, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey)
+		recordsScope, countScopePathways, statsScope, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey, reuseIndex)
 		if err != nil {
 			return err
 		}
 		records = append(records, recordsScope...)
+		statsPlanning.add(statsScope)
 		countPathways += countScopePathways
 	}
 
@@ -145,6 +192,16 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	}
 
 	logf("done (files=%d, pathways=%d, scopes=%d)", len(recordsComplete), countPathways, len(scopeKeys))
+	if statsPlanning.expectedAssets > 0 {
+		logf(
+			"local planning: expected=%d reused_manifest=%d rebuilt_hash=%d scheduled_download=%d elapsed=%s",
+			statsPlanning.expectedAssets,
+			statsPlanning.reusedManifestAssets,
+			statsPlanning.rebuiltHashAssets,
+			statsPlanning.downloadAssets,
+			statsPlanning.elapsed.Round(time.Millisecond),
+		)
+	}
 	logf("manifest written: %s", fileManifest)
 	return nil
 }
@@ -212,7 +269,8 @@ func fetchPathwayScope(
 	cfg *pathwayConfig,
 	dirVersion string,
 	scopeKey string,
-) ([]pathwayRecord, int, error) {
+	reuseIndex map[string]pathwayRecord,
+) ([]pathwayRecord, int, pathwayLocalPlanningStats, error) {
 	cfgScope := *cfg
 	cfgScope.organismCode = scopeKey
 	cfgScope.shouldFetchReference = scopeKey == "reference"
@@ -221,16 +279,16 @@ func fetchPathwayScope(
 	dirTidyScope := filepath.Join(dirVersion, "tidy", scopeKey)
 	if !cfg.shouldDryRun {
 		if err := os.MkdirAll(dirRawScope, 0o755); err != nil {
-			return nil, 0, fmt.Errorf("create raw dir: %w", err)
+			return nil, 0, pathwayLocalPlanningStats{}, fmt.Errorf("create raw dir: %w", err)
 		}
 		if err := os.MkdirAll(dirTidyScope, 0o755); err != nil {
-			return nil, 0, fmt.Errorf("create tidy dir: %w", err)
+			return nil, 0, pathwayLocalPlanningStats{}, fmt.Errorf("create tidy dir: %w", err)
 		}
 	}
 
 	pathwayIDs, listContent, listURL, err := resolvePathwayIDs(clientKegg, &cfgScope)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, pathwayLocalPlanningStats{}, err
 	}
 
 	records := make([]pathwayRecord, 0, estimatePathwayRecordCapacity(cfg.assetNames, len(pathwayIDs)))
@@ -243,36 +301,81 @@ func fetchPathwayScope(
 		} else {
 			recordList, err := writeDownloadedFile(fileList, pathRelList, "", "pathway.list", listURL, listContent)
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, pathwayLocalPlanningStats{}, err
 			}
 			records = append(records, recordList)
 		}
 	}
 
+	tasksInspect := make([]pathwayAssetInspectTask, 0, estimatePathwayRecordCapacity(cfg.assetNames, len(pathwayIDs)))
 	for _, pathwayID := range pathwayIDs {
 		for _, assetSpec := range derivePathwayAssetSpecs(scopeKey, pathwayID, cfg.assetNames, dirRawScope) {
 			if cfg.shouldDryRun {
 				logf("[dry-run] %s -> %s", assetSpec.url, assetSpec.fileOut)
 				continue
 			}
+			tasksInspect = append(tasksInspect, pathwayAssetInspectTask{
+				pathwayID: pathwayID,
+				spec:      assetSpec,
+			})
+		}
+	}
 
-			recordAsset, err := fetchPathwayAsset(
-				clientKegg,
-				cfg.shouldOverwriteExisting,
-				assetSpec.fileOut,
-				assetSpec.pathRel,
-				pathwayID,
-				assetSpec.assetName,
-				assetSpec.url,
-			)
-			if err != nil {
-				return nil, 0, err
-			}
+	statsPlanning := pathwayLocalPlanningStats{expectedAssets: len(tasksInspect)}
+	if len(tasksInspect) == 0 {
+		return records, len(pathwayIDs), statsPlanning, nil
+	}
+
+	timePlanningStart := time.Now()
+	fileIndex, err := scanPathwayScopeFileIndex(dirRawScope)
+	if err != nil {
+		return nil, 0, pathwayLocalPlanningStats{}, err
+	}
+	resultsInspect, err := inspectPathwayAssetTasks(
+		tasksInspect,
+		cfg.shouldOverwriteExisting,
+		reuseIndex,
+		fileIndex,
+	)
+	if err != nil {
+		return nil, 0, pathwayLocalPlanningStats{}, err
+	}
+	statsPlanning.elapsed = time.Since(timePlanningStart)
+
+	for _, result := range resultsInspect {
+		switch {
+		case result.shouldDownload:
+			statsPlanning.downloadAssets++
+		case result.wasManifest:
+			statsPlanning.reusedManifestAssets++
+			records = append(records, result.record)
+		case result.wasHash:
+			statsPlanning.rebuiltHashAssets++
+			records = append(records, result.record)
+		}
+	}
+
+	for _, result := range resultsInspect {
+		if !result.shouldDownload {
+			continue
+		}
+		recordAsset, ok, err := downloadPathwayAsset(
+			clientKegg,
+			result.task.spec.fileOut,
+			result.task.spec.pathRel,
+			result.task.pathwayID,
+			result.task.spec.assetName,
+			result.task.spec.url,
+		)
+		if err != nil {
+			return nil, 0, pathwayLocalPlanningStats{}, err
+		}
+		if ok {
 			records = append(records, recordAsset)
 		}
 	}
 
-	return records, len(pathwayIDs), nil
+	return records, len(pathwayIDs), statsPlanning, nil
 }
 
 type pathwayAssetSpec struct {
@@ -396,24 +499,182 @@ func fetchPathwayAsset(
 	pathwayID string,
 	assetName string,
 	urlFile string,
-) (pathwayRecord, error) {
+) (pathwayRecord, bool, error) {
 	if !shouldOverwriteExisting {
-		recordExisting, ok, err := inspectExistingFile(fileOut, pathRel, pathwayID, assetName, urlFile)
+		result, err := inspectPathwayAssetTask(
+			pathwayAssetInspectTask{
+				pathwayID: pathwayID,
+				spec: pathwayAssetSpec{
+					assetName: assetName,
+					fileOut:   fileOut,
+					pathRel:   pathRel,
+					url:       urlFile,
+				},
+			},
+			false,
+			nil,
+			nil,
+		)
 		if err != nil {
-			return pathwayRecord{}, err
+			return pathwayRecord{}, false, err
 		}
-		if ok {
+		if !result.shouldDownload {
 			logf("using existing %s", filepath.Base(fileOut))
-			return recordExisting, nil
+			return result.record, true, nil
 		}
 	}
 
+	return downloadPathwayAsset(clientKegg, fileOut, pathRel, pathwayID, assetName, urlFile)
+}
+
+func downloadPathwayAsset(
+	clientKegg *keggClient,
+	fileOut string,
+	pathRel string,
+	pathwayID string,
+	assetName string,
+	urlFile string,
+) (pathwayRecord, bool, error) {
 	logf("downloading %s", filepath.Base(fileOut))
-	data, err := clientKegg.download(urlFile)
-	if err != nil {
-		return pathwayRecord{}, err
+	if err := clientKegg.downloadFile(urlFile, fileOut); err != nil {
+		if httpx.IsUnexpectedStatus(err, http.StatusNotFound) {
+			logf("missing %s (%s), skipping", filepath.Base(fileOut), urlFile)
+			return pathwayRecord{}, false, nil
+		}
+		return pathwayRecord{}, false, err
 	}
-	return writeDownloadedFile(fileOut, pathRel, pathwayID, assetName, urlFile, data)
+	record, err := buildPathwayRecord(fileOut, pathRel, pathwayID, assetName, urlFile)
+	return record, err == nil, err
+}
+
+func inspectPathwayAssetTasks(
+	tasks []pathwayAssetInspectTask,
+	shouldOverwriteExisting bool,
+	reuseIndex map[string]pathwayRecord,
+	fileIndex map[string]pathwayFileInfo,
+) ([]pathwayAssetInspectResult, error) {
+	return parallel.MapOrderedWithWorkers(
+		tasks,
+		pathwayInspectWorkersMax,
+		func(task pathwayAssetInspectTask) (pathwayAssetInspectResult, error) {
+			return inspectPathwayAssetTask(task, shouldOverwriteExisting, reuseIndex, fileIndex)
+		},
+	)
+}
+
+func inspectPathwayAssetTask(
+	task pathwayAssetInspectTask,
+	shouldOverwriteExisting bool,
+	reuseIndex map[string]pathwayRecord,
+	fileIndex map[string]pathwayFileInfo,
+) (pathwayAssetInspectResult, error) {
+	result := pathwayAssetInspectResult{
+		task:           task,
+		shouldDownload: true,
+	}
+	if shouldOverwriteExisting {
+		return result, nil
+	}
+
+	fileInfo, ok, err := lookupPathwayFileInfo(task.spec.fileOut, fileIndex)
+	if err != nil {
+		return pathwayAssetInspectResult{}, err
+	}
+	if !ok || fileInfo.isDir || fileInfo.size <= 0 {
+		return result, nil
+	}
+
+	if record, ok := reusePathwayManifestRecord(task.spec.pathRel, fileInfo, reuseIndex); ok {
+		result.record = record
+		result.shouldDownload = false
+		result.wasManifest = true
+		return result, nil
+	}
+
+	record, ok, err := inspectExistingFile(
+		task.spec.fileOut,
+		task.spec.pathRel,
+		task.pathwayID,
+		task.spec.assetName,
+		task.spec.url,
+	)
+	if err != nil {
+		return pathwayAssetInspectResult{}, err
+	}
+	if ok {
+		result.record = record
+		result.shouldDownload = false
+		result.wasHash = true
+	}
+	return result, nil
+}
+
+func reusePathwayManifestRecord(
+	pathRel string,
+	fileInfo pathwayFileInfo,
+	reuseIndex map[string]pathwayRecord,
+) (pathwayRecord, bool) {
+	if len(reuseIndex) == 0 {
+		return pathwayRecord{}, false
+	}
+	record, ok := reuseIndex[pathRel]
+	if !ok {
+		return pathwayRecord{}, false
+	}
+	if record.SHA256 == "" || record.Bytes <= 0 || record.Bytes != fileInfo.size {
+		return pathwayRecord{}, false
+	}
+	return record, true
+}
+
+func lookupPathwayFileInfo(filePath string, fileIndex map[string]pathwayFileInfo) (pathwayFileInfo, bool, error) {
+	if fileIndex != nil {
+		info, ok := fileIndex[filepath.Base(filePath)]
+		return info, ok, nil
+	}
+	infoFile, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return pathwayFileInfo{}, false, nil
+		}
+		return pathwayFileInfo{}, false, fmt.Errorf("stat existing file: %w", err)
+	}
+	return pathwayFileInfo{size: infoFile.Size(), isDir: infoFile.IsDir()}, true, nil
+}
+
+func scanPathwayScopeFileIndex(dirRawScope string) (map[string]pathwayFileInfo, error) {
+	entries, err := os.ReadDir(dirRawScope)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]pathwayFileInfo{}, nil
+		}
+		return nil, fmt.Errorf("scan pathway scope dir %s: %w", dirRawScope, err)
+	}
+
+	index := make(map[string]pathwayFileInfo, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("stat pathway scope entry %s: %w", filepath.Join(dirRawScope, entry.Name()), err)
+		}
+		index[entry.Name()] = pathwayFileInfo{size: info.Size(), isDir: info.IsDir()}
+	}
+	return index, nil
+}
+
+func buildPathwayManifestReuseIndex(fileManifest string) (map[string]pathwayRecord, error) {
+	records, err := readExistingPathwayRecords(fileManifest)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]pathwayRecord, len(records))
+	for _, record := range records {
+		if record.PathRel == "" {
+			continue
+		}
+		index[record.PathRel] = record
+	}
+	return index, nil
 }
 
 func writeDownloadedFile(
@@ -733,6 +994,54 @@ func (client *keggClient) download(urlFile string) ([]byte, error) {
 	return nil, fmt.Errorf("request %s: exhausted retries", urlFile)
 }
 
+func (client *keggClient) downloadFile(urlFile string, fileOut string) error {
+	for attempt := 1; attempt <= client.retryMax; attempt++ {
+		shouldRetry, err := client.downloadFileOnce(urlFile, fileOut)
+		if err == nil {
+			return nil
+		}
+		if !shouldRetry || attempt == client.retryMax {
+			return err
+		}
+		if client.retryWait > 0 {
+			logf(
+				"request failed (%d/%d), retrying in %s: %v",
+				attempt,
+				client.retryMax,
+				client.retryWait,
+				err,
+			)
+			time.Sleep(client.retryWait)
+			continue
+		}
+		logf("request failed (%d/%d), retrying: %v", attempt, client.retryMax, err)
+	}
+	return fmt.Errorf("request %s: exhausted retries", urlFile)
+}
+
+func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool, error) {
+	if client.requestInterval > 0 && !client.timeLastRequest.IsZero() {
+		wait := client.requestInterval - time.Since(client.timeLastRequest)
+		if wait > 0 {
+			time.Sleep(wait)
+		}
+	}
+	filePart := fileOut + ".part"
+	err := httpx.DownloadFileWithResume(client.clientHTTP, urlFile, filePart, nil)
+	client.timeLastRequest = time.Now()
+	if err != nil {
+		var statusErr httpx.UnexpectedStatusError
+		if errors.As(err, &statusErr) {
+			return isRetryableKEGGStatus(statusErr.Code), err
+		}
+		return isRetryableKEGGError(err), err
+	}
+	if err := os.Rename(filePart, fileOut); err != nil {
+		return false, fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)
+	}
+	return false, nil
+}
+
 func (client *keggClient) downloadOnce(urlFile string) ([]byte, bool, error) {
 	if client.requestInterval > 0 && !client.timeLastRequest.IsZero() {
 		wait := client.requestInterval - time.Since(client.timeLastRequest)
@@ -749,7 +1058,7 @@ func (client *keggClient) downloadOnce(urlFile string) ([]byte, bool, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, isRetryableKEGGStatus(response.StatusCode), fmt.Errorf("request %s: unexpected status %s", urlFile, response.Status)
+		return nil, isRetryableKEGGStatus(response.StatusCode), httpx.UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
 	}
 
 	data, err := io.ReadAll(response.Body)

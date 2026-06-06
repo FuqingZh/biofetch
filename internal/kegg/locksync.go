@@ -106,11 +106,10 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 
 		if shouldDownload {
 			logf("sync downloading %s", filepath.Base(filePath))
-			data, err := clientKegg.download(record.URL)
-			if err != nil {
+			if err := clientKegg.downloadFile(record.URL, filePath); err != nil {
 				return err
 			}
-			recordCurrent, err := writeDownloadedFile(filePath, record.PathRel, record.PathwayID, record.Asset, record.URL, data)
+			recordCurrent, err := buildPathwayRecord(filePath, record.PathRel, record.PathwayID, record.Asset, record.URL)
 			if err != nil {
 				return err
 			}
@@ -223,11 +222,10 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 
 		if shouldDownload {
 			logf("sync downloading %s", filepath.Base(filePath))
-			data, err := clientKegg.download(record.URL)
-			if err != nil {
+			if err := clientKegg.downloadFile(record.URL, filePath); err != nil {
 				return err
 			}
-			recordCurrent, err := writeBriteFile(filePath, record.PathRel, record.BriteID, record.Asset, record.URL, data)
+			recordCurrent, err := buildBriteRecord(filePath, record.PathRel, record.BriteID, record.Asset, record.URL)
 			if err != nil {
 				return err
 			}

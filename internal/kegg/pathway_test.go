@@ -2,6 +2,8 @@ package kegg
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -103,6 +105,179 @@ func TestDerivePathwayAssetSpecs(t *testing.T) {
 	}
 	if specs[2].assetName != "pathway.image" || specs[2].fileOut != "/tmp/raw/hsa/hsa00010.png" {
 		t.Fatalf("image spec = %#v", specs[2])
+	}
+}
+
+func TestFetchPathwayAssetSkipsStatus404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "missing", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "vmo00999.kgml")
+	clientKegg := createKEGGClient(server.Client(), 0, 1, 0)
+	record, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/vmo/vmo00999.kgml",
+		"vmo00999",
+		"pathway.kgml",
+		server.URL+"/get/vmo00999/kgml",
+	)
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, record = %#v", record)
+	}
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestInspectPathwayAssetTaskReusesManifestWhenSizeMatches(t *testing.T) {
+	dirTemp := t.TempDir()
+	fileOut := filepath.Join(dirTemp, "hsa00010.txt")
+	if err := os.WriteFile(fileOut, []byte("new-content"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	pathRel := "raw/hsa/hsa00010.txt"
+	recordManifest := pathwayRecord{
+		PathwayID: "hsa00010",
+		Asset:     "pathway.entry",
+		PathRel:   pathRel,
+		SHA256:    "manifest-sha",
+		Bytes:     int64(len("new-content")),
+		URL:       "https://rest.kegg.jp/get/hsa00010",
+	}
+
+	result, err := inspectPathwayAssetTask(
+		pathwayAssetInspectTask{
+			pathwayID: "hsa00010",
+			spec: pathwayAssetSpec{
+				assetName: "pathway.entry",
+				fileOut:   fileOut,
+				pathRel:   pathRel,
+				url:       "https://rest.kegg.jp/get/hsa00010",
+			},
+		},
+		false,
+		map[string]pathwayRecord{pathRel: recordManifest},
+		map[string]pathwayFileInfo{"hsa00010.txt": {size: int64(len("new-content"))}},
+	)
+	if err != nil {
+		t.Fatalf("inspectPathwayAssetTask returned error: %v", err)
+	}
+	if result.shouldDownload || !result.wasManifest || result.wasHash {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.record.SHA256 != "manifest-sha" {
+		t.Fatalf("result.record.SHA256 = %q, want manifest-sha", result.record.SHA256)
+	}
+}
+
+func TestInspectPathwayAssetTaskFallsBackToHashWhenManifestSizeDiffers(t *testing.T) {
+	dirTemp := t.TempDir()
+	fileOut := filepath.Join(dirTemp, "hsa00010.txt")
+	content := []byte("entry")
+	if err := os.WriteFile(fileOut, content, 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	pathRel := "raw/hsa/hsa00010.txt"
+	result, err := inspectPathwayAssetTask(
+		pathwayAssetInspectTask{
+			pathwayID: "hsa00010",
+			spec: pathwayAssetSpec{
+				assetName: "pathway.entry",
+				fileOut:   fileOut,
+				pathRel:   pathRel,
+				url:       "https://rest.kegg.jp/get/hsa00010",
+			},
+		},
+		false,
+		map[string]pathwayRecord{
+			pathRel: {
+				PathwayID: "hsa00010",
+				Asset:     "pathway.entry",
+				PathRel:   pathRel,
+				SHA256:    "manifest-sha",
+				Bytes:     999,
+				URL:       "https://rest.kegg.jp/get/hsa00010",
+			},
+		},
+		map[string]pathwayFileInfo{"hsa00010.txt": {size: int64(len(content))}},
+	)
+	if err != nil {
+		t.Fatalf("inspectPathwayAssetTask returned error: %v", err)
+	}
+	if result.shouldDownload || result.wasManifest || !result.wasHash {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.record.SHA256 == "manifest-sha" || result.record.SHA256 == "" {
+		t.Fatalf("result.record.SHA256 = %q", result.record.SHA256)
+	}
+}
+
+func TestScanPathwayScopeFileIndexTreatsMissingDirAsEmpty(t *testing.T) {
+	index, err := scanPathwayScopeFileIndex(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("scanPathwayScopeFileIndex returned error: %v", err)
+	}
+	if len(index) != 0 {
+		t.Fatalf("len(index) = %d, want 0", len(index))
+	}
+}
+
+func TestInspectPathwayAssetTasksPreservesOrder(t *testing.T) {
+	dirTemp := t.TempDir()
+	fileA := filepath.Join(dirTemp, "hsa00010.txt")
+	fileB := filepath.Join(dirTemp, "hsa00020.txt")
+	if err := os.WriteFile(fileA, []byte("a"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	if err := os.WriteFile(fileB, []byte("bb"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	results, err := inspectPathwayAssetTasks(
+		[]pathwayAssetInspectTask{
+			{
+				pathwayID: "hsa00010",
+				spec: pathwayAssetSpec{
+					assetName: "pathway.entry",
+					fileOut:   fileA,
+					pathRel:   "raw/hsa/hsa00010.txt",
+					url:       "https://rest.kegg.jp/get/hsa00010",
+				},
+			},
+			{
+				pathwayID: "hsa00020",
+				spec: pathwayAssetSpec{
+					assetName: "pathway.entry",
+					fileOut:   fileB,
+					pathRel:   "raw/hsa/hsa00020.txt",
+					url:       "https://rest.kegg.jp/get/hsa00020",
+				},
+			},
+		},
+		false,
+		nil,
+		map[string]pathwayFileInfo{
+			"hsa00010.txt": {size: 1},
+			"hsa00020.txt": {size: 2},
+		},
+	)
+	if err != nil {
+		t.Fatalf("inspectPathwayAssetTasks returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0].record.PathwayID != "hsa00010" || results[1].record.PathwayID != "hsa00020" {
+		t.Fatalf("results order = %#v", results)
 	}
 }
 
