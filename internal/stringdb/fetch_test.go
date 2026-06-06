@@ -262,6 +262,49 @@ func TestRunDownloadTasksPreservesOrderWithWorkers(t *testing.T) {
 	}
 }
 
+func TestDownloadFileWithRetryResumesPartialFile(t *testing.T) {
+	var gotRange atomic.Value
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		gotRange.Store(request.Header.Get("Range"))
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write([]byte("bar"))
+	}))
+	defer serverHTTP.Close()
+
+	dirTemp := t.TempDir()
+	fileOut := filepath.Join(dirTemp, "asset.txt")
+	filePart := fileOut + ".part"
+	if err := os.WriteFile(filePart, []byte("foo"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+
+	err := downloadFileWithRetry(
+		serverHTTP.Client(),
+		serverHTTP.URL+"/asset.txt",
+		fileOut,
+		1,
+		0,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("downloadFileWithRetry returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(fileOut)
+	if err != nil {
+		t.Fatalf("os.ReadFile returned error: %v", err)
+	}
+	if string(data) != "foobar" {
+		t.Fatalf("file content = %q, want %q", string(data), "foobar")
+	}
+	if gotRange.Load() != "bytes=3-" {
+		t.Fatalf("Range = %#v, want bytes=3-", gotRange.Load())
+	}
+	if _, err := os.Stat(filePart); !os.IsNotExist(err) {
+		t.Fatalf("partial file still exists: %v", err)
+	}
+}
+
 func TestRunDownloadTasksCancelsQueuedWorkAfterError(t *testing.T) {
 	var countThird atomic.Int32
 

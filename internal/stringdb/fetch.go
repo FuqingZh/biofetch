@@ -449,7 +449,7 @@ func downloadFileWithRetry(
 }
 
 func downloadFile(clientHTTP *http.Client, urlFile string, fileOut string) error {
-	return httpx.DownloadFile(clientHTTP, urlFile, fileOut)
+	return httpx.DownloadFileWithResume(clientHTTP, urlFile, fileOut, nil)
 }
 
 func calculateSHA256ForFile(filePath string) (string, error) {
