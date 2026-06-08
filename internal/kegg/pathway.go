@@ -537,14 +537,25 @@ func downloadPathwayAsset(
 ) (pathwayRecord, bool, error) {
 	logf("downloading %s", filepath.Base(fileOut))
 	if err := clientKegg.downloadFile(urlFile, fileOut); err != nil {
-		if httpx.IsUnexpectedStatus(err, http.StatusNotFound) {
-			logf("missing %s (%s), skipping", filepath.Base(fileOut), urlFile)
+		if shouldSkipPathwayDownloadStatus(assetName, err) {
+			logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
 			return pathwayRecord{}, false, nil
 		}
 		return pathwayRecord{}, false, err
 	}
 	record, err := buildPathwayRecord(fileOut, pathRel, pathwayID, assetName, urlFile)
 	return record, err == nil, err
+}
+
+func shouldSkipPathwayDownloadStatus(assetName string, err error) bool {
+	if assetName == "pathway.entry" {
+		return false
+	}
+	if assetName != "pathway.kgml" && assetName != "pathway.conf" && assetName != "pathway.image" {
+		return false
+	}
+	return httpx.IsUnexpectedStatus(err, http.StatusNotFound) ||
+		httpx.IsUnexpectedStatus(err, http.StatusForbidden)
 }
 
 func inspectPathwayAssetTasks(

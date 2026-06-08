@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/httpx"
 	"bytes"
 	"net/http"
 	"net/http/httptest"
@@ -108,7 +109,7 @@ func TestDerivePathwayAssetSpecs(t *testing.T) {
 	}
 }
 
-func TestFetchPathwayAssetSkipsStatus404(t *testing.T) {
+func TestFetchPathwayKGMLSkipsStatus404(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "missing", http.StatusNotFound)
 	}))
@@ -133,6 +134,146 @@ func TestFetchPathwayAssetSkipsStatus404(t *testing.T) {
 	}
 	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
 		t.Fatalf("file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestFetchPathwayEntryDoesNotSkipStatus404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "missing", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "vmo00999.txt")
+	clientKegg := createKEGGClient(server.Client(), 0, 1, 0)
+	_, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/vmo/vmo00999.txt",
+		"vmo00999",
+		"pathway.entry",
+		server.URL+"/get/vmo00999",
+	)
+	if err == nil {
+		t.Fatal("fetchPathwayAsset returned nil error")
+	}
+	if ok {
+		t.Fatal("ok = true")
+	}
+	if !httpx.IsUnexpectedStatus(err, http.StatusNotFound) {
+		t.Fatalf("error = %v, want 404", err)
+	}
+}
+
+func TestFetchPathwayKGMLSkipsStatus403(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "vibr00541.kgml")
+	clientKegg := createKEGGClient(server.Client(), 0, 1, 0)
+	record, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/vibr/vibr00541.kgml",
+		"vibr00541",
+		"pathway.kgml",
+		server.URL+"/get/vibr00541/kgml",
+	)
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, record = %#v", record)
+	}
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestFetchPathwayConfSkipsStatus403(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "vibr00541.conf")
+	clientKegg := createKEGGClient(server.Client(), 0, 1, 0)
+	record, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/vibr/vibr00541.conf",
+		"vibr00541",
+		"pathway.conf",
+		server.URL+"/get/vibr00541/conf",
+	)
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, record = %#v", record)
+	}
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestFetchPathwayImageSkipsStatus403(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "vibr00541.png")
+	clientKegg := createKEGGClient(server.Client(), 0, 1, 0)
+	record, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/vibr/vibr00541.png",
+		"vibr00541",
+		"pathway.image",
+		server.URL+"/get/vibr00541/image",
+	)
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, record = %#v", record)
+	}
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("file exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestFetchPathwayEntryDoesNotSkipStatus403(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "vibr00541.txt")
+	clientKegg := createKEGGClient(server.Client(), 0, 1, 0)
+	_, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/vibr/vibr00541.txt",
+		"vibr00541",
+		"pathway.entry",
+		server.URL+"/get/vibr00541",
+	)
+	if err == nil {
+		t.Fatal("fetchPathwayAsset returned nil error")
+	}
+	if ok {
+		t.Fatal("ok = true")
+	}
+	if !httpx.IsUnexpectedStatus(err, http.StatusForbidden) {
+		t.Fatalf("error = %v, want 403", err)
 	}
 }
 
