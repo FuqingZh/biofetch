@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -274,6 +275,72 @@ func TestFetchPathwayEntryDoesNotSkipStatus403(t *testing.T) {
 	}
 	if !httpx.IsUnexpectedStatus(err, http.StatusForbidden) {
 		t.Fatalf("error = %v, want 403", err)
+	}
+}
+
+func TestFetchPathwayEntryRetriesStatus403ThenSucceeds(t *testing.T) {
+	var count atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if count.Add(1) < 3 {
+			http.Error(writer, "forbidden", http.StatusForbidden)
+			return
+		}
+		_, _ = writer.Write([]byte("ENTRY       hsa03460\n"))
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "hsa03460.txt")
+	clientKegg := createKEGGClient(server.Client(), 0, 3, 0)
+	record, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/hsa/hsa03460.txt",
+		"hsa03460",
+		"pathway.entry",
+		server.URL+"/get/hsa03460",
+	)
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, record = %#v", record)
+	}
+	if count.Load() != 4 {
+		t.Fatalf("count = %d, want 4", count.Load())
+	}
+}
+
+func TestFetchPathwayEntryExhaustsStatus403Retries(t *testing.T) {
+	var count atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		count.Add(1)
+		http.Error(writer, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	fileOut := filepath.Join(t.TempDir(), "hsa03460.txt")
+	clientKegg := createKEGGClient(server.Client(), 0, 2, 0)
+	_, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/hsa/hsa03460.txt",
+		"hsa03460",
+		"pathway.entry",
+		server.URL+"/get/hsa03460",
+	)
+	if err == nil {
+		t.Fatal("fetchPathwayAsset returned nil error")
+	}
+	if ok {
+		t.Fatal("ok = true")
+	}
+	if !httpx.IsUnexpectedStatus(err, http.StatusForbidden) {
+		t.Fatalf("error = %v, want 403", err)
+	}
+	if count.Load() != 4 {
+		t.Fatalf("count = %d, want 4", count.Load())
 	}
 }
 

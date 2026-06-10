@@ -535,16 +535,34 @@ func downloadPathwayAsset(
 	assetName string,
 	urlFile string,
 ) (pathwayRecord, bool, error) {
-	logf("downloading %s", filepath.Base(fileOut))
-	if err := clientKegg.downloadFile(urlFile, fileOut); err != nil {
-		if shouldSkipPathwayDownloadStatus(assetName, err) {
-			logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
-			return pathwayRecord{}, false, nil
+	for attempt := 1; attempt <= clientKegg.retryMax; attempt++ {
+		logf("downloading %s", filepath.Base(fileOut))
+		if err := clientKegg.downloadFile(urlFile, fileOut); err != nil {
+			if shouldSkipPathwayDownloadStatus(assetName, err) {
+				logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
+				return pathwayRecord{}, false, nil
+			}
+			if shouldRetryPathwayDownloadStatus(assetName, err) && attempt < clientKegg.retryMax {
+				if clientKegg.retryWait > 0 {
+					logf(
+						"request failed (%d/%d), retrying in %s: %v",
+						attempt,
+						clientKegg.retryMax,
+						clientKegg.retryWait,
+						err,
+					)
+					time.Sleep(clientKegg.retryWait)
+				} else {
+					logf("request failed (%d/%d), retrying: %v", attempt, clientKegg.retryMax, err)
+				}
+				continue
+			}
+			return pathwayRecord{}, false, err
 		}
-		return pathwayRecord{}, false, err
+		record, err := buildPathwayRecord(fileOut, pathRel, pathwayID, assetName, urlFile)
+		return record, err == nil, err
 	}
-	record, err := buildPathwayRecord(fileOut, pathRel, pathwayID, assetName, urlFile)
-	return record, err == nil, err
+	return pathwayRecord{}, false, fmt.Errorf("request %s: exhausted retries", urlFile)
 }
 
 func shouldSkipPathwayDownloadStatus(assetName string, err error) bool {
@@ -556,6 +574,13 @@ func shouldSkipPathwayDownloadStatus(assetName string, err error) bool {
 	}
 	return httpx.IsUnexpectedStatus(err, http.StatusNotFound) ||
 		httpx.IsUnexpectedStatus(err, http.StatusForbidden)
+}
+
+func shouldRetryPathwayDownloadStatus(assetName string, err error) bool {
+	if assetName != "pathway.entry" {
+		return false
+	}
+	return httpx.IsUnexpectedStatus(err, http.StatusForbidden)
 }
 
 func inspectPathwayAssetTasks(
