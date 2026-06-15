@@ -23,6 +23,10 @@ type DryRunConfig struct {
 	ShouldDryRun bool
 }
 
+type LogConfig struct {
+	DirLogs string
+}
+
 type ProgressConfig struct {
 	ShouldDisableProgress bool
 }
@@ -56,6 +60,10 @@ func BindVersionFlag(flags *pflag.FlagSet, cfg *VersionConfig, usage string) {
 
 func BindDryRunFlag(flags *pflag.FlagSet, cfg *DryRunConfig, usage string) {
 	flags.BoolVar(&cfg.ShouldDryRun, "should_dry_run", cfg.ShouldDryRun, usage)
+}
+
+func BindLogDirFlag(flags *pflag.FlagSet, cfg *LogConfig, usage string) {
+	flags.StringVar(&cfg.DirLogs, "dir_logs", cfg.DirLogs, usage)
 }
 
 func BindProgressFlag(flags *pflag.FlagSet, cfg *ProgressConfig, usage string) {

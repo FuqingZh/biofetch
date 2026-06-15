@@ -205,6 +205,10 @@ func Fetch(source Source, options Options, trace TraceSink) error {
 	return nil
 }
 
+func DeriveVersionDir(dirOut string, source Source) string {
+	return buildVersionDir(dirOut, source)
+}
+
 func Lock(source Source, options Options, trace TraceSink) error {
 	if err := validateSourceIdentity(source); err != nil {
 		return err
