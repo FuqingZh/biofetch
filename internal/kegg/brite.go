@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/tomlx"
 	"bufio"
@@ -64,8 +65,13 @@ func runFetchBrite(cfg *briteConfig) error {
 	cfg.version = cfg.versionToken
 	cfg.sourceRelease = sourceReleaseStart
 	cfg.sourceReleaseStart = sourceReleaseStart
-
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	if cfg.shouldDryRun {

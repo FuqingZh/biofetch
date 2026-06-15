@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 type keggLockConfig struct {
 	dirOut          string
+	dirLogs         string
 	versionToken    string
 	requestInterval time.Duration
 	shouldDryRun    bool
@@ -20,6 +22,7 @@ type keggLockConfig struct {
 
 type keggSyncConfig struct {
 	dirOut                  string
+	dirLogs                 string
 	versionToken            string
 	ruleExisting            string
 	shouldOverwriteExisting bool
@@ -31,6 +34,11 @@ type keggSyncConfig struct {
 func runLockPathway(cfg *keggLockConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	records, err := scanPathwayRecords(dirVersion)
 	if err != nil {
@@ -59,6 +67,11 @@ func runLockPathway(cfg *keggLockConfig) error {
 func runSyncPathway(cfg *keggSyncConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "sync", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	manifestExisting, err := readExistingPathwayManifest(fileManifest)
 	if err != nil {
@@ -147,6 +160,11 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 func runLockBrite(cfg *keggLockConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	records, err := scanBriteRecords(dirVersion)
 	if err != nil {
@@ -175,6 +193,11 @@ func runLockBrite(cfg *keggLockConfig) error {
 func runSyncBrite(cfg *keggSyncConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "sync", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	manifestExisting, err := readExistingBriteManifest(fileManifest)
 	if err != nil {

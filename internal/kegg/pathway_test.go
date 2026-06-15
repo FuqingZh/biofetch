@@ -250,7 +250,7 @@ func TestFetchPathwayImageSkipsStatus403(t *testing.T) {
 	}
 }
 
-func TestFetchPathwayEntryDoesNotSkipStatus403(t *testing.T) {
+func TestFetchPathwayEntryContinuesAfterSingleStatus403(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "forbidden", http.StatusForbidden)
 	}))
@@ -267,21 +267,22 @@ func TestFetchPathwayEntryDoesNotSkipStatus403(t *testing.T) {
 		"pathway.entry",
 		server.URL+"/get/vibr00541",
 	)
-	if err == nil {
-		t.Fatal("fetchPathwayAsset returned nil error")
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
 	}
 	if ok {
 		t.Fatal("ok = true")
 	}
-	if !httpx.IsUnexpectedStatus(err, http.StatusForbidden) {
-		t.Fatalf("error = %v, want 403", err)
-	}
 }
 
 func TestFetchPathwayEntryRetriesStatus403ThenSucceeds(t *testing.T) {
-	var count atomic.Int32
+	var countGET atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if count.Add(1) < 3 {
+		if request.Method != http.MethodGet {
+			http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if countGET.Add(1) < 3 {
 			http.Error(writer, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -306,15 +307,19 @@ func TestFetchPathwayEntryRetriesStatus403ThenSucceeds(t *testing.T) {
 	if !ok {
 		t.Fatalf("ok = false, record = %#v", record)
 	}
-	if count.Load() != 4 {
-		t.Fatalf("count = %d, want 4", count.Load())
+	if countGET.Load() != 3 {
+		t.Fatalf("countGET = %d, want 3", countGET.Load())
 	}
 }
 
-func TestFetchPathwayEntryExhaustsStatus403Retries(t *testing.T) {
-	var count atomic.Int32
+func TestFetchPathwayEntryExhaustsStatus403RetriesAndContinues(t *testing.T) {
+	var countGET atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		count.Add(1)
+		if request.Method != http.MethodGet {
+			http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		countGET.Add(1)
 		http.Error(writer, "forbidden", http.StatusForbidden)
 	}))
 	defer server.Close()
@@ -330,17 +335,22 @@ func TestFetchPathwayEntryExhaustsStatus403Retries(t *testing.T) {
 		"pathway.entry",
 		server.URL+"/get/hsa03460",
 	)
-	if err == nil {
-		t.Fatal("fetchPathwayAsset returned nil error")
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
 	}
 	if ok {
 		t.Fatal("ok = true")
 	}
-	if !httpx.IsUnexpectedStatus(err, http.StatusForbidden) {
-		t.Fatalf("error = %v, want 403", err)
+	if countGET.Load() != 2 {
+		t.Fatalf("countGET = %d, want 2", countGET.Load())
 	}
-	if count.Load() != 4 {
-		t.Fatalf("count = %d, want 4", count.Load())
+}
+
+func TestChunkStrings(t *testing.T) {
+	batches := chunkStrings([]string{"a", "b", "c", "d", "e"}, 2)
+	expected := [][]string{{"a", "b"}, {"c", "d"}, {"e"}}
+	if !reflect.DeepEqual(batches, expected) {
+		t.Fatalf("chunkStrings = %#v, want %#v", batches, expected)
 	}
 }
 
@@ -561,6 +571,20 @@ func TestParseKEGGMajorVersion(t *testing.T) {
 	}
 	if value != "117.0" {
 		t.Fatalf("parseKEGGMajorVersion = %q, want %q", value, "117.0")
+	}
+}
+
+func TestParseKEGGReleaseFromInfoErrorMessageIsExplicit(t *testing.T) {
+	_, err := parseKEGGReleaseFromInfo([]byte("KEGG Database\nno release field here\n"))
+	if err == nil {
+		t.Fatal("parseKEGGReleaseFromInfo returned nil error")
+	}
+	text := err.Error()
+	if !strings.Contains(text, "failed to parse KEGG release from info response") {
+		t.Fatalf("error = %q", text)
+	}
+	if !strings.Contains(text, "did not contain a 'Release ...' field") {
+		t.Fatalf("error = %q", text)
 	}
 }
 

@@ -2,6 +2,7 @@ package kegg
 
 import (
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -39,6 +40,7 @@ type mappingConfig struct {
 	shouldAllowInsecureTLS  bool
 	shouldDryRun            bool
 	shouldDisableProgress   bool
+	dirLogs                 string
 	scopeType               string
 	scopeValue              string
 }
@@ -47,6 +49,7 @@ type mappingLockConfig struct {
 	dirOut       string
 	versionToken string
 	shouldDryRun bool
+	dirLogs      string
 }
 
 type mappingSyncConfig struct {
@@ -60,6 +63,7 @@ type mappingSyncConfig struct {
 	shouldAllowInsecureTLS bool
 	shouldDryRun           bool
 	shouldDisableProgress  bool
+	dirLogs                string
 }
 
 func createDefaultMappingConfig() mappingConfig {
@@ -88,20 +92,39 @@ func runFetchMapping(cfg *mappingConfig) error {
 		return err
 	}
 	source := buildMappingSource(cfg.versionToken, buildMappingStaticAssets(assets, organismCodes), deriveMappingScope(cfg, organismCodes))
-	return staticasset.Fetch(source, buildMappingOptions(cfg), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch kegg", "fetch", cfg.dirLogs, cfg.dirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildMappingOptions(cfg), trace); err != nil {
+		logx.Errorf("biofetch kegg", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockMapping(cfg *mappingLockConfig) error {
 	if err := validateMappingFixedVersion(cfg.versionToken); err != nil {
 		return err
 	}
-	return staticasset.Lock(buildMappingSource(cfg.versionToken, nil, staticasset.Scope{}), staticasset.Options{
+	source := buildMappingSource(cfg.versionToken, nil, staticasset.Scope{})
+	trace, closeRun, err := logx.StartSourceRun("biofetch kegg", "lock", cfg.dirLogs, cfg.dirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.dirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.shouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch kegg", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncMapping(cfg *mappingSyncConfig) error {
@@ -119,7 +142,17 @@ func runSyncMapping(cfg *mappingSyncConfig) error {
 		ShouldDryRun:           cfg.shouldDryRun,
 		ShouldDisableProgress:  cfg.shouldDisableProgress,
 	}
-	return staticasset.Sync(buildMappingSource(cfg.versionToken, nil, staticasset.Scope{}), options, nil)
+	source := buildMappingSource(cfg.versionToken, nil, staticasset.Scope{})
+	trace, closeRun, err := logx.StartSourceRun("biofetch kegg", "sync", cfg.dirLogs, cfg.dirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, options, trace); err != nil {
+		logx.Errorf("biofetch kegg", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func validateMappingFetchConfig(cfg *mappingConfig) error {

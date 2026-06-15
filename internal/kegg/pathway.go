@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	baseURL                  = "https://rest.kegg.jp"
-	defaultKEGGRetryMax      = 5
-	defaultKEGGRetryWait     = 3 * time.Second
-	pathwayInspectWorkersMax = 8
+	baseURL                   = "https://rest.kegg.jp"
+	defaultKEGGRetryMax       = 5
+	defaultKEGGRetryWait      = 3 * time.Second
+	pathwayInspectWorkersMax  = 8
+	keggPathwayScopeBatchSize = 32
 )
 
 type pathwayRecord struct {
@@ -47,6 +48,7 @@ type pathwayLocalPlanningStats struct {
 	reusedManifestAssets int
 	rebuiltHashAssets    int
 	downloadAssets       int
+	skippedEntryAssets   int
 	elapsed              time.Duration
 }
 
@@ -68,6 +70,7 @@ func (stats *pathwayLocalPlanningStats) add(other pathwayLocalPlanningStats) {
 	stats.reusedManifestAssets += other.reusedManifestAssets
 	stats.rebuiltHashAssets += other.rebuiltHashAssets
 	stats.downloadAssets += other.downloadAssets
+	stats.skippedEntryAssets += other.skippedEntryAssets
 	stats.elapsed += other.elapsed
 }
 
@@ -119,6 +122,11 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	cfg.version = cfg.versionToken
 	cfg.sourceRelease = sourceReleaseStart
 	cfg.sourceReleaseStart = sourceReleaseStart
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, filepath.Join(cfg.dirOut, "pathway", cfg.versionToken))
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	scopeKeys, err := resolvePathwayScopeKeys(clientKegg, cfg)
 	if err != nil {
@@ -148,14 +156,18 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	records := make([]pathwayRecord, 0)
 	statsPlanning := pathwayLocalPlanningStats{}
 	countPathways := 0
-	for _, scopeKey := range scopeKeys {
-		recordsScope, countScopePathways, statsScope, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey, reuseIndex)
-		if err != nil {
-			return err
+	batchesScope := chunkStrings(scopeKeys, keggPathwayScopeBatchSize)
+	for indexBatch, batchScopeKeys := range batchesScope {
+		logf("batch %d/%d: scopes=%d", indexBatch+1, len(batchesScope), len(batchScopeKeys))
+		for _, scopeKey := range batchScopeKeys {
+			recordsScope, countScopePathways, statsScope, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey, reuseIndex)
+			if err != nil {
+				return err
+			}
+			records = append(records, recordsScope...)
+			statsPlanning.add(statsScope)
+			countPathways += countScopePathways
 		}
-		records = append(records, recordsScope...)
-		statsPlanning.add(statsScope)
-		countPathways += countScopePathways
 	}
 
 	if cfg.shouldDryRun {
@@ -194,11 +206,12 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	logf("done (files=%d, pathways=%d, scopes=%d)", len(recordsComplete), countPathways, len(scopeKeys))
 	if statsPlanning.expectedAssets > 0 {
 		logf(
-			"local planning: expected=%d reused_manifest=%d rebuilt_hash=%d scheduled_download=%d elapsed=%s",
+			"local planning: expected=%d reused_manifest=%d rebuilt_hash=%d scheduled_download=%d skipped_entry=%d elapsed=%s",
 			statsPlanning.expectedAssets,
 			statsPlanning.reusedManifestAssets,
 			statsPlanning.rebuiltHashAssets,
 			statsPlanning.downloadAssets,
+			statsPlanning.skippedEntryAssets,
 			statsPlanning.elapsed.Round(time.Millisecond),
 		)
 	}
@@ -370,6 +383,9 @@ func fetchPathwayScope(
 		if err != nil {
 			return nil, 0, pathwayLocalPlanningStats{}, err
 		}
+		if !ok && result.task.spec.assetName == "pathway.entry" {
+			statsPlanning.skippedEntryAssets++
+		}
 		if ok {
 			records = append(records, recordAsset)
 		}
@@ -537,12 +553,13 @@ func downloadPathwayAsset(
 ) (pathwayRecord, bool, error) {
 	for attempt := 1; attempt <= clientKegg.retryMax; attempt++ {
 		logf("downloading %s", filepath.Base(fileOut))
-		if err := clientKegg.downloadFile(urlFile, fileOut); err != nil {
+		shouldRetry, err := clientKegg.downloadFileOnce(urlFile, fileOut)
+		if err != nil {
 			if shouldSkipPathwayDownloadStatus(assetName, err) {
 				logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
 				return pathwayRecord{}, false, nil
 			}
-			if shouldRetryPathwayDownloadStatus(assetName, err) && attempt < clientKegg.retryMax {
+			if (shouldRetry || shouldRetryPathwayDownloadStatus(assetName, err)) && attempt < clientKegg.retryMax {
 				if clientKegg.retryWait > 0 {
 					logf(
 						"request failed (%d/%d), retrying in %s: %v",
@@ -556,6 +573,16 @@ func downloadPathwayAsset(
 					logf("request failed (%d/%d), retrying: %v", attempt, clientKegg.retryMax, err)
 				}
 				continue
+			}
+			if shouldContinuePathwayDownloadStatus(assetName, err) {
+				logx.Warnf(
+					"biofetch kegg",
+					"continuing after unavailable %s (%s): %v",
+					filepath.Base(fileOut),
+					urlFile,
+					err,
+				)
+				return pathwayRecord{}, false, nil
 			}
 			return pathwayRecord{}, false, err
 		}
@@ -577,6 +604,13 @@ func shouldSkipPathwayDownloadStatus(assetName string, err error) bool {
 }
 
 func shouldRetryPathwayDownloadStatus(assetName string, err error) bool {
+	if assetName != "pathway.entry" {
+		return false
+	}
+	return httpx.IsUnexpectedStatus(err, http.StatusForbidden)
+}
+
+func shouldContinuePathwayDownloadStatus(assetName string, err error) bool {
 	if assetName != "pathway.entry" {
 		return false
 	}
@@ -1229,7 +1263,17 @@ func parseKEGGReleaseFromInfo(data []byte) (string, error) {
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan KEGG info output: %w", err)
 	}
-	return "", fmt.Errorf("KEGG release not found in info output")
+	textPreview := strings.TrimSpace(string(data))
+	if textPreview == "" {
+		return "", fmt.Errorf("failed to parse KEGG release from info response: upstream response was empty")
+	}
+	if len(textPreview) > 160 {
+		textPreview = textPreview[:160]
+	}
+	return "", fmt.Errorf(
+		"failed to parse KEGG release from info response: upstream response did not contain a 'Release ...' field (preview=%q)",
+		textPreview,
+	)
 }
 
 func parseKEGGMajorVersion(sourceRelease string) (string, error) {
@@ -1247,4 +1291,22 @@ func parseKEGGMajorVersion(sourceRelease string) (string, error) {
 		return "", fmt.Errorf("invalid KEGG major version in source release %q", sourceRelease)
 	}
 	return text, nil
+}
+
+func chunkStrings(values []string, sizeChunk int) [][]string {
+	if len(values) == 0 {
+		return nil
+	}
+	if sizeChunk < 1 {
+		sizeChunk = 1
+	}
+	batches := make([][]string, 0, (len(values)+sizeChunk-1)/sizeChunk)
+	for start := 0; start < len(values); start += sizeChunk {
+		end := start + sizeChunk
+		if end > len(values) {
+			end = len(values)
+		}
+		batches = append(batches, values[start:end])
+	}
+	return batches
 }

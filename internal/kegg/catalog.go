@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
@@ -20,6 +21,7 @@ const (
 
 type catalogConfig struct {
 	dirOut                 string
+	dirLogs                string
 	version                string
 	versionToken           string
 	sourceRelease          string
@@ -31,12 +33,14 @@ type catalogConfig struct {
 
 type catalogLockConfig struct {
 	dirOut       string
+	dirLogs      string
 	versionToken string
 	shouldDryRun bool
 }
 
 type catalogSyncConfig struct {
 	dirOut                 string
+	dirLogs                string
 	versionToken           string
 	shouldAllowInsecureTLS bool
 	shouldDryRun           bool
@@ -99,6 +103,7 @@ func createCatalogFetchCommand() *cobra.Command {
 		"Disable TLS certificate verification",
 	)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandFetch
 }
 
@@ -124,6 +129,7 @@ func createCatalogLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
@@ -155,6 +161,7 @@ func createCatalogSyncCommand() *cobra.Command {
 		"Disable TLS certificate verification",
 	)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandSync
 }
 
@@ -209,8 +216,13 @@ func runFetchCatalog(cfg *catalogConfig) error {
 	cfg.version = cfg.versionToken
 	cfg.sourceRelease = sourceReleaseStart
 	cfg.sourceReleaseStart = sourceReleaseStart
-
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+
 	dirRaw := filepath.Join(dirVersion, "raw")
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	fileOut := filepath.Join(dirRaw, keggCatalogFileName)
@@ -272,6 +284,11 @@ func runFetchCatalog(cfg *catalogConfig) error {
 func runLockCatalog(cfg *catalogLockConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	records, err := scanCatalogRecords(dirVersion)
 	if err != nil {
@@ -304,6 +321,11 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 func runSyncCatalog(cfg *catalogSyncConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "sync", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	manifestExisting, err := readExistingCatalogManifest(fileManifest)
 	if err != nil {

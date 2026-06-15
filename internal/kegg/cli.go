@@ -22,6 +22,7 @@ const (
 
 type pathwayConfig struct {
 	dirOut                  string
+	dirLogs                 string
 	version                 string
 	versionToken            string
 	sourceRelease           string
@@ -47,6 +48,7 @@ type pathwayConfig struct {
 
 type briteConfig struct {
 	dirOut                  string
+	dirLogs                 string
 	version                 string
 	versionToken            string
 	sourceRelease           string
@@ -146,6 +148,7 @@ func createMappingFetchCommand() *cobra.Command {
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
 	flags.BoolVar(&cfg.shouldDisableProgress, "should_disable_progress", false, "Disable download progress display")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandFetch
 }
 
@@ -171,6 +174,7 @@ func createMappingLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
@@ -211,6 +215,7 @@ func createMappingSyncCommand() *cobra.Command {
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
 	flags.BoolVar(&cfg.shouldDisableProgress, "should_disable_progress", false, "Disable download progress display")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandSync
 }
 
@@ -309,6 +314,7 @@ func createPathwayFetchCommand() *cobra.Command {
 		"Disable TLS certificate verification",
 	)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return commandPathway
 }
@@ -344,6 +350,7 @@ func createPathwayLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
@@ -385,6 +392,7 @@ func createPathwaySyncCommand() *cobra.Command {
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandSync
 }
 
@@ -590,6 +598,7 @@ func createBriteFetchCommand() *cobra.Command {
 		"Disable TLS certificate verification",
 	)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return commandBrite
 }
@@ -625,6 +634,7 @@ func createBriteLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
@@ -666,6 +676,7 @@ func createBriteSyncCommand() *cobra.Command {
 	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandSync
 }
 
