@@ -3,6 +3,7 @@ package uniprot
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -30,6 +31,7 @@ type kbConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	assetNames             []string
 	baseURLCurrentRelease  string
@@ -40,6 +42,7 @@ type kbLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type kbSyncConfig struct {
@@ -50,6 +53,7 @@ type kbSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -67,7 +71,16 @@ func runFetchKB(cfg *kbConfig) error {
 		return err
 	}
 	source := buildKBSource(versionToken, buildKBStaticAssets(cfg.baseURLCurrentRelease, assets))
-	return staticasset.Fetch(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch uniprot", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockKB(cfg *kbLockConfig) error {
@@ -75,13 +88,23 @@ func runLockKB(cfg *kbLockConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Lock(buildKBSource(versionToken, nil), staticasset.Options{
+	source := buildKBSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch uniprot", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncKB(cfg *kbSyncConfig) error {
@@ -89,7 +112,17 @@ func runSyncKB(cfg *kbSyncConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Sync(buildKBSource(versionToken, nil), buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildKBSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch uniprot", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func resolveKBAssets(values []string) ([]string, error) {

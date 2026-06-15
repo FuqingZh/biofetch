@@ -3,6 +3,7 @@ package geneontology
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -24,6 +25,7 @@ type slimConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	version     string
 	subsetNames []string
@@ -34,6 +36,7 @@ type slimLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type slimSyncConfig struct {
@@ -44,6 +47,7 @@ type slimSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -66,7 +70,7 @@ func runFetchSlim(cfg *slimConfig) error {
 	cfg.version = source.version
 	cfg.VersionToken = source.versionToken
 
-	return staticasset.Fetch(staticasset.Source{
+	sourceStatic := staticasset.Source{
 		Database:     "go",
 		Asset:        "slim",
 		Source:       "geneontology",
@@ -77,33 +81,63 @@ func runFetchSlim(cfg *slimConfig) error {
 			Value: strings.Join(subsets, ",") + "|" + strings.Join(formats, ","),
 		},
 		Assets: assets,
-	}, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	}
+	trace, closeRun, err := logx.StartSourceRun("biofetch go", "fetch", cfg.DirLogs, cfg.DirOut, sourceStatic)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(sourceStatic, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch go", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockSlim(cfg *slimLockConfig) error {
-	return staticasset.Lock(staticasset.Source{
+	source := staticasset.Source{
 		Database:     "go",
 		Asset:        "slim",
 		Source:       "geneontology",
 		Version:      cfg.VersionToken,
 		VersionToken: cfg.VersionToken,
-	}, staticasset.Options{
+	}
+	trace, closeRun, err := logx.StartSourceRun("biofetch go", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch go", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncSlim(cfg *slimSyncConfig) error {
-	return staticasset.Sync(staticasset.Source{
+	source := staticasset.Source{
 		Database:     "go",
 		Asset:        "slim",
 		Source:       "geneontology",
 		Version:      cfg.VersionToken,
 		VersionToken: cfg.VersionToken,
-	}, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	}
+	trace, closeRun, err := logx.StartSourceRun("biofetch go", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch go", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 type slimSource struct {

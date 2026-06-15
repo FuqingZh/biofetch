@@ -70,6 +70,7 @@ func runFetchEnzSub(cfg *configEnzSub) error {
 		taxIDs:                  taxIDs,
 		urlQuery:                queryEnzSubURL,
 		dirOut:                  cfg.dirOut,
+		dirLogs:                 cfg.dirLogs,
 		shouldOverwriteExisting: cfg.shouldOverwriteExisting,
 		shouldAllowInsecureTLS:  cfg.shouldAllowInsecureTLS,
 		retryMax:                cfg.retryMax,
@@ -104,6 +105,7 @@ func runFetchInteractions(cfg *configInteractions) error {
 		taxIDs:                  taxIDs,
 		urlQuery:                queryInteractionsURL,
 		dirOut:                  cfg.dirOut,
+		dirLogs:                 cfg.dirLogs,
 		shouldOverwriteExisting: cfg.shouldOverwriteExisting,
 		shouldAllowInsecureTLS:  cfg.shouldAllowInsecureTLS,
 		retryMax:                cfg.retryMax,
@@ -132,6 +134,7 @@ type fetchInput struct {
 	taxIDs                  []string
 	urlQuery                string
 	dirOut                  string
+	dirLogs                 string
 	shouldOverwriteExisting bool
 	shouldAllowInsecureTLS  bool
 	retryMax                int
@@ -155,6 +158,11 @@ func runFetchCommon(in fetchInput) error {
 
 	dirVersion := deriveVersionDir(in)
 	dirVersion = filepath.Join(in.dirOut, dirVersion, versionToken)
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "fetch", in.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	fileQuery := filepath.Join(dirVersion, "raw", "query_meta.json")
 	pathRelQuery := filepath.ToSlash(filepath.Join("raw", "query_meta.json"))
@@ -249,6 +257,11 @@ func runFetchArchive(client *omnipathClient, in fetchInput) error {
 
 	dirVersion := deriveVersionDir(in)
 	dirVersion = filepath.Join(in.dirOut, dirVersion, snapshot.versionToken)
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "fetch", in.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	if in.shouldDryRun {

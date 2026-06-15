@@ -11,6 +11,7 @@ import (
 
 type config struct {
 	dirOut                  string
+	dirLogs                 string
 	versionToken            string
 	taxIDs                  []string
 	shouldDownloadAll       bool
@@ -101,6 +102,7 @@ func createFetchCommand() *cobra.Command {
 		"Disable TLS certificate verification",
 	)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return commandFetch
 }
@@ -130,6 +132,7 @@ func createLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "STRING asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "STRING release version token")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
@@ -184,6 +187,7 @@ func createSyncCommand() *cobra.Command {
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandSync
 }
 

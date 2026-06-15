@@ -2,6 +2,7 @@ package subcell
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/staticasset"
 	"bytes"
 	"compress/gzip"
@@ -33,6 +34,7 @@ type uniprotConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	speciesCode string
 	taxID       string
@@ -43,6 +45,7 @@ type uniprotLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type uniprotSyncConfig struct {
@@ -53,6 +56,7 @@ type uniprotSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -72,11 +76,20 @@ func runFetchUniProt(cfg *uniprotConfig) error {
 		versionToken = "current"
 	}
 	source := buildUniProtSource(versionToken, scope)
-	return staticasset.Fetch(source, buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch subcell", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch subcell", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockUniProt(cfg *uniprotLockConfig) error {
-	return staticasset.Lock(staticasset.Source{
+	source := staticasset.Source{
 		Database:     "subcell",
 		Asset:        "protein_location",
 		Source:       "uniprot",
@@ -84,17 +97,37 @@ func runLockUniProt(cfg *uniprotLockConfig) error {
 		ScanDirs:     []string{"tidy"},
 		Version:      cfg.VersionToken,
 		VersionToken: cfg.VersionToken,
-	}, staticasset.Options{
+	}
+	trace, closeRun, err := logx.StartSourceRun("biofetch subcell", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch subcell", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncUniProt(cfg *uniprotSyncConfig) error {
-	return staticasset.Sync(buildUniProtSource(cfg.VersionToken, uniprotScope{}), buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildUniProtSource(cfg.VersionToken, uniprotScope{})
+	trace, closeRun, err := logx.StartSourceRun("biofetch subcell", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildUniProtOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch subcell", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func buildUniProtSource(versionToken string, scope uniprotScope) staticasset.Source {

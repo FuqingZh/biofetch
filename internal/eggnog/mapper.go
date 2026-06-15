@@ -2,6 +2,7 @@ package eggnog
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -33,6 +34,7 @@ type mapperConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	assetNames             []string
 	baseURL                string
@@ -43,6 +45,7 @@ type mapperLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type mapperSyncConfig struct {
@@ -53,6 +56,7 @@ type mapperSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -69,7 +73,16 @@ func runFetchMapper(cfg *mapperConfig) error {
 		return err
 	}
 	source := buildMapperSource(versionToken, buildMapperStaticAssets(cfg.baseURL, versionToken, assets))
-	return staticasset.Fetch(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch eggnog", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockMapper(cfg *mapperLockConfig) error {
@@ -77,13 +90,23 @@ func runLockMapper(cfg *mapperLockConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Lock(buildMapperSource(versionToken, nil), staticasset.Options{
+	source := buildMapperSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch eggnog", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncMapper(cfg *mapperSyncConfig) error {
@@ -91,7 +114,17 @@ func runSyncMapper(cfg *mapperSyncConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Sync(buildMapperSource(versionToken, nil), buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildMapperSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch eggnog", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func resolveMapperAssets(values []string) ([]string, error) {

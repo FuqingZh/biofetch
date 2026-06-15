@@ -3,6 +3,7 @@ package reactome
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -49,6 +50,7 @@ type mappingConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	assetNames             []string
 	shouldAllowLargeAssets bool
@@ -58,6 +60,7 @@ type mappingLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type mappingSyncConfig struct {
@@ -68,6 +71,7 @@ type mappingSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -88,7 +92,16 @@ func runFetchMapping(cfg *mappingConfig) error {
 		}
 	}
 	source := buildMappingSource(versionToken, assetsStatic)
-	return staticasset.Fetch(source, buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch reactome", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch reactome", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockMapping(cfg *mappingLockConfig) error {
@@ -96,13 +109,23 @@ func runLockMapping(cfg *mappingLockConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Lock(buildMappingSource(versionToken, nil), staticasset.Options{
+	source := buildMappingSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch reactome", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch reactome", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncMapping(cfg *mappingSyncConfig) error {
@@ -110,7 +133,17 @@ func runSyncMapping(cfg *mappingSyncConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Sync(buildMappingSource(versionToken, nil), buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildMappingSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch reactome", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch reactome", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func resolveMappingAssets(values []string) ([]string, error) {

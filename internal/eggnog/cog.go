@@ -2,6 +2,7 @@ package eggnog
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -32,6 +33,7 @@ type cogConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	assetNames []string
 	baseURL    string
@@ -41,6 +43,7 @@ type cogLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type cogSyncConfig struct {
@@ -51,6 +54,7 @@ type cogSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -64,7 +68,16 @@ func runFetchCOG(cfg *cogConfig) error {
 		return err
 	}
 	source := buildCOGSource(versionToken, buildCOGStaticAssets(cfg.baseURL, versionToken, assets))
-	return staticasset.Fetch(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch eggnog", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockCOG(cfg *cogLockConfig) error {
@@ -72,13 +85,23 @@ func runLockCOG(cfg *cogLockConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Lock(buildCOGSource(versionToken, nil), staticasset.Options{
+	source := buildCOGSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch eggnog", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncCOG(cfg *cogSyncConfig) error {
@@ -86,7 +109,17 @@ func runSyncCOG(cfg *cogSyncConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Sync(buildCOGSource(versionToken, nil), buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildCOGSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch eggnog", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func resolveCOGAssets(values []string) ([]string, error) {

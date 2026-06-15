@@ -3,6 +3,7 @@ package uniprot
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"fmt"
@@ -27,6 +28,7 @@ type idMappingConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	assetNames             []string
 	baseURLCurrentRelease  string
@@ -37,6 +39,7 @@ type idMappingLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type idMappingSyncConfig struct {
@@ -47,6 +50,7 @@ type idMappingSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -64,7 +68,16 @@ func runFetchIDMapping(cfg *idMappingConfig) error {
 		return err
 	}
 	source := buildIDMappingSource(versionToken, buildIDMappingStaticAssets(cfg.baseURLCurrentRelease, assets))
-	return staticasset.Fetch(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch uniprot", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockIDMapping(cfg *idMappingLockConfig) error {
@@ -72,13 +85,23 @@ func runLockIDMapping(cfg *idMappingLockConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Lock(buildIDMappingSource(versionToken, nil), staticasset.Options{
+	source := buildIDMappingSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch uniprot", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncIDMapping(cfg *idMappingSyncConfig) error {
@@ -86,7 +109,17 @@ func runSyncIDMapping(cfg *idMappingSyncConfig) error {
 	if err != nil {
 		return err
 	}
-	return staticasset.Sync(buildIDMappingSource(versionToken, nil), buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildIDMappingSource(versionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch uniprot", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func resolveIDMappingAssets(values []string) ([]string, error) {

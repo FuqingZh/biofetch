@@ -77,6 +77,11 @@ func runFetch(cfg *config) error {
 	}
 
 	dirVersion := filepath.Join(cfg.dirOut, cfg.versionToken)
+	_, closeRun, err := logx.StartVersionedRun("biofetch string", "fetch", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	dirRaw := filepath.Join(dirVersion, "raw")
 	dirTidy := filepath.Join(dirVersion, "tidy")
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")

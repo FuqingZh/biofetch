@@ -3,6 +3,7 @@ package stringdb
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"fmt"
 	"os"
@@ -13,12 +14,14 @@ import (
 
 type lockConfig struct {
 	dirOut       string
+	dirLogs      string
 	versionToken string
 	shouldDryRun bool
 }
 
 type syncConfig struct {
 	dirOut                  string
+	dirLogs                 string
 	versionToken            string
 	ruleExisting            string
 	shouldOverwriteExisting bool
@@ -32,6 +35,11 @@ type syncConfig struct {
 func runLock(cfg *lockConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch string", "lock", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	records, err := scanVersionFileRecords(dirVersion)
 	if err != nil {
@@ -56,6 +64,11 @@ func runLock(cfg *lockConfig) error {
 func runSync(cfg *syncConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch string", "sync", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	recordsManifest, err := readExistingFileRecords(fileManifest)
 	if err != nil {

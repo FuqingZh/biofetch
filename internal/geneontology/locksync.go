@@ -3,6 +3,7 @@ package geneontology
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
@@ -16,6 +17,7 @@ type ontologyLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type ontologySyncConfig struct {
@@ -26,11 +28,17 @@ type ontologySyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 func runLockOntology(cfg *ontologyLockConfig) error {
 	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch go", "lock", cfg.DirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	urlsExisting, err := buildOntologyExistingURLMap(fileManifest)
 	if err != nil {
 		return err
@@ -63,6 +71,11 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 func runSyncOntology(cfg *ontologySyncConfig) error {
 	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch go", "sync", cfg.DirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 
 	recordsManifest, err := readExistingOntologyRecords(fileManifest)
 	if err != nil {

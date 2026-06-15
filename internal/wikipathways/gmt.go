@@ -3,6 +3,7 @@ package wikipathways
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
 	"biofetch/internal/shared/staticasset"
 	"bytes"
@@ -30,6 +31,7 @@ type gmtConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 	speciesNames      []string
 	shouldDownloadAll bool
@@ -39,6 +41,7 @@ type gmtLockConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 }
 
 type gmtSyncConfig struct {
@@ -49,6 +52,7 @@ type gmtSyncConfig struct {
 	cliopt.DownloadControlConfig
 	cliopt.InsecureTLSConfig
 	cliopt.DryRunConfig
+	cliopt.LogConfig
 	cliopt.ProgressConfig
 }
 
@@ -75,21 +79,50 @@ func runFetchGMT(cfg *gmtConfig, readerConfirm io.Reader, writerConfirm io.Write
 	}
 	versionToken := deriveGMTVersionToken(assetsSelected)
 	source := buildGMTSource(versionToken, assetsSelected)
-	return staticasset.Fetch(source, buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch wikipathways", "fetch", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Fetch(source, buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch wikipathways", "fetch failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runLockGMT(cfg *gmtLockConfig) error {
-	return staticasset.Lock(buildGMTSource(cfg.VersionToken, nil), staticasset.Options{
+	source := buildGMTSource(cfg.VersionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch wikipathways", "lock", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Lock(source, staticasset.Options{
 		DirOut:       cfg.DirOut,
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
 		ShouldDryRun: cfg.ShouldDryRun,
-	}, nil)
+	}, trace); err != nil {
+		logx.Errorf("biofetch wikipathways", "lock failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func runSyncGMT(cfg *gmtSyncConfig) error {
-	return staticasset.Sync(buildGMTSource(cfg.VersionToken, nil), buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), nil)
+	source := buildGMTSource(cfg.VersionToken, nil)
+	trace, closeRun, err := logx.StartSourceRun("biofetch wikipathways", "sync", cfg.DirLogs, cfg.DirOut, source)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
+	if err := staticasset.Sync(source, buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
+		logx.Errorf("biofetch wikipathways", "sync failed: %v", err)
+		return err
+	}
+	return nil
 }
 
 func discoverGMTAssets(clientHTTP *http.Client, baseURL string, limiterRequest *httpx.RequestLimiter) ([]gmtAsset, error) {

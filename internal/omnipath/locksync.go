@@ -1,6 +1,7 @@
 package omnipath
 
 import (
+	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 type lockConfig struct {
 	dirOut       string
+	dirLogs      string
 	versionToken string
 	dataset      string
 	shouldDryRun bool
@@ -20,6 +22,7 @@ type lockConfig struct {
 
 type syncConfig struct {
 	dirOut                  string
+	dirLogs                 string
 	versionToken            string
 	dataset                 string
 	ruleExisting            string
@@ -42,6 +45,11 @@ func runLockInteractions(cfg *lockConfig) error {
 
 func runLockCommon(cfg *lockConfig, dirVersion string, asset string) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "lock", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	manifestExisting, _ := readExistingManifest(fileManifest)
 	records, err := scanOmniPathRecords(dirVersion, asset, manifestExisting)
 	if err != nil {
@@ -85,6 +93,11 @@ func runSyncInteractions(cfg *syncConfig) error {
 
 func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "sync", cfg.dirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	manifestExisting, err := readExistingManifest(fileManifest)
 	if err != nil {
 		return err

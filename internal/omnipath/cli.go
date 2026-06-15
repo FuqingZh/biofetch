@@ -11,6 +11,7 @@ import (
 
 type configEnzSub struct {
 	dirOut                  string
+	dirLogs                 string
 	versionToken            string
 	organisms               []string
 	shouldDownloadAll       bool
@@ -25,6 +26,7 @@ type configEnzSub struct {
 
 type configInteractions struct {
 	dirOut                  string
+	dirLogs                 string
 	versionToken            string
 	organisms               []string
 	shouldDownloadAll       bool
@@ -97,6 +99,7 @@ func createEnzSubFetchCommand() *cobra.Command {
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return command
 }
@@ -150,6 +153,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return command
 }
@@ -179,6 +183,7 @@ func createEnzSubLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
@@ -220,6 +225,7 @@ func createEnzSubSyncCommand() *cobra.Command {
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
@@ -250,6 +256,7 @@ func createInteractionsLockCommand() *cobra.Command {
 	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
@@ -296,6 +303,7 @@ func createInteractionsSyncCommand() *cobra.Command {
 	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 

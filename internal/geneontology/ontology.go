@@ -93,6 +93,11 @@ func runFetchOntology(cfg *ontologyConfig, readerConfirm io.Reader, writerConfir
 	cfg.VersionToken = source.versionToken
 
 	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
+	_, closeRun, err := logx.StartVersionedRun("biofetch go", "fetch", cfg.DirLogs, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	dirRaw := filepath.Join(dirVersion, "raw")
 	dirTidy := filepath.Join(dirVersion, "tidy")
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
