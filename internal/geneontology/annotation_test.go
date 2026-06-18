@@ -15,10 +15,13 @@ import (
 	"biofetch/internal/shared/staticasset"
 )
 
-func TestResolveAnnotationDatasetsRequiresExplicitValues(t *testing.T) {
-	_, err := resolveAnnotationDatasets(nil)
-	if err == nil {
-		t.Fatal("resolveAnnotationDatasets returned nil error")
+func TestResolveAnnotationDatasetsAllowsOmittedValues(t *testing.T) {
+	datasets, err := resolveAnnotationDatasets(nil)
+	if err != nil {
+		t.Fatalf("resolveAnnotationDatasets returned error: %v", err)
+	}
+	if datasets != nil {
+		t.Fatalf("datasets = %#v, want nil", datasets)
 	}
 }
 
@@ -101,6 +104,30 @@ func TestBuildAnnotationReleaseBaseURL(t *testing.T) {
 	want := "https://release.geneontology.org/2026-01-23/annotations/"
 	if got != want {
 		t.Fatalf("buildAnnotationReleaseBaseURL = %q, want %q", got, want)
+	}
+}
+
+func TestParseAnnotationIndexAssetsFiltersFormats(t *testing.T) {
+	assets := parseAnnotationIndexAssets("https://example.test/annotations/", `
+		<a href="goa_human.gaf.gz">goa_human.gaf.gz</a>
+		<a href="/annotations/mgi.gpi.gz?download=1">mgi.gpi.gz</a>
+		<a href="sgd.gpad.gz">sgd.gpad.gz</a>
+		<a href="README.txt">README</a>
+	`, []string{"gaf", "gpi"})
+	expected := []staticasset.Asset{
+		{
+			Name: "goa_human.gaf.gz",
+			Path: "raw/goa_human.gaf.gz",
+			URL:  "https://example.test/annotations/goa_human.gaf.gz",
+		},
+		{
+			Name: "mgi.gpi.gz",
+			Path: "raw/mgi.gpi.gz",
+			URL:  "https://example.test/annotations/mgi.gpi.gz",
+		},
+	}
+	if !reflect.DeepEqual(assets, expected) {
+		t.Fatalf("assets = %#v, want %#v", assets, expected)
 	}
 }
 
@@ -187,12 +214,112 @@ func TestRunFetchAnnotationDownloadsManifest(t *testing.T) {
 	}
 }
 
-func TestRunFetchAnnotationDryRunResolvesVersionAndWritesRunLog(t *testing.T) {
+func TestRunFetchAnnotationDiscoversDatasetsWhenOmitted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/ontology/go-basic.obo" {
+		switch request.URL.Path {
+		case "/ontology/go-basic.obo":
+			_, _ = writer.Write([]byte("format-version: 1.2\ndata-version: releases/2026-05-01\n"))
+		case "/annotations/":
+			_, _ = writer.Write([]byte(`
+				<a href="goa_human.gaf.gz">goa_human.gaf.gz</a>
+				<a href="mgi.gaf.gz">mgi.gaf.gz</a>
+				<a href="goa_human.gpi.gz">goa_human.gpi.gz</a>
+			`))
+		case "/annotations/goa_human.gaf.gz", "/annotations/mgi.gaf.gz":
+			_, _ = writer.Write([]byte("!gaf-version: 2.2\n"))
+		default:
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
-		_, _ = writer.Write([]byte("format-version: 1.2\ndata-version: releases/2026-05-01\n"))
+	}))
+	defer server.Close()
+
+	originalCurrent := ontologyCurrentBaseURL
+	originalAnnotation := annotationCurrentBaseURL
+	t.Cleanup(func() {
+		ontologyCurrentBaseURL = originalCurrent
+		annotationCurrentBaseURL = originalAnnotation
+	})
+	ontologyCurrentBaseURL = server.URL + "/ontology/"
+	annotationCurrentBaseURL = server.URL + "/annotations/"
+
+	cfg := createDefaultAnnotationConfig()
+	cfg.DirOut = t.TempDir()
+	cfg.RuleExisting = "skip"
+	cfg.RetryMax = 1
+	cfg.RetryWait = time.Millisecond
+	cfg.WorkersMax = 1
+
+	if err := runFetchAnnotation(&cfg); err != nil {
+		t.Fatalf("runFetchAnnotation returned error: %v", err)
+	}
+	manifest, ok, err := staticasset.ReadManifest(filepath.Join(cfg.DirOut, "annotation", "2026-05-01", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest was not written")
+	}
+	paths := make([]string, 0, len(manifest.Files))
+	for _, file := range manifest.Files {
+		paths = append(paths, file.Path)
+	}
+	expectedPaths := []string{"raw/goa_human.gaf.gz", "raw/mgi.gaf.gz"}
+	if !reflect.DeepEqual(paths, expectedPaths) {
+		t.Fatalf("manifest paths = %#v, want %#v", paths, expectedPaths)
+	}
+	if manifest.Scope.Type != "datasets_formats" || manifest.Scope.Value != "goa_human,mgi|gaf" {
+		t.Fatalf("manifest scope = %#v", manifest.Scope)
+	}
+}
+
+func TestRunFetchAnnotationDiscoverNoMatchingFiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ontology/go-basic.obo":
+			_, _ = writer.Write([]byte("format-version: 1.2\ndata-version: releases/2026-05-01\n"))
+		case "/annotations/":
+			_, _ = writer.Write([]byte(`<a href="README.txt">README</a>`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	originalCurrent := ontologyCurrentBaseURL
+	originalAnnotation := annotationCurrentBaseURL
+	t.Cleanup(func() {
+		ontologyCurrentBaseURL = originalCurrent
+		annotationCurrentBaseURL = originalAnnotation
+	})
+	ontologyCurrentBaseURL = server.URL + "/ontology/"
+	annotationCurrentBaseURL = server.URL + "/annotations/"
+
+	cfg := createDefaultAnnotationConfig()
+	cfg.DirOut = t.TempDir()
+	cfg.RuleExisting = "skip"
+	cfg.RetryMax = 1
+	cfg.RetryWait = time.Millisecond
+	cfg.WorkersMax = 1
+
+	err := runFetchAnnotation(&cfg)
+	if err == nil {
+		t.Fatal("runFetchAnnotation returned nil error")
+	}
+	if !strings.Contains(err.Error(), "no GO annotation files with formats gaf were found") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunFetchAnnotationDryRunResolvesVersionAndWritesRunLog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ontology/go-basic.obo":
+			_, _ = writer.Write([]byte("format-version: 1.2\ndata-version: releases/2026-05-01\n"))
+		case "/annotations/":
+			_, _ = writer.Write([]byte(`<a href="goa_human.gaf.gz">goa_human.gaf.gz</a>`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
 	}))
 	defer server.Close()
 
@@ -212,7 +339,6 @@ func TestRunFetchAnnotationDryRunResolvesVersionAndWritesRunLog(t *testing.T) {
 	cfg.RetryWait = time.Millisecond
 	cfg.WorkersMax = 1
 	cfg.ShouldDryRun = true
-	cfg.datasetNames = []string{"goa_human"}
 
 	if err := runFetchAnnotation(&cfg); err != nil {
 		t.Fatalf("runFetchAnnotation returned error: %v", err)

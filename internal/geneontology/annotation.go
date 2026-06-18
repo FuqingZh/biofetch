@@ -8,9 +8,13 @@ import (
 	"biofetch/internal/shared/staticasset"
 	"biofetch/internal/shared/tomlx"
 	"fmt"
+	"html"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -18,6 +22,10 @@ import (
 var annotationFormatsSupported = []string{"gaf", "gpad", "gpi"}
 
 var annotationCurrentBaseURL = "https://current.geneontology.org/annotations/"
+
+var annotationHrefPattern = regexp.MustCompile(`(?i)\bhref\s*=\s*["']([^"']+)["']`)
+
+const annotationIndexReadLimitBytes int64 = 4 << 20
 
 type annotationConfig struct {
 	cliopt.DirOutConfig
@@ -66,19 +74,18 @@ func runFetchAnnotation(cfg *annotationConfig) error {
 	if err != nil {
 		return err
 	}
-	datasets, err := resolveAnnotationDatasets(cfg.datasetNames)
-	if err != nil {
-		return err
-	}
 	formats, err := resolveAnnotationFormats(cfg.formatNames)
 	if err != nil {
 		return err
 	}
-	assets := buildAnnotationAssets(source.baseURL, datasets, formats)
+	datasets, formatsResolved, assets, err := resolveAnnotationAssetSelection(clientHTTP, source, cfg.datasetNames, formats, limiterRequest)
+	if err != nil {
+		return err
+	}
 	cfg.version = source.version
 	cfg.VersionToken = source.versionToken
 
-	sourceStatic := buildAnnotationStaticSource(source, datasets, formats, assets)
+	sourceStatic := buildAnnotationStaticSource(source, datasets, formatsResolved, assets)
 	trace, closeRun, err := logx.StartSourceRun("biofetch go", "fetch", cfg.DirLogs, cfg.DirOut, sourceStatic)
 	if err != nil {
 		return err
@@ -211,7 +218,7 @@ func resolveAnnotationSource(
 
 func resolveAnnotationDatasets(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("datasets must not be empty")
+		return nil, nil
 	}
 	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "datasets")
 	if err != nil {
@@ -232,6 +239,29 @@ func resolveAnnotationDatasets(values []string) ([]string, error) {
 		return nil, fmt.Errorf("datasets must not be empty")
 	}
 	return sets.SortedKeys(stringSet(datasets)), nil
+}
+
+func resolveAnnotationAssetSelection(
+	clientHTTP *http.Client,
+	source annotationSource,
+	datasetNames []string,
+	formats []string,
+	limiterRequest *httpx.RequestLimiter,
+) ([]string, []string, []staticasset.Asset, error) {
+	datasets, err := resolveAnnotationDatasets(datasetNames)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(datasets) > 0 {
+		return datasets, formats, buildAnnotationAssets(source.baseURL, datasets, formats), nil
+	}
+
+	assets, err := discoverAnnotationAssets(clientHTTP, source.baseURL, formats, limiterRequest)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	datasetsDiscovered, formatsDiscovered := summarizeAnnotationAssets(assets)
+	return datasetsDiscovered, formatsDiscovered, assets, nil
 }
 
 func resolveAnnotationFormats(values []string) ([]string, error) {
@@ -273,6 +303,105 @@ func buildAnnotationAssets(baseURL string, datasets []string, formats []string) 
 		}
 	}
 	return assets
+}
+
+func discoverAnnotationAssets(
+	clientHTTP *http.Client,
+	baseURL string,
+	formats []string,
+	limiterRequest *httpx.RequestLimiter,
+) ([]staticasset.Asset, error) {
+	limiterRequest.Wait()
+	response, err := clientHTTP.Get(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("request GO annotation index %s: %w", baseURL, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, httpx.UnexpectedStatusError{URL: baseURL, Status: response.Status, Code: response.StatusCode}
+	}
+
+	body, err := io.ReadAll(io.LimitReader(response.Body, annotationIndexReadLimitBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read GO annotation index %s: %w", baseURL, err)
+	}
+	if int64(len(body)) > annotationIndexReadLimitBytes {
+		return nil, fmt.Errorf("GO annotation index %s exceeds %d bytes", baseURL, annotationIndexReadLimitBytes)
+	}
+
+	assets := parseAnnotationIndexAssets(baseURL, string(body), formats)
+	if len(assets) == 0 {
+		return nil, fmt.Errorf("no GO annotation files with formats %s were found at %s", strings.Join(formats, ","), baseURL)
+	}
+	return assets, nil
+}
+
+func parseAnnotationIndexAssets(baseURL string, indexHTML string, formats []string) []staticasset.Asset {
+	formatsRequested := stringSet(formats)
+	assetByName := make(map[string]staticasset.Asset)
+	namesSet := make(map[string]struct{})
+	for _, match := range annotationHrefPattern.FindAllStringSubmatch(indexHTML, -1) {
+		fileName := extractAnnotationHrefFileName(match[1])
+		if fileName == "" {
+			continue
+		}
+		_, format, err := parseAnnotationFileName(fileName)
+		if err != nil {
+			continue
+		}
+		if _, ok := formatsRequested[format]; !ok {
+			continue
+		}
+		assetByName[fileName] = staticasset.Asset{
+			Name: fileName,
+			Path: filepath.ToSlash(filepath.Join("raw", fileName)),
+			URL:  buildAnnotationAssetURL(baseURL, fileName),
+		}
+		namesSet[fileName] = struct{}{}
+	}
+
+	names := sets.SortedKeys(namesSet)
+	assets := make([]staticasset.Asset, 0, len(names))
+	for _, name := range names {
+		assets = append(assets, assetByName[name])
+	}
+	return assets
+}
+
+func extractAnnotationHrefFileName(value string) string {
+	text := strings.TrimSpace(html.UnescapeString(value))
+	if text == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(text); err == nil {
+		text = parsed.Path
+	} else {
+		if index := strings.IndexAny(text, "?#"); index >= 0 {
+			text = text[:index]
+		}
+	}
+	if textUnescaped, err := url.PathUnescape(text); err == nil {
+		text = textUnescaped
+	}
+	text = strings.TrimRight(text, "/")
+	if index := strings.LastIndex(text, "/"); index >= 0 {
+		text = text[index+1:]
+	}
+	return strings.TrimSpace(text)
+}
+
+func summarizeAnnotationAssets(assets []staticasset.Asset) ([]string, []string) {
+	datasets := make([]string, 0, len(assets))
+	formats := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		dataset, format, err := parseAnnotationFileName(asset.Name)
+		if err != nil {
+			continue
+		}
+		datasets = append(datasets, dataset)
+		formats = append(formats, format)
+	}
+	return sets.SortedKeys(stringSet(datasets)), sets.SortedKeys(stringSet(formats))
 }
 
 func buildAnnotationAssetURL(baseURL string, fileName string) string {

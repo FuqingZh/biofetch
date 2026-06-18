@@ -99,6 +99,7 @@ func createAnnotationFetchCommand() *cobra.Command {
 	}
 
 	commandFetch.Example = strings.Join([]string{
+		"biofetch go annotation fetch --dir_out /data/go",
 		"biofetch go annotation fetch --dir_out /data/go --datasets goa_human",
 		"biofetch go annotation fetch --dir_out /data/go --datasets goa_human --formats gaf,gpad,gpi",
 		"biofetch go annotation fetch --dir_out /data/go --version 2026-01-23 --datasets mgi,sgd --formats gaf",
@@ -108,7 +109,7 @@ func createAnnotationFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
-	flags.StringSliceVar(&cfg.datasetNames, "datasets", nil, "GO annotation dataset file stems, e.g. goa_human or mgi; repeat the flag, use commas, or use @file")
+	flags.StringSliceVar(&cfg.datasetNames, "datasets", nil, "GO annotation dataset file stems, e.g. goa_human or mgi; omit to discover all datasets for selected formats")
 	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO annotation formats: gaf|gpad|gpi; omit for gaf, repeat the flag, use commas, or use @file")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
