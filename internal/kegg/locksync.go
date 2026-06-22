@@ -47,11 +47,14 @@ func runLockPathway(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingPathwayManifest(fileManifest)
 	cfgManifest := pathwayConfig{
-		version:            firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:       firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
-		sourceRelease:      manifestExisting.SourceRelease,
-		sourceReleaseStart: manifestExisting.SourceReleaseStart,
-		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
+		version:               firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:          firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease:         manifestExisting.SourceRelease,
+		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
+		sourceLastUpdate:      manifestExisting.SourceLastUpdate,
+		sourceLastUpdateStart: manifestExisting.SourceLastUpdateStart,
+		sourceLastUpdateEnd:   manifestExisting.SourceLastUpdateEnd,
 	}
 
 	if cfg.shouldDryRun {
@@ -142,11 +145,14 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 	}
 
 	cfgManifest := pathwayConfig{
-		version:            manifestExisting.Version,
-		versionToken:       manifestExisting.VersionToken,
-		sourceRelease:      manifestExisting.SourceRelease,
-		sourceReleaseStart: manifestExisting.SourceReleaseStart,
-		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
+		version:               manifestExisting.Version,
+		versionToken:          manifestExisting.VersionToken,
+		sourceRelease:         manifestExisting.SourceRelease,
+		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
+		sourceLastUpdate:      manifestExisting.SourceLastUpdate,
+		sourceLastUpdateStart: manifestExisting.SourceLastUpdateStart,
+		sourceLastUpdateEnd:   manifestExisting.SourceLastUpdateEnd,
 	}
 	if err := writeManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -173,11 +179,14 @@ func runLockBrite(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingBriteManifest(fileManifest)
 	cfgManifest := briteConfig{
-		version:            firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:       firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
-		sourceRelease:      manifestExisting.SourceRelease,
-		sourceReleaseStart: manifestExisting.SourceReleaseStart,
-		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
+		version:               firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:          firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease:         manifestExisting.SourceRelease,
+		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
+		sourceLastUpdate:      manifestExisting.SourceLastUpdate,
+		sourceLastUpdateStart: manifestExisting.SourceLastUpdateStart,
+		sourceLastUpdateEnd:   manifestExisting.SourceLastUpdateEnd,
 	}
 
 	if cfg.shouldDryRun {
@@ -268,11 +277,14 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 	}
 
 	cfgManifest := briteConfig{
-		version:            manifestExisting.Version,
-		versionToken:       manifestExisting.VersionToken,
-		sourceRelease:      manifestExisting.SourceRelease,
-		sourceReleaseStart: manifestExisting.SourceReleaseStart,
-		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
+		version:               manifestExisting.Version,
+		versionToken:          manifestExisting.VersionToken,
+		sourceRelease:         manifestExisting.SourceRelease,
+		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
+		sourceLastUpdate:      manifestExisting.SourceLastUpdate,
+		sourceLastUpdateStart: manifestExisting.SourceLastUpdateStart,
+		sourceLastUpdateEnd:   manifestExisting.SourceLastUpdateEnd,
 	}
 	if err := writeBriteManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -453,6 +465,11 @@ func readExistingPathwayManifest(fileManifest string) (manifestFile, error) {
 		manifest.SourceReleaseStart,
 		manifest.SourceReleaseEnd,
 	)
+	manifest.SourceLastUpdate, manifest.SourceLastUpdateStart, manifest.SourceLastUpdateEnd = deriveKEGGReleaseFields(
+		manifest.SourceLastUpdate,
+		manifest.SourceLastUpdateStart,
+		manifest.SourceLastUpdateEnd,
+	)
 	return manifest, nil
 }
 
@@ -469,6 +486,11 @@ func readExistingBriteManifest(fileManifest string) (briteManifestFile, error) {
 		manifest.SourceRelease,
 		manifest.SourceReleaseStart,
 		manifest.SourceReleaseEnd,
+	)
+	manifest.SourceLastUpdate, manifest.SourceLastUpdateStart, manifest.SourceLastUpdateEnd = deriveKEGGReleaseFields(
+		manifest.SourceLastUpdate,
+		manifest.SourceLastUpdateStart,
+		manifest.SourceLastUpdateEnd,
 	)
 	return manifest, nil
 }

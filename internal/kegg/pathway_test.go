@@ -588,6 +588,85 @@ func TestParseKEGGReleaseFromInfoErrorMessageIsExplicit(t *testing.T) {
 	}
 }
 
+func TestParseKEGGInfoMetadataSupportsLastUpdate(t *testing.T) {
+	metadata, err := parseKEGGInfoMetadata([]byte("pathway\tKEGG pathway maps\npath\t586 entries\n\tLast update 2026/06/12\n"))
+	if err != nil {
+		t.Fatalf("parseKEGGInfoMetadata returned error: %v", err)
+	}
+	if metadata.sourceRelease != "" {
+		t.Fatalf("sourceRelease = %q, want empty", metadata.sourceRelease)
+	}
+	if metadata.sourceLastUpdate != "2026-06-12" {
+		t.Fatalf("sourceLastUpdate = %q, want 2026-06-12", metadata.sourceLastUpdate)
+	}
+}
+
+func TestParseKEGGInfoMetadataSupportsRelease(t *testing.T) {
+	metadata, err := parseKEGGInfoMetadata([]byte("pathway          KEGG Pathway Database\npathway          Release 117.0+/03-10, Mar 10\n"))
+	if err != nil {
+		t.Fatalf("parseKEGGInfoMetadata returned error: %v", err)
+	}
+	if metadata.sourceRelease != "117.0+/03-10" {
+		t.Fatalf("sourceRelease = %q, want 117.0+/03-10", metadata.sourceRelease)
+	}
+	if metadata.sourceLastUpdate != "" {
+		t.Fatalf("sourceLastUpdate = %q, want empty", metadata.sourceLastUpdate)
+	}
+}
+
+func TestRunFetchPathwayExplicitSnapshotVersionAllowsLastUpdateInfo(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() {
+		baseURL = oldBaseURL
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/info/pathway":
+			_, _ = writer.Write([]byte("pathway\tKEGG pathway maps\npath\t586 entries\n\tLast update 2026/06/12\n"))
+		case "/list/pathway/hsa":
+			_, _ = writer.Write([]byte("hsa00010\tGlycolysis / Gluconeogenesis\n"))
+		case "/get/hsa00010":
+			_, _ = writer.Write([]byte("ENTRY       hsa00010 Pathway\nNAME        Glycolysis / Gluconeogenesis\n"))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+
+	dirOut := t.TempDir()
+	cfg := pathwayConfig{
+		dirOut:          dirOut,
+		versionToken:    "2026-04",
+		assetNames:      []string{"entry"},
+		organismCodes:   []string{"hsa"},
+		retryMax:        1,
+		ruleExisting:    "skip",
+		requestInterval: 0,
+	}
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatalf("runFetchPathway returned error: %v", err)
+	}
+
+	manifest, err := readExistingPathwayManifest(filepath.Join(dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("readExistingPathwayManifest returned error: %v", err)
+	}
+	if manifest.VersionToken != "2026-04" {
+		t.Fatalf("VersionToken = %q, want 2026-04", manifest.VersionToken)
+	}
+	if manifest.SourceRelease != "" {
+		t.Fatalf("SourceRelease = %q, want empty", manifest.SourceRelease)
+	}
+	if manifest.SourceLastUpdate != "2026-06-12" || manifest.SourceLastUpdateStart != "2026-06-12" || manifest.SourceLastUpdateEnd != "2026-06-12" {
+		t.Fatalf("last update fields = %q, %q, %q", manifest.SourceLastUpdate, manifest.SourceLastUpdateStart, manifest.SourceLastUpdateEnd)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/hsa/hsa00010.txt" {
+		t.Fatalf("manifest.Files = %#v", manifest.Files)
+	}
+}
+
 func TestDerivePathwayListURLReferenceAndOrganism(t *testing.T) {
 	if value := derivePathwayListURL(&pathwayConfig{shouldFetchReference: true}); value != "https://rest.kegg.jp/list/pathway" {
 		t.Fatalf("derivePathwayListURL reference = %q", value)

@@ -104,34 +104,47 @@ func TestKEGGClientDownloadRetriesReadError(t *testing.T) {
 }
 
 func TestKEGGClientDownloadRetriesRetryableStatus(t *testing.T) {
-	attempts := 0
-	clientHTTP := &http.Client{
-		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			attempts++
-			if attempts == 1 {
-				return &http.Response{
-					StatusCode: http.StatusServiceUnavailable,
-					Status:     "503 Service Unavailable",
-					Body:       io.NopCloser(strings.NewReader("busy")),
-				}, nil
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Body:       io.NopCloser(strings.NewReader("ok")),
-			}, nil
-		}),
+	tests := []struct {
+		name   string
+		status int
+		text   string
+	}{
+		{name: "service unavailable", status: http.StatusServiceUnavailable, text: "503 Service Unavailable"},
+		{name: "forbidden", status: http.StatusForbidden, text: "403 Forbidden"},
 	}
 
-	clientKegg := createKEGGClient(clientHTTP, 0, 2, 0)
-	data, err := clientKegg.download("https://example.test/status")
-	if err != nil {
-		t.Fatalf("download returned error: %v", err)
-	}
-	if string(data) != "ok" {
-		t.Fatalf("download data = %q, want %q", string(data), "ok")
-	}
-	if attempts != 2 {
-		t.Fatalf("download attempts = %d, want %d", attempts, 2)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			attempts := 0
+			clientHTTP := &http.Client{
+				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					attempts++
+					if attempts == 1 {
+						return &http.Response{
+							StatusCode: tc.status,
+							Status:     tc.text,
+							Body:       io.NopCloser(strings.NewReader("busy")),
+						}, nil
+					}
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader("ok")),
+					}, nil
+				}),
+			}
+
+			clientKegg := createKEGGClient(clientHTTP, 0, 2, 0)
+			data, err := clientKegg.download("https://example.test/status")
+			if err != nil {
+				t.Fatalf("download returned error: %v", err)
+			}
+			if string(data) != "ok" {
+				t.Fatalf("download data = %q, want %q", string(data), "ok")
+			}
+			if attempts != 2 {
+				t.Fatalf("download attempts = %d, want %d", attempts, 2)
+			}
+		})
 	}
 }

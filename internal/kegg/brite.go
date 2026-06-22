@@ -23,17 +23,20 @@ type briteRecord struct {
 }
 
 type briteManifestFile struct {
-	Database           string                 `toml:"database"`
-	Asset              string                 `toml:"asset"`
-	Version            string                 `toml:"version"`
-	VersionToken       string                 `toml:"version_token"`
-	SourceRelease      string                 `toml:"source_release"`
-	SourceReleaseStart string                 `toml:"source_release_start,omitempty"`
-	SourceReleaseEnd   string                 `toml:"source_release_end,omitempty"`
-	DownloadedAt       string                 `toml:"downloaded_at"`
-	Scope              manifestScope          `toml:"scope"`
-	Brites             []briteManifestEntry   `toml:"brites"`
-	Files              []briteManifestFileRef `toml:"files"`
+	Database              string                 `toml:"database"`
+	Asset                 string                 `toml:"asset"`
+	Version               string                 `toml:"version"`
+	VersionToken          string                 `toml:"version_token"`
+	SourceRelease         string                 `toml:"source_release"`
+	SourceReleaseStart    string                 `toml:"source_release_start,omitempty"`
+	SourceReleaseEnd      string                 `toml:"source_release_end,omitempty"`
+	SourceLastUpdate      string                 `toml:"source_last_update,omitempty"`
+	SourceLastUpdateStart string                 `toml:"source_last_update_start,omitempty"`
+	SourceLastUpdateEnd   string                 `toml:"source_last_update_end,omitempty"`
+	DownloadedAt          string                 `toml:"downloaded_at"`
+	Scope                 manifestScope          `toml:"scope"`
+	Brites                []briteManifestEntry   `toml:"brites"`
+	Files                 []briteManifestFileRef `toml:"files"`
 }
 
 type briteManifestEntry struct {
@@ -55,16 +58,16 @@ func runFetchBrite(cfg *briteConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
-	sourceReleaseStart, _, err := resolveKEGGVersion(clientKegg, "brite")
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	cfg.sourceRelease = sourceReleaseStart
-	cfg.sourceReleaseStart = sourceReleaseStart
+	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "brite")
+	if err != nil {
+		logf("warning: KEGG brite info metadata unavailable: %v", err)
+	} else {
+		cfg.applyKEGGInfoMetadataStart(metadataStart)
+	}
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -115,17 +118,11 @@ func runFetchBrite(cfg *briteConfig) error {
 	if err != nil {
 		return err
 	}
-	sourceReleaseEnd, _, err := resolveKEGGVersion(clientKegg, "brite")
+	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "brite")
 	if err != nil {
-		return err
-	}
-	cfg.sourceReleaseEnd = sourceReleaseEnd
-	if cfg.sourceReleaseStart != cfg.sourceReleaseEnd {
-		logf(
-			"KEGG brite release changed during download: start=%s end=%s",
-			cfg.sourceReleaseStart,
-			cfg.sourceReleaseEnd,
-		)
+		logf("warning: KEGG brite info metadata unavailable after download: %v", err)
+	} else {
+		cfg.applyKEGGInfoMetadataEnd(metadataEnd)
 	}
 
 	if err := writeBriteManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
@@ -449,6 +446,11 @@ func buildBriteManifest(
 		cfg.sourceReleaseStart,
 		cfg.sourceReleaseEnd,
 	)
+	sourceLastUpdate, sourceLastUpdateStart, sourceLastUpdateEnd := deriveKEGGReleaseFields(
+		cfg.sourceLastUpdate,
+		cfg.sourceLastUpdateStart,
+		cfg.sourceLastUpdateEnd,
+	)
 	mapRecordsByBrite := make(map[string][]briteRecord)
 	briteIDs := make([]string, 0)
 	for _, record := range records {
@@ -491,14 +493,17 @@ func buildBriteManifest(
 	}
 
 	return briteManifestFile{
-		Database:           "kegg",
-		Asset:              "brite",
-		Version:            cfg.version,
-		VersionToken:       cfg.versionToken,
-		SourceRelease:      sourceRelease,
-		SourceReleaseStart: sourceReleaseStart,
-		SourceReleaseEnd:   sourceReleaseEnd,
-		DownloadedAt:       timeDownloaded.Format(time.RFC3339),
+		Database:              "kegg",
+		Asset:                 "brite",
+		Version:               cfg.version,
+		VersionToken:          cfg.versionToken,
+		SourceRelease:         sourceRelease,
+		SourceReleaseStart:    sourceReleaseStart,
+		SourceReleaseEnd:      sourceReleaseEnd,
+		SourceLastUpdate:      sourceLastUpdate,
+		SourceLastUpdateStart: sourceLastUpdateStart,
+		SourceLastUpdateEnd:   sourceLastUpdateEnd,
+		DownloadedAt:          timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  deriveBriteManifestScopeType(cfg, records),
 			Value: deriveBriteManifestScopeValue(cfg, records),
@@ -618,7 +623,7 @@ func normalizeBriteID(text string) string {
 }
 
 func resolveKEGGOrganismCodes(clientKegg *keggClient, ruleOrder string) ([]string, error) {
-	data, err := clientKegg.download(baseURL + "/list/organism")
+	data, err := clientKegg.download(deriveKEGGGenomeListURL())
 	if err != nil {
 		return nil, err
 	}
@@ -643,6 +648,9 @@ func parseKEGGOrganismCodesFromList(data []byte) ([]string, error) {
 			continue
 		}
 		code := strings.TrimSpace(fields[1])
+		if indexSemicolon := strings.Index(code, ";"); indexSemicolon >= 0 {
+			code = strings.TrimSpace(code[:indexSemicolon])
+		}
 		if code == "" {
 			continue
 		}

@@ -22,12 +22,18 @@ import (
 )
 
 const (
-	baseURL                   = "https://rest.kegg.jp"
 	defaultKEGGRetryMax       = 5
 	defaultKEGGRetryWait      = 3 * time.Second
 	pathwayInspectWorkersMax  = 8
 	keggPathwayScopeBatchSize = 32
 )
+
+var baseURL = "https://rest.kegg.jp"
+
+type keggInfoMetadata struct {
+	sourceRelease    string
+	sourceLastUpdate string
+}
 
 type pathwayRecord struct {
 	PathwayID string
@@ -75,17 +81,20 @@ func (stats *pathwayLocalPlanningStats) add(other pathwayLocalPlanningStats) {
 }
 
 type manifestFile struct {
-	Database           string            `toml:"database"`
-	Asset              string            `toml:"asset"`
-	Version            string            `toml:"version"`
-	VersionToken       string            `toml:"version_token"`
-	SourceRelease      string            `toml:"source_release"`
-	SourceReleaseStart string            `toml:"source_release_start,omitempty"`
-	SourceReleaseEnd   string            `toml:"source_release_end,omitempty"`
-	DownloadedAt       string            `toml:"downloaded_at"`
-	Scope              manifestScope     `toml:"scope"`
-	Pathways           []manifestPathway `toml:"pathways"`
-	Files              []manifestAsset   `toml:"files"`
+	Database              string            `toml:"database"`
+	Asset                 string            `toml:"asset"`
+	Version               string            `toml:"version"`
+	VersionToken          string            `toml:"version_token"`
+	SourceRelease         string            `toml:"source_release"`
+	SourceReleaseStart    string            `toml:"source_release_start,omitempty"`
+	SourceReleaseEnd      string            `toml:"source_release_end,omitempty"`
+	SourceLastUpdate      string            `toml:"source_last_update,omitempty"`
+	SourceLastUpdateStart string            `toml:"source_last_update_start,omitempty"`
+	SourceLastUpdateEnd   string            `toml:"source_last_update_end,omitempty"`
+	DownloadedAt          string            `toml:"downloaded_at"`
+	Scope                 manifestScope     `toml:"scope"`
+	Pathways              []manifestPathway `toml:"pathways"`
+	Files                 []manifestAsset   `toml:"files"`
 }
 
 type manifestScope struct {
@@ -112,16 +121,16 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
-	sourceReleaseStart, _, err := resolveKEGGVersion(clientKegg, "pathway")
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	cfg.sourceRelease = sourceReleaseStart
-	cfg.sourceReleaseStart = sourceReleaseStart
+	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
+	if err != nil {
+		logf("warning: KEGG pathway info metadata unavailable: %v", err)
+	} else {
+		cfg.applyKEGGInfoMetadataStart(metadataStart)
+	}
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, filepath.Join(cfg.dirOut, "pathway", cfg.versionToken))
 	if err != nil {
 		return err
@@ -186,17 +195,11 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	if err != nil {
 		return err
 	}
-	sourceReleaseEnd, _, err := resolveKEGGVersion(clientKegg, "pathway")
+	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
 	if err != nil {
-		return err
-	}
-	cfg.sourceReleaseEnd = sourceReleaseEnd
-	if cfg.sourceReleaseStart != cfg.sourceReleaseEnd {
-		logf(
-			"KEGG pathway release changed during download: start=%s end=%s",
-			cfg.sourceReleaseStart,
-			cfg.sourceReleaseEnd,
-		)
+		logf("warning: KEGG pathway info metadata unavailable after download: %v", err)
+	} else {
+		cfg.applyKEGGInfoMetadataEnd(metadataEnd)
 	}
 
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
@@ -899,6 +902,11 @@ func buildManifestFile(
 		cfg.sourceReleaseStart,
 		cfg.sourceReleaseEnd,
 	)
+	sourceLastUpdate, sourceLastUpdateStart, sourceLastUpdateEnd := deriveKEGGReleaseFields(
+		cfg.sourceLastUpdate,
+		cfg.sourceLastUpdateStart,
+		cfg.sourceLastUpdateEnd,
+	)
 	mapRecordsByPathway := make(map[string][]pathwayRecord)
 	pathwayIDs := make([]string, 0)
 	for _, record := range records {
@@ -944,14 +952,17 @@ func buildManifestFile(
 	scopeType, scopeValue := derivePathwayManifestScope(cfg, records)
 
 	return manifestFile{
-		Database:           "kegg",
-		Asset:              "pathway",
-		Version:            cfg.version,
-		VersionToken:       cfg.versionToken,
-		SourceRelease:      sourceRelease,
-		SourceReleaseStart: sourceReleaseStart,
-		SourceReleaseEnd:   sourceReleaseEnd,
-		DownloadedAt:       timeDownloaded.Format(time.RFC3339),
+		Database:              "kegg",
+		Asset:                 "pathway",
+		Version:               cfg.version,
+		VersionToken:          cfg.versionToken,
+		SourceRelease:         sourceRelease,
+		SourceReleaseStart:    sourceReleaseStart,
+		SourceReleaseEnd:      sourceReleaseEnd,
+		SourceLastUpdate:      sourceLastUpdate,
+		SourceLastUpdateStart: sourceLastUpdateStart,
+		SourceLastUpdateEnd:   sourceLastUpdateEnd,
+		DownloadedAt:          timeDownloaded.Format(time.RFC3339),
 		Scope: manifestScope{
 			Type:  scopeType,
 			Value: scopeValue,
@@ -1144,7 +1155,7 @@ func createHTTPClient(shouldAllowInsecureTLS bool) *http.Client {
 
 func isRetryableKEGGStatus(statusCode int) bool {
 	switch statusCode {
-	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+	case http.StatusForbidden, http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
 		return true
 	}
 	return statusCode >= 500
@@ -1220,20 +1231,16 @@ func logf(format string, args ...interface{}) {
 	logx.Logf("biofetch kegg", format, args...)
 }
 
-func resolveKEGGVersion(clientKegg *keggClient, databaseName string) (string, string, error) {
+func resolveKEGGInfoMetadata(clientKegg *keggClient, databaseName string) (keggInfoMetadata, error) {
 	dataInfo, err := clientKegg.download(baseURL + "/info/" + databaseName)
 	if err != nil {
-		return "", "", err
+		return keggInfoMetadata{}, err
 	}
-	sourceRelease, err := parseKEGGReleaseFromInfo(dataInfo)
+	metadata, err := parseKEGGInfoMetadata(dataInfo)
 	if err != nil {
-		return "", "", err
+		return keggInfoMetadata{}, err
 	}
-	majorVersion, err := parseKEGGMajorVersion(sourceRelease)
-	if err != nil {
-		return "", "", err
-	}
-	return sourceRelease, majorVersion, nil
+	return metadata, nil
 }
 
 func parseKEGGReleaseFromInfo(data []byte) (string, error) {
@@ -1243,34 +1250,90 @@ func parseKEGGReleaseFromInfo(data []byte) (string, error) {
 		if line == "" {
 			continue
 		}
-		textPrefix := "Release "
-		index := strings.Index(line, textPrefix)
-		if index < 0 {
-			continue
-		}
-		textAfter := strings.TrimSpace(line[index+len(textPrefix):])
-		if textAfter == "" {
-			continue
-		}
-		indexComma := strings.Index(textAfter, ",")
-		if indexComma >= 0 {
-			textAfter = strings.TrimSpace(textAfter[:indexComma])
-		}
-		if textAfter != "" {
-			return textAfter, nil
+		if value := parseKEGGInfoLineValue(line, "Release "); value != "" {
+			return value, nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan KEGG info output: %w", err)
 	}
+	return "", newKEGGReleaseMissingError(data)
+}
+
+func parseKEGGInfoMetadata(data []byte) (keggInfoMetadata, error) {
+	metadata := keggInfoMetadata{}
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if value := parseKEGGInfoLineValue(line, "Release "); value != "" {
+			metadata.sourceRelease = value
+		}
+		if value := parseKEGGInfoLineValue(line, "Last update "); value != "" {
+			metadata.sourceLastUpdate = normalizeKEGGLastUpdate(value)
+		}
+		if metadata.sourceRelease != "" && metadata.sourceLastUpdate != "" {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return keggInfoMetadata{}, fmt.Errorf("scan KEGG info output: %w", err)
+	}
+	if metadata.sourceRelease == "" && metadata.sourceLastUpdate == "" {
+		return keggInfoMetadata{}, newKEGGInfoMetadataMissingError(data)
+	}
+	return metadata, nil
+}
+
+func parseKEGGInfoLineValue(line string, textPrefix string) string {
+	index := strings.Index(line, textPrefix)
+	if index < 0 {
+		return ""
+	}
+	textAfter := strings.TrimSpace(line[index+len(textPrefix):])
+	if textAfter == "" {
+		return ""
+	}
+	indexComma := strings.Index(textAfter, ",")
+	if indexComma >= 0 {
+		textAfter = strings.TrimSpace(textAfter[:indexComma])
+	}
+	return textAfter
+}
+
+func normalizeKEGGLastUpdate(value string) string {
+	text := strings.TrimSpace(value)
+	if timeParsed, err := time.Parse("2006/01/02", text); err == nil {
+		return timeParsed.Format("2006-01-02")
+	}
+	return text
+}
+
+func newKEGGInfoMetadataMissingError(data []byte) error {
 	textPreview := strings.TrimSpace(string(data))
 	if textPreview == "" {
-		return "", fmt.Errorf("failed to parse KEGG release from info response: upstream response was empty")
+		return fmt.Errorf("failed to parse KEGG info metadata from info response: upstream response was empty")
 	}
 	if len(textPreview) > 160 {
 		textPreview = textPreview[:160]
 	}
-	return "", fmt.Errorf(
+	return fmt.Errorf(
+		"failed to parse KEGG info metadata from info response: upstream response did not contain a 'Release ...' or 'Last update ...' field (preview=%q)",
+		textPreview,
+	)
+}
+
+func newKEGGReleaseMissingError(data []byte) error {
+	textPreview := strings.TrimSpace(string(data))
+	if textPreview == "" {
+		return fmt.Errorf("failed to parse KEGG release from info response: upstream response was empty")
+	}
+	if len(textPreview) > 160 {
+		textPreview = textPreview[:160]
+	}
+	return fmt.Errorf(
 		"failed to parse KEGG release from info response: upstream response did not contain a 'Release ...' field (preview=%q)",
 		textPreview,
 	)

@@ -47,7 +47,7 @@ func TestBuildMappingStaticAssets(t *testing.T) {
 		got = append(got, assetFields{name: asset.Name, path: asset.Path, url: asset.URL})
 	}
 	expected := []assetFields{
-		{name: "organism", path: "raw/organism/list_organism.tsv", url: "https://example.test/list/organism"},
+		{name: "organism", path: "raw/organism/list_organism.tsv", url: "https://example.test/list/genome"},
 		{name: "hsa.conv_uniprot", path: "raw/hsa/conv_uniprot.tsv", url: "https://example.test/conv/hsa/uniprot"},
 		{name: "hsa.gene_ko", path: "raw/hsa/gene_ko.tsv", url: "https://example.test/link/ko/hsa"},
 		{name: "ko_pathway", path: "raw/ko/ko_pathway.tsv", url: "https://example.test/link/pathway/ko"},
@@ -89,7 +89,7 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 	countConv := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/list/organism":
+		case "/list/genome":
 			_, _ = writer.Write([]byte("T01001\thsa\tHomo sapiens\tEukaryotes;Animals\n"))
 		case "/conv/hsa/uniprot":
 			if request.Method == http.MethodGet {
@@ -151,8 +151,8 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 func TestRunFetchMappingDownloadAllResolvesOrganisms(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/list/organism":
-			_, _ = writer.Write([]byte("T01001\thsa\tHomo sapiens\tEukaryotes;Animals\nT01002\tmmu\tMus musculus\tEukaryotes;Animals\n"))
+		case "/list/genome":
+			_, _ = writer.Write([]byte("T01001\thsa; Homo sapiens (human)\nT01002\tmmu; Mus musculus (mouse)\n"))
 		case "/link/ko/hsa", "/link/ko/mmu":
 			_, _ = writer.Write([]byte("hsa:1\tko:K00001\n"))
 		default:

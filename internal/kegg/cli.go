@@ -28,6 +28,9 @@ type pathwayConfig struct {
 	sourceRelease           string
 	sourceReleaseStart      string
 	sourceReleaseEnd        string
+	sourceLastUpdate        string
+	sourceLastUpdateStart   string
+	sourceLastUpdateEnd     string
 	assetNames              []string
 	ruleOrder               string
 	organismCode            string
@@ -54,6 +57,9 @@ type briteConfig struct {
 	sourceRelease           string
 	sourceReleaseStart      string
 	sourceReleaseEnd        string
+	sourceLastUpdate        string
+	sourceLastUpdateStart   string
+	sourceLastUpdateEnd     string
 	catalogCode             string
 	ruleOrder               string
 	organismCodes           []string

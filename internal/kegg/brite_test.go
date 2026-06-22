@@ -121,7 +121,7 @@ func TestParseKEGGReleaseFromInfo(t *testing.T) {
 }
 
 func TestParseKEGGOrganismCodesFromList(t *testing.T) {
-	data := []byte("T01001\thsa\tHomo sapiens\nT01002\tmmu\tMus musculus\n")
+	data := []byte("T01001\thsa\tHomo sapiens\nT01002\tmmu; Mus musculus (mouse)\n")
 	values, err := parseKEGGOrganismCodesFromList(data)
 	if err != nil {
 		t.Fatalf("parseKEGGOrganismCodesFromList returned error: %v", err)

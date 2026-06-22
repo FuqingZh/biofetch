@@ -297,7 +297,7 @@ func resolveMappingOrganismCodes(cfg *mappingConfig) ([]string, error) {
 	if cfg.shouldDownloadAll {
 		clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 		clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
-		data, err := clientKegg.download(keggMappingBaseURL + "/list/organism")
+		data, err := clientKegg.download(deriveMappingGenomeListURL())
 		if err != nil {
 			return nil, err
 		}
@@ -331,7 +331,7 @@ func buildMappingStaticAssets(assets []string, organismCodes []string) []statica
 			result = append(result, staticasset.Asset{
 				Name: "organism",
 				Path: filepath.ToSlash(filepath.Join("raw", "organism", "list_organism.tsv")),
-				URL:  keggMappingBaseURL + "/list/organism",
+				URL:  deriveMappingGenomeListURL(),
 			})
 		case "ko_pathway":
 			result = append(result, staticasset.Asset{
@@ -346,6 +346,10 @@ func buildMappingStaticAssets(assets []string, organismCodes []string) []statica
 		}
 	}
 	return result
+}
+
+func deriveMappingGenomeListURL() string {
+	return keggMappingBaseURL + "/list/genome"
 }
 
 func buildOrganismMappingAsset(asset string, organismCode string) staticasset.Asset {

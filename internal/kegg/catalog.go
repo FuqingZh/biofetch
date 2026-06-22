@@ -16,7 +16,6 @@ import (
 const (
 	keggCatalogAsset    = "organism"
 	keggCatalogFileName = "organism.list.tsv"
-	keggCatalogURL      = baseURL + "/list/organism"
 )
 
 type catalogConfig struct {
@@ -27,6 +26,9 @@ type catalogConfig struct {
 	sourceRelease          string
 	sourceReleaseStart     string
 	sourceReleaseEnd       string
+	sourceLastUpdate       string
+	sourceLastUpdateStart  string
+	sourceLastUpdateEnd    string
 	shouldAllowInsecureTLS bool
 	shouldDryRun           bool
 }
@@ -55,16 +57,19 @@ type catalogRecord struct {
 }
 
 type catalogManifestFile struct {
-	Database           string                    `toml:"database"`
-	Asset              string                    `toml:"asset"`
-	Catalog            string                    `toml:"catalog"`
-	Version            string                    `toml:"version"`
-	VersionToken       string                    `toml:"version_token"`
-	SourceRelease      string                    `toml:"source_release"`
-	SourceReleaseStart string                    `toml:"source_release_start,omitempty"`
-	SourceReleaseEnd   string                    `toml:"source_release_end,omitempty"`
-	DownloadedAt       string                    `toml:"downloaded_at"`
-	Files              []catalogManifestFileItem `toml:"files"`
+	Database              string                    `toml:"database"`
+	Asset                 string                    `toml:"asset"`
+	Catalog               string                    `toml:"catalog"`
+	Version               string                    `toml:"version"`
+	VersionToken          string                    `toml:"version_token"`
+	SourceRelease         string                    `toml:"source_release"`
+	SourceReleaseStart    string                    `toml:"source_release_start,omitempty"`
+	SourceReleaseEnd      string                    `toml:"source_release_end,omitempty"`
+	SourceLastUpdate      string                    `toml:"source_last_update,omitempty"`
+	SourceLastUpdateStart string                    `toml:"source_last_update_start,omitempty"`
+	SourceLastUpdateEnd   string                    `toml:"source_last_update_end,omitempty"`
+	DownloadedAt          string                    `toml:"downloaded_at"`
+	Files                 []catalogManifestFileItem `toml:"files"`
 }
 
 type catalogManifestFileItem struct {
@@ -206,16 +211,16 @@ func runFetchCatalog(cfg *catalogConfig) error {
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
 	clientKegg := createKEGGClient(clientHTTP, 350*time.Millisecond, defaultKEGGRetryMax, defaultKEGGRetryWait)
 
-	sourceReleaseStart, _, err := resolveKEGGVersion(clientKegg, "kegg")
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	cfg.sourceRelease = sourceReleaseStart
-	cfg.sourceReleaseStart = sourceReleaseStart
+	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "kegg")
+	if err != nil {
+		logf("warning: KEGG catalog info metadata unavailable: %v", err)
+	} else {
+		cfg.applyKEGGInfoMetadataStart(metadataStart)
+	}
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -227,11 +232,12 @@ func runFetchCatalog(cfg *catalogConfig) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	fileOut := filepath.Join(dirRaw, keggCatalogFileName)
 	pathRel := filepath.ToSlash(filepath.Join("raw", keggCatalogFileName))
+	urlCatalog := deriveKEGGCatalogURL()
 
 	if cfg.shouldDryRun {
 		logf("[dry-run] version dir: %s", dirVersion)
 		logf("[dry-run] manifest: %s", fileManifest)
-		logf("[dry-run] %s -> %s", keggCatalogURL, fileOut)
+		logf("[dry-run] %s -> %s", urlCatalog, fileOut)
 		return nil
 	}
 
@@ -239,16 +245,16 @@ func runFetchCatalog(cfg *catalogConfig) error {
 		return fmt.Errorf("create raw dir: %w", err)
 	}
 
-	record, ok, err := inspectCatalogFile(fileOut, pathRel, keggCatalogAsset, keggCatalogURL)
+	record, ok, err := inspectCatalogFile(fileOut, pathRel, keggCatalogAsset, urlCatalog)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		logf("downloading %s", keggCatalogFileName)
-		if err := clientKegg.downloadFile(keggCatalogURL, fileOut); err != nil {
+		if err := clientKegg.downloadFile(urlCatalog, fileOut); err != nil {
 			return err
 		}
-		record, err = buildCatalogRecord(fileOut, pathRel, keggCatalogAsset, keggCatalogURL)
+		record, err = buildCatalogRecord(fileOut, pathRel, keggCatalogAsset, urlCatalog)
 		if err != nil {
 			return err
 		}
@@ -260,17 +266,11 @@ func runFetchCatalog(cfg *catalogConfig) error {
 	if err != nil {
 		return err
 	}
-	sourceReleaseEnd, _, err := resolveKEGGVersion(clientKegg, "kegg")
+	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "kegg")
 	if err != nil {
-		return err
-	}
-	cfg.sourceReleaseEnd = sourceReleaseEnd
-	if cfg.sourceReleaseStart != cfg.sourceReleaseEnd {
-		logf(
-			"KEGG catalog release changed during download: start=%s end=%s",
-			cfg.sourceReleaseStart,
-			cfg.sourceReleaseEnd,
-		)
+		logf("warning: KEGG catalog info metadata unavailable after download: %v", err)
+	} else {
+		cfg.applyKEGGInfoMetadataEnd(metadataEnd)
 	}
 	if err := writeCatalogManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return err
@@ -297,11 +297,14 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 
 	manifestExisting, _ := readExistingCatalogManifest(fileManifest)
 	cfgManifest := catalogConfig{
-		version:            firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:       firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
-		sourceRelease:      manifestExisting.SourceRelease,
-		sourceReleaseStart: manifestExisting.SourceReleaseStart,
-		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
+		version:               firstNonEmpty(manifestExisting.Version, cfg.versionToken),
+		versionToken:          firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		sourceRelease:         manifestExisting.SourceRelease,
+		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
+		sourceLastUpdate:      manifestExisting.SourceLastUpdate,
+		sourceLastUpdateStart: manifestExisting.SourceLastUpdateStart,
+		sourceLastUpdateEnd:   manifestExisting.SourceLastUpdateEnd,
 	}
 
 	if cfg.shouldDryRun {
@@ -383,11 +386,14 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 	}
 
 	cfgManifest := catalogConfig{
-		version:            manifestExisting.Version,
-		versionToken:       manifestExisting.VersionToken,
-		sourceRelease:      manifestExisting.SourceRelease,
-		sourceReleaseStart: manifestExisting.SourceReleaseStart,
-		sourceReleaseEnd:   manifestExisting.SourceReleaseEnd,
+		version:               manifestExisting.Version,
+		versionToken:          manifestExisting.VersionToken,
+		sourceRelease:         manifestExisting.SourceRelease,
+		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
+		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
+		sourceLastUpdate:      manifestExisting.SourceLastUpdate,
+		sourceLastUpdateStart: manifestExisting.SourceLastUpdateStart,
+		sourceLastUpdateEnd:   manifestExisting.SourceLastUpdateEnd,
 	}
 	if err := writeCatalogManifest(fileManifest, &cfgManifest, recordsComplete, time.Now()); err != nil {
 		return err
@@ -420,6 +426,14 @@ func inspectCatalogFile(
 		return catalogRecord{}, false, err
 	}
 	return record, true, nil
+}
+
+func deriveKEGGCatalogURL() string {
+	return deriveKEGGGenomeListURL()
+}
+
+func deriveKEGGGenomeListURL() string {
+	return baseURL + "/list/genome"
 }
 
 func writeCatalogFile(
@@ -478,6 +492,11 @@ func buildCatalogManifest(
 		cfg.sourceReleaseStart,
 		cfg.sourceReleaseEnd,
 	)
+	sourceLastUpdate, sourceLastUpdateStart, sourceLastUpdateEnd := deriveKEGGReleaseFields(
+		cfg.sourceLastUpdate,
+		cfg.sourceLastUpdateStart,
+		cfg.sourceLastUpdateEnd,
+	)
 	files := make([]catalogManifestFileItem, 0, len(records))
 	for _, record := range records {
 		files = append(files, catalogManifestFileItem{
@@ -490,16 +509,19 @@ func buildCatalogManifest(
 	}
 
 	return catalogManifestFile{
-		Database:           "kegg",
-		Asset:              "catalog",
-		Catalog:            keggCatalogAsset,
-		Version:            cfg.version,
-		VersionToken:       cfg.versionToken,
-		SourceRelease:      sourceRelease,
-		SourceReleaseStart: sourceReleaseStart,
-		SourceReleaseEnd:   sourceReleaseEnd,
-		DownloadedAt:       timeDownloaded.Format(time.RFC3339),
-		Files:              files,
+		Database:              "kegg",
+		Asset:                 "catalog",
+		Catalog:               keggCatalogAsset,
+		Version:               cfg.version,
+		VersionToken:          cfg.versionToken,
+		SourceRelease:         sourceRelease,
+		SourceReleaseStart:    sourceReleaseStart,
+		SourceReleaseEnd:      sourceReleaseEnd,
+		SourceLastUpdate:      sourceLastUpdate,
+		SourceLastUpdateStart: sourceLastUpdateStart,
+		SourceLastUpdateEnd:   sourceLastUpdateEnd,
+		DownloadedAt:          timeDownloaded.Format(time.RFC3339),
+		Files:                 files,
 	}
 }
 
@@ -516,6 +538,11 @@ func readExistingCatalogManifest(fileManifest string) (catalogManifestFile, erro
 		manifest.SourceRelease,
 		manifest.SourceReleaseStart,
 		manifest.SourceReleaseEnd,
+	)
+	manifest.SourceLastUpdate, manifest.SourceLastUpdateStart, manifest.SourceLastUpdateEnd = deriveKEGGReleaseFields(
+		manifest.SourceLastUpdate,
+		manifest.SourceLastUpdateStart,
+		manifest.SourceLastUpdateEnd,
 	)
 	return manifest, nil
 }
@@ -587,7 +614,7 @@ func scanCatalogRecords(dirVersion string) ([]catalogRecord, error) {
 			filePath: filepath.Join(dirVersion, "raw", keggCatalogFileName),
 			pathRel:  filepath.ToSlash(filepath.Join("raw", keggCatalogFileName)),
 			asset:    keggCatalogAsset,
-			urlFile:  keggCatalogURL,
+			urlFile:  deriveKEGGCatalogURL(),
 		},
 	}, func(task taskCatalogRecord) (catalogRecord, error) {
 		return buildCatalogRecord(task.filePath, task.pathRel, task.asset, task.urlFile)

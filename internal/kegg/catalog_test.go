@@ -25,7 +25,7 @@ func TestBuildCatalogManifest(t *testing.T) {
 			PathRel: "raw/organism.list.tsv",
 			SHA256:  "sha-organism",
 			Bytes:   11,
-			URL:     keggCatalogURL,
+			URL:     deriveKEGGCatalogURL(),
 		},
 	}
 
