@@ -3,6 +3,7 @@ package kegg
 import (
 	"biofetch/internal/shared/httpx"
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -343,6 +344,107 @@ func TestFetchPathwayEntryExhaustsStatus403RetriesAndContinues(t *testing.T) {
 	}
 	if countGET.Load() != 2 {
 		t.Fatalf("countGET = %d, want 2", countGET.Load())
+	}
+}
+
+func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T) {
+	tests := []struct {
+		name      string
+		assetName string
+		fileName  string
+		pathRel   string
+	}{
+		{name: "kgml", assetName: "pathway.kgml", fileName: "sxo00460.kgml", pathRel: "raw/sxo/sxo00460.kgml"},
+		{name: "conf", assetName: "pathway.conf", fileName: "sxo00460.conf", pathRel: "raw/sxo/sxo00460.conf"},
+		{name: "image", assetName: "pathway.image", fileName: "sxo00460.png", pathRel: "raw/sxo/sxo00460.png"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var countGET atomic.Int32
+			clientHTTP := &http.Client{
+				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					if request.Method == http.MethodHead {
+						return nil, io.EOF
+					}
+					countGET.Add(1)
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body: &flakyReadCloser{
+							data: []byte("partial"),
+							err:  io.ErrUnexpectedEOF,
+						},
+					}, nil
+				}),
+			}
+
+			dirOut := t.TempDir()
+			fileOut := filepath.Join(dirOut, tc.fileName)
+			clientKegg := createKEGGClient(clientHTTP, 0, 3, 0)
+			_, ok, err := fetchPathwayAsset(
+				clientKegg,
+				false,
+				fileOut,
+				tc.pathRel,
+				"sxo00460",
+				tc.assetName,
+				"https://example.test/get/sxo00460",
+			)
+			if err != nil {
+				t.Fatalf("fetchPathwayAsset returned error: %v", err)
+			}
+			if ok {
+				t.Fatal("ok = true")
+			}
+			if countGET.Load() != 3 {
+				t.Fatalf("countGET = %d, want 3", countGET.Load())
+			}
+			if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+				t.Fatalf("completed file exists or stat failed unexpectedly: %v", err)
+			}
+		})
+	}
+}
+
+func TestFetchPathwayEntryExhaustsTransientRetriesAndFails(t *testing.T) {
+	var countGET atomic.Int32
+	clientHTTP := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method == http.MethodHead {
+				return nil, io.EOF
+			}
+			countGET.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body: &flakyReadCloser{
+					data: []byte("partial"),
+					err:  io.ErrUnexpectedEOF,
+				},
+			}, nil
+		}),
+	}
+
+	fileOut := filepath.Join(t.TempDir(), "sxo00460.txt")
+	clientKegg := createKEGGClient(clientHTTP, 0, 3, 0)
+	_, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/sxo/sxo00460.txt",
+		"sxo00460",
+		"pathway.entry",
+		"https://example.test/get/sxo00460",
+	)
+	if err == nil {
+		t.Fatal("fetchPathwayAsset returned nil error")
+	}
+	if ok {
+		t.Fatal("ok = true")
+	}
+	if countGET.Load() != 3 {
+		t.Fatalf("countGET = %d, want 3", countGET.Load())
 	}
 }
 

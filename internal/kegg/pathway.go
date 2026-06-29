@@ -577,7 +577,7 @@ func downloadPathwayAsset(
 				}
 				continue
 			}
-			if shouldContinuePathwayDownloadStatus(assetName, err) {
+			if shouldContinuePathwayDownloadError(assetName, err, shouldRetry) {
 				logx.Warnf(
 					"biofetch kegg",
 					"continuing after unavailable %s (%s): %v",
@@ -596,10 +596,7 @@ func downloadPathwayAsset(
 }
 
 func shouldSkipPathwayDownloadStatus(assetName string, err error) bool {
-	if assetName == "pathway.entry" {
-		return false
-	}
-	if assetName != "pathway.kgml" && assetName != "pathway.conf" && assetName != "pathway.image" {
+	if !isPathwaySideAsset(assetName) {
 		return false
 	}
 	return httpx.IsUnexpectedStatus(err, http.StatusNotFound) ||
@@ -613,11 +610,15 @@ func shouldRetryPathwayDownloadStatus(assetName string, err error) bool {
 	return httpx.IsUnexpectedStatus(err, http.StatusForbidden)
 }
 
-func shouldContinuePathwayDownloadStatus(assetName string, err error) bool {
-	if assetName != "pathway.entry" {
-		return false
+func shouldContinuePathwayDownloadError(assetName string, err error, shouldRetry bool) bool {
+	if assetName == "pathway.entry" {
+		return httpx.IsUnexpectedStatus(err, http.StatusForbidden)
 	}
-	return httpx.IsUnexpectedStatus(err, http.StatusForbidden)
+	return isPathwaySideAsset(assetName) && shouldRetry
+}
+
+func isPathwaySideAsset(assetName string) bool {
+	return assetName == "pathway.kgml" || assetName == "pathway.conf" || assetName == "pathway.image"
 }
 
 func inspectPathwayAssetTasks(
