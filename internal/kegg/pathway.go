@@ -1179,6 +1179,9 @@ func isRetryableKEGGError(err error) bool {
 	if errors.As(err, &errTemporary) && errTemporary.Temporary() {
 		return true
 	}
+	if strings.Contains(err.Error(), "tls: bad record MAC") {
+		return true
+	}
 
 	return errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrUnexpectedEOF) ||

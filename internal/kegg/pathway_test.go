@@ -3,6 +3,7 @@ package kegg
 import (
 	"biofetch/internal/shared/httpx"
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -353,10 +354,12 @@ func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T)
 		assetName string
 		fileName  string
 		pathRel   string
+		err       error
 	}{
-		{name: "kgml", assetName: "pathway.kgml", fileName: "sxo00460.kgml", pathRel: "raw/sxo/sxo00460.kgml"},
-		{name: "conf", assetName: "pathway.conf", fileName: "sxo00460.conf", pathRel: "raw/sxo/sxo00460.conf"},
-		{name: "image", assetName: "pathway.image", fileName: "sxo00460.png", pathRel: "raw/sxo/sxo00460.png"},
+		{name: "kgml", assetName: "pathway.kgml", fileName: "sxo00460.kgml", pathRel: "raw/sxo/sxo00460.kgml", err: io.ErrUnexpectedEOF},
+		{name: "conf", assetName: "pathway.conf", fileName: "sxo00460.conf", pathRel: "raw/sxo/sxo00460.conf", err: io.ErrUnexpectedEOF},
+		{name: "image", assetName: "pathway.image", fileName: "sxo00460.png", pathRel: "raw/sxo/sxo00460.png", err: io.ErrUnexpectedEOF},
+		{name: "image bad record mac", assetName: "pathway.image", fileName: "sxo00460.png", pathRel: "raw/sxo/sxo00460.png", err: errors.New("local error: tls: bad record MAC")},
 	}
 
 	for _, tc := range tests {
@@ -373,7 +376,7 @@ func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T)
 						Status:     "200 OK",
 						Body: &flakyReadCloser{
 							data: []byte("partial"),
-							err:  io.ErrUnexpectedEOF,
+							err:  tc.err,
 						},
 					}, nil
 				}),
