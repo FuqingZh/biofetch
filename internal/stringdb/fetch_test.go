@@ -100,7 +100,7 @@ func TestBuildManifestFile(t *testing.T) {
 	if err := toml.Unmarshal(buffer.Bytes(), &decoded); err != nil {
 		t.Fatalf("toml.Unmarshal returned error: %v", err)
 	}
-	if decoded.Database != "string" || decoded.Version != "12.0" {
+	if decoded.Database != "string" || decoded.Asset != "database" || decoded.Version != "12.0" {
 		t.Fatalf("decoded = %#v", decoded)
 	}
 	if len(decoded.Species) != 1 || decoded.Species[0].ID != "7070" {

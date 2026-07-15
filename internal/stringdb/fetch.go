@@ -48,6 +48,7 @@ type downloadTask struct {
 
 type manifestFile struct {
 	Database     string             `toml:"database"`
+	Asset        string             `toml:"asset"`
 	Version      string             `toml:"version"`
 	VersionToken string             `toml:"version_token"`
 	DownloadedAt string             `toml:"downloaded_at"`
@@ -607,6 +608,7 @@ func buildManifestFile(
 
 	return manifestFile{
 		Database:     "string",
+		Asset:        "database",
 		Version:      strings.TrimPrefix(versionToken, "v"),
 		VersionToken: versionToken,
 		DownloadedAt: timeDownloaded.Format(time.RFC3339),

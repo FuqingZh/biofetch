@@ -1,5 +1,7 @@
 # Static Database Downloads Plan
 
+Status: superseded by `../architecture/resource-manifest-contract.md`
+
 ## Goal
 
 Add first-class download support for fixed public database assets used in

@@ -1,5 +1,7 @@
 # Static Database Downloads Verification
 
+Status: superseded by `../architecture/resource-manifest-contract.md`
+
 ## Verification Goals
 
 The feature is accepted only if it proves four properties:
