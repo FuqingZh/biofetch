@@ -179,9 +179,6 @@ func runFetchCommon(in fetchInput) error {
 	if err := os.MkdirAll(filepath.Join(dirVersion, "raw"), 0o755); err != nil {
 		return fmt.Errorf("create raw dir: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dirVersion, "tidy"), 0o755); err != nil {
-		return fmt.Errorf("create tidy dir: %w", err)
-	}
 
 	records := make([]recordFile, 0, 1+len(in.taxIDs))
 	recordQuery, err := fetchAsset(client, fileQuery, pathRelQuery, in.urlQuery, "query_meta", in.shouldOverwriteExisting)
@@ -192,12 +189,8 @@ func runFetchCommon(in fetchInput) error {
 
 	for _, taxID := range in.taxIDs {
 		dirRaw := filepath.Join(dirVersion, "raw", taxID)
-		dirTidy := filepath.Join(dirVersion, "tidy", taxID)
 		if err := os.MkdirAll(dirRaw, 0o755); err != nil {
 			return fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidy, 0o755); err != nil {
-			return fmt.Errorf("create tidy dir: %w", err)
 		}
 
 		fileData := filepath.Join(dirRaw, in.asset+".tsv")

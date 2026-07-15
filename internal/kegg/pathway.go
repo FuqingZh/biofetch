@@ -292,19 +292,16 @@ func fetchPathwayScope(
 	cfgScope.shouldFetchReference = scopeKey == "reference"
 
 	dirRawScope := filepath.Join(dirVersion, "raw", scopeKey)
-	dirTidyScope := filepath.Join(dirVersion, "tidy", scopeKey)
-	if !cfg.shouldDryRun {
-		if err := os.MkdirAll(dirRawScope, 0o755); err != nil {
-			return nil, 0, pathwayLocalPlanningStats{}, fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidyScope, 0o755); err != nil {
-			return nil, 0, pathwayLocalPlanningStats{}, fmt.Errorf("create tidy dir: %w", err)
-		}
-	}
 
 	pathwayIDs, listContent, listURL, err := resolvePathwayIDs(clientKegg, &cfgScope)
 	if err != nil {
 		return nil, 0, pathwayLocalPlanningStats{}, err
+	}
+
+	if !cfg.shouldDryRun {
+		if err := os.MkdirAll(dirRawScope, 0o755); err != nil {
+			return nil, 0, pathwayLocalPlanningStats{}, fmt.Errorf("create raw dir: %w", err)
+		}
 	}
 
 	records := make([]pathwayRecord, 0, estimatePathwayRecordCapacity(cfg.assetNames, len(pathwayIDs)))

@@ -153,9 +153,6 @@ func materializeArchiveSnapshot(client *omnipathClient, in archiveMaterializeInp
 	if err := os.MkdirAll(filepath.Join(in.dirVersion, "raw"), 0o755); err != nil {
 		return nil, fmt.Errorf("create raw dir: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(in.dirVersion, "tidy"), 0o755); err != nil {
-		return nil, fmt.Errorf("create tidy dir: %w", err)
-	}
 
 	taxIDsMaterialized, err := writeArchiveDataFiles(dataArchive, in)
 	if err != nil {
@@ -234,12 +231,8 @@ func writeArchiveDataFiles(dataArchive []byte, in archiveMaterializeInput) ([]st
 		fileOut, ok := writers[taxID]
 		if !ok {
 			dirRaw := filepath.Join(in.dirVersion, "raw", taxID)
-			dirTidy := filepath.Join(in.dirVersion, "tidy", taxID)
 			if err := os.MkdirAll(dirRaw, 0o755); err != nil {
 				return fmt.Errorf("create raw dir: %w", err)
-			}
-			if err := os.MkdirAll(dirTidy, 0o755); err != nil {
-				return fmt.Errorf("create tidy dir: %w", err)
 			}
 			filePath := filepath.Join(dirRaw, in.asset+".tsv")
 			fileHandle, err := os.Create(filePath)

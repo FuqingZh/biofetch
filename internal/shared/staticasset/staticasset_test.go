@@ -75,6 +75,9 @@ func TestFetchDownloadsAndReusesBySHA256(t *testing.T) {
 	if len(manifest.Files) != 1 || manifest.Files[0].SHA256 == "" || manifest.Files[0].Bytes != 5 {
 		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
+	if _, err := os.Stat(filepath.Join(dirOut, "fixed", "v1", "tidy")); !os.IsNotExist(err) {
+		t.Fatalf("fetch created tidy dir or stat returned unexpected error: %v", err)
+	}
 	if !hasEvent(trace.events, "reuse_file") {
 		t.Fatalf("trace events do not include reuse_file: %#v", trace.events)
 	}

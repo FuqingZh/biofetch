@@ -99,7 +99,6 @@ func runFetchOntology(cfg *ontologyConfig, readerConfirm io.Reader, writerConfir
 	}
 	defer closeRun()
 	dirRaw := filepath.Join(dirVersion, "raw")
-	dirTidy := filepath.Join(dirVersion, "tidy")
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	if cfg.ShouldDryRun {
@@ -108,9 +107,6 @@ func runFetchOntology(cfg *ontologyConfig, readerConfirm io.Reader, writerConfir
 	} else {
 		if err := os.MkdirAll(dirRaw, 0o755); err != nil {
 			return fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidy, 0o755); err != nil {
-			return fmt.Errorf("create tidy dir: %w", err)
 		}
 	}
 

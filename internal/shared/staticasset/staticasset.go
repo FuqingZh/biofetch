@@ -897,11 +897,8 @@ func buildVersionDir(dirOut string, source Source) string {
 }
 
 func ensureVersionDirs(dirVersion string) error {
-	if err := os.MkdirAll(filepath.Join(dirVersion, "raw"), 0o755); err != nil {
-		return fmt.Errorf("create raw dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dirVersion, "tidy"), 0o755); err != nil {
-		return fmt.Errorf("create tidy dir: %w", err)
+	if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+		return fmt.Errorf("create version dir: %w", err)
 	}
 	return nil
 }

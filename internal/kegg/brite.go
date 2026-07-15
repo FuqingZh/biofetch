@@ -144,13 +144,9 @@ func fetchBriteCatalog(
 	cfgCatalog.catalogCode = catalogCode
 
 	dirRawCatalog := filepath.Join(dirVersion, "raw", catalogCode)
-	dirTidyCatalog := filepath.Join(dirVersion, "tidy", catalogCode)
 	if !cfg.shouldDryRun {
 		if err := os.MkdirAll(dirRawCatalog, 0o755); err != nil {
 			return nil, 0, fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidyCatalog, 0o755); err != nil {
-			return nil, 0, fmt.Errorf("create tidy dir: %w", err)
 		}
 	}
 

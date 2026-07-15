@@ -83,7 +83,6 @@ func runFetch(cfg *config) error {
 	}
 	defer closeRun()
 	dirRaw := filepath.Join(dirVersion, "raw")
-	dirTidy := filepath.Join(dirVersion, "tidy")
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
 	if cfg.shouldDryRun {
@@ -92,9 +91,6 @@ func runFetch(cfg *config) error {
 	} else {
 		if err := os.MkdirAll(dirRaw, 0o755); err != nil {
 			return fmt.Errorf("create raw dir: %w", err)
-		}
-		if err := os.MkdirAll(dirTidy, 0o755); err != nil {
-			return fmt.Errorf("create tidy dir: %w", err)
 		}
 	}
 
