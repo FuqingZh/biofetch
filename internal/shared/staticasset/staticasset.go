@@ -20,7 +20,6 @@ type Asset struct {
 	Name                 string
 	Path                 string
 	URL                  string
-	Transform            func(string) error                `toml:"-"`
 	RecoverDownloadError func(string, error) (bool, error) `toml:"-"`
 }
 
@@ -29,7 +28,6 @@ type Source struct {
 	Asset        string
 	Source       string
 	DirName      string
-	ScanDirs     []string
 	Version      string
 	VersionToken string
 	Scope        Scope
@@ -223,7 +221,7 @@ func Lock(source Source, options Options, trace TraceSink) error {
 		return err
 	}
 	progress := newProgressReporter(source, options, 0, 0)
-	records, err := scanRecords(dirVersion, source.ScanDirs, urlsExisting, progress)
+	records, err := scanRecords(dirVersion, urlsExisting, progress)
 	if err != nil {
 		progress.finish(false)
 		return err
@@ -331,6 +329,9 @@ func validateSource(source Source) error {
 		if err != nil {
 			return fmt.Errorf("asset %q path: %w", asset.Name, err)
 		}
+		if !strings.HasPrefix(pathClean, "raw/") {
+			return fmt.Errorf("asset %q path must start with raw/: %s", asset.Name, pathClean)
+		}
 		if _, ok := pathsSeen[pathClean]; ok {
 			return fmt.Errorf("duplicate asset path: %s", pathClean)
 		}
@@ -408,15 +409,11 @@ func planSync(
 	trace TraceSink,
 	source Source,
 ) ([]FileRecord, []downloadTask, error) {
-	transformsByPath := buildTransformsByPath(source.Assets)
 	recoverersByPath := buildRecoverersByPath(source.Assets)
 	recordsReused := make([]FileRecord, 0, len(records))
 	tasksDownload := make([]downloadTask, 0, len(records))
 	for _, record := range records {
 		asset := Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
-		if transform := transformsByPath[record.Path]; transform != nil {
-			asset.Transform = transform
-		}
 		if recoverer := recoverersByPath[record.Path]; recoverer != nil {
 			asset.RecoverDownloadError = recoverer
 		}
@@ -444,16 +441,6 @@ func buildRecoverersByPath(assets []Asset) map[string]func(string, error) (bool,
 	return recoverers
 }
 
-func buildTransformsByPath(assets []Asset) map[string]func(string) error {
-	transforms := make(map[string]func(string) error, len(assets))
-	for _, asset := range assets {
-		if asset.Transform != nil {
-			transforms[asset.Path] = asset.Transform
-		}
-	}
-	return transforms
-}
-
 func validateSyncAsset(asset Asset) error {
 	if strings.TrimSpace(asset.Name) == "" {
 		return fmt.Errorf("manifest asset name must not be empty")
@@ -461,8 +448,12 @@ func validateSyncAsset(asset Asset) error {
 	if strings.TrimSpace(asset.URL) == "" {
 		return fmt.Errorf("manifest asset %q url must not be empty", asset.Name)
 	}
-	if _, err := cleanRelativePath(asset.Path); err != nil {
+	pathClean, err := cleanRelativePath(asset.Path)
+	if err != nil {
 		return fmt.Errorf("manifest asset %q path: %w", asset.Name, err)
+	}
+	if !strings.HasPrefix(pathClean, "raw/") {
+		return fmt.Errorf("manifest asset %q path must start with raw/: %s", asset.Name, pathClean)
 	}
 	return nil
 }
@@ -500,11 +491,6 @@ func runDownloadTasks(
 		}
 		if err := downloadFileWithRetry(clientHTTP, task.asset, fileOut, options.RetryMax, options.RetryWait, limiterRequest, progress); err != nil {
 			return FileRecord{}, err
-		}
-		if task.asset.Transform != nil {
-			if err := task.asset.Transform(fileOut); err != nil {
-				return FileRecord{}, fmt.Errorf("transform %s: %w", fileOut, err)
-			}
 		}
 		record, err := buildRecord(fileOut, task.asset)
 		if err != nil {
@@ -585,8 +571,8 @@ func buildRecordWithProgress(filePath string, asset Asset, progress *progressRep
 	}, nil
 }
 
-func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]string, progress *progressReporter) ([]FileRecord, error) {
-	tasks, err := planScanRecords(dirVersion, scanDirs, urlsExisting)
+func scanRecords(dirVersion string, urlsExisting map[string]string, progress *progressReporter) ([]FileRecord, error) {
+	tasks, err := planScanRecords(dirVersion, urlsExisting)
 	if err != nil {
 		return nil, err
 	}
@@ -606,43 +592,37 @@ func scanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]s
 	return records, nil
 }
 
-func planScanRecords(dirVersion string, scanDirs []string, urlsExisting map[string]string) ([]scanTask, error) {
-	if len(scanDirs) == 0 {
-		scanDirs = []string{"raw"}
-	}
+func planScanRecords(dirVersion string, urlsExisting map[string]string) ([]scanTask, error) {
 	tasks := make([]scanTask, 0)
-	for _, dirName := range scanDirs {
-		dirScan := filepath.Join(dirVersion, dirName)
-		if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			if strings.HasSuffix(entry.Name(), ".part") {
-				return nil
-			}
-			infoFile, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			pathRel, err := filepath.Rel(dirVersion, path)
-			if err != nil {
-				return err
-			}
-			pathRel = filepath.ToSlash(pathRel)
-			tasks = append(tasks, scanTask{
-				filePath: path,
-				pathRel:  pathRel,
-				url:      urlsExisting[pathRel],
-				bytes:    infoFile.Size(),
-			})
+	dirScan := filepath.Join(dirVersion, "raw")
+	if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
 			return nil
-		}); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
+		}
+		if strings.HasSuffix(entry.Name(), ".part") {
+			return nil
+		}
+		infoFile, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		pathRel, err := filepath.Rel(dirVersion, path)
+		if err != nil {
+			return err
+		}
+		pathRel = filepath.ToSlash(pathRel)
+		tasks = append(tasks, scanTask{
+			filePath: path,
+			pathRel:  pathRel,
+			url:      urlsExisting[pathRel],
+			bytes:    infoFile.Size(),
+		})
+		return nil
+	}); err != nil {
+		if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("scan files: %w", err)
 		}
 	}
@@ -659,6 +639,9 @@ func buildCompleteRecords(fileManifest string, dirVersion string, recordsCurrent
 	}
 	recordsMerged := make(map[string]FileRecord, len(recordsExisting)+len(recordsCurrent))
 	for _, record := range recordsExisting {
+		if !strings.HasPrefix(filepath.ToSlash(record.Path), "raw/") {
+			return nil, fmt.Errorf("manifest file path must start with raw/: %s", record.Path)
+		}
 		recordsMerged[record.Path] = record
 	}
 	for _, record := range recordsCurrent {

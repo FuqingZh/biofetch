@@ -2,6 +2,7 @@ package uniprot
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,53 +15,17 @@ func NewCommand() *cobra.Command {
 		Short:         "Manage UniProt raw assets and manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		RunE: func(command *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown command %q for %q", args[0], command.CommandPath())
+			}
+			return command.Help()
+		},
 	}
-	commandRoot.AddCommand(createDMNDCommand())
 	commandRoot.AddCommand(createKBCommand())
 	commandRoot.AddCommand(createUniRefCommand())
 	commandRoot.AddCommand(createIDMappingCommand())
 	return commandRoot
-}
-
-func createDMNDCommand() *cobra.Command {
-	commandDMND := &cobra.Command{
-		Use:           "dmnd",
-		Short:         "Register local UniProt DIAMOND database provenance",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	commandDMND.AddCommand(createDMNDRegisterCommand())
-	return commandDMND
-}
-
-func createDMNDRegisterCommand() *cobra.Command {
-	cfg := dmndRegisterConfig{}
-	commandRegister := &cobra.Command{
-		Use:           "register",
-		Short:         "Register an existing local uniprot.dmnd with provenance metadata",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Args:          cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRegisterDMND(&cfg)
-		},
-	}
-	commandRegister.Example = strings.Join([]string{
-		"biofetch uniprot dmnd register --dir_out /data/uniprot --version 2026_01-full --file_dmnd /data/db/uniprot.dmnd --fasta_version 2026_01 --fasta_policy full --header_format uniprot --diamond_version 2.1.11 --build_command 'diamond makedb --in uniprot.fasta -d uniprot'",
-	}, "\n")
-
-	flags := commandRegister.Flags()
-	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "UniProt asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "Fixed local DMND version token")
-	flags.StringVar(&cfg.fileDMND, "file_dmnd", "", "Existing local uniprot.dmnd path to register")
-	flags.StringVar(&cfg.fastaVersion, "fasta_version", "", "Source UniProtKB FASTA release token, e.g. 2026_01")
-	flags.StringVar(&cfg.fastaPolicy, "fasta_policy", "", "Source FASTA policy, e.g. reviewed|reference|full")
-	flags.StringVar(&cfg.headerFormat, "header_format", "", "Source FASTA header format, e.g. uniprot")
-	flags.StringVar(&cfg.diamondVersion, "diamond_version", "", "DIAMOND version used to build the database")
-	flags.StringVar(&cfg.buildCommand, "build_command", "", "Command line used to build the database")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Validate and hash only; do not write manifest")
-	return commandRegister
 }
 
 func createKBCommand() *cobra.Command {
