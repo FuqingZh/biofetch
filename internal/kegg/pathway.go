@@ -229,7 +229,7 @@ func resolvePathwayIDs(
 	listURL := derivePathwayListURL(cfg)
 	listContent, err := clientKegg.download(listURL)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, listURL, err
 	}
 
 	if len(cfg.pathwayIDs) > 0 {
@@ -249,6 +249,14 @@ func derivePathwayListURL(cfg *pathwayConfig) string {
 		return baseURL + "/list/pathway"
 	}
 	return baseURL + "/list/pathway/" + cfg.organismCode
+}
+
+func shouldSkipPathwayScopeListError(cfg *pathwayConfig, err error) bool {
+	if cfg.shouldFetchReference {
+		return false
+	}
+	return httpx.IsUnexpectedStatus(err, http.StatusForbidden) ||
+		httpx.IsUnexpectedStatus(err, http.StatusNotFound)
 }
 
 func resolvePathwayScopeKeys(clientKegg *keggClient, cfg *pathwayConfig) ([]string, error) {
@@ -295,6 +303,16 @@ func fetchPathwayScope(
 
 	pathwayIDs, listContent, listURL, err := resolvePathwayIDs(clientKegg, &cfgScope)
 	if err != nil {
+		if shouldSkipPathwayScopeListError(&cfgScope, err) {
+			logx.Warnf(
+				"biofetch kegg",
+				"KEGG pathway list unavailable for organism %s (%s), skipping scope: %v",
+				scopeKey,
+				listURL,
+				err,
+			)
+			return nil, 0, pathwayLocalPlanningStats{}, nil
+		}
 		return nil, 0, pathwayLocalPlanningStats{}, err
 	}
 
@@ -609,7 +627,7 @@ func shouldRetryPathwayDownloadStatus(assetName string, err error) bool {
 
 func shouldContinuePathwayDownloadError(assetName string, err error, shouldRetry bool) bool {
 	if assetName == "pathway.entry" {
-		return httpx.IsUnexpectedStatus(err, http.StatusForbidden)
+		return shouldRetry || httpx.IsUnexpectedStatus(err, http.StatusForbidden)
 	}
 	return isPathwaySideAsset(assetName) && shouldRetry
 }
@@ -1176,7 +1194,9 @@ func isRetryableKEGGError(err error) bool {
 	if errors.As(err, &errTemporary) && errTemporary.Temporary() {
 		return true
 	}
-	if strings.Contains(err.Error(), "tls: bad record MAC") {
+	textError := err.Error()
+	if strings.Contains(textError, "tls: bad record MAC") ||
+		strings.Contains(textError, "tls: received record with version") {
 		return true
 	}
 

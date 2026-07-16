@@ -360,6 +360,7 @@ func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T)
 		{name: "conf", assetName: "pathway.conf", fileName: "sxo00460.conf", pathRel: "raw/sxo/sxo00460.conf", err: io.ErrUnexpectedEOF},
 		{name: "image", assetName: "pathway.image", fileName: "sxo00460.png", pathRel: "raw/sxo/sxo00460.png", err: io.ErrUnexpectedEOF},
 		{name: "image bad record mac", assetName: "pathway.image", fileName: "sxo00460.png", pathRel: "raw/sxo/sxo00460.png", err: errors.New("local error: tls: bad record MAC")},
+		{name: "image tls record version", assetName: "pathway.image", fileName: "sxo00514.png", pathRel: "raw/sxo/sxo00514.png", err: errors.New("write raw/sxo/sxo00514.png.part: tls: received record with version 1002 when expecting version 303")},
 	}
 
 	for _, tc := range tests {
@@ -410,7 +411,7 @@ func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T)
 	}
 }
 
-func TestFetchPathwayEntryExhaustsTransientRetriesAndFails(t *testing.T) {
+func TestFetchPathwayEntryExhaustsTransientRetriesAndContinues(t *testing.T) {
 	var countGET atomic.Int32
 	clientHTTP := &http.Client{
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -440,8 +441,48 @@ func TestFetchPathwayEntryExhaustsTransientRetriesAndFails(t *testing.T) {
 		"pathway.entry",
 		"https://example.test/get/sxo00460",
 	)
-	if err == nil {
-		t.Fatal("fetchPathwayAsset returned nil error")
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
+	}
+	if ok {
+		t.Fatal("ok = true")
+	}
+	if countGET.Load() != 3 {
+		t.Fatalf("countGET = %d, want 3", countGET.Load())
+	}
+}
+
+func TestFetchPathwayEntryExhaustsStatus403ThenTransientErrorAndContinues(t *testing.T) {
+	var countGET atomic.Int32
+	clientHTTP := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method == http.MethodHead {
+				return nil, io.EOF
+			}
+			if countGET.Add(1) < 3 {
+				return &http.Response{
+					StatusCode: http.StatusForbidden,
+					Status:     "403 Forbidden",
+					Body:       io.NopCloser(strings.NewReader("forbidden")),
+				}, nil
+			}
+			return nil, io.EOF
+		}),
+	}
+
+	fileOut := filepath.Join(t.TempDir(), "sgh00120.txt")
+	clientKegg := createKEGGClient(clientHTTP, 0, 3, 0)
+	_, ok, err := fetchPathwayAsset(
+		clientKegg,
+		false,
+		fileOut,
+		"raw/sgh/sgh00120.txt",
+		"sgh00120",
+		"pathway.entry",
+		"https://example.test/get/sgh00120",
+	)
+	if err != nil {
+		t.Fatalf("fetchPathwayAsset returned error: %v", err)
 	}
 	if ok {
 		t.Fatal("ok = true")
@@ -772,12 +813,164 @@ func TestRunFetchPathwayExplicitSnapshotVersionAllowsLastUpdateInfo(t *testing.T
 	}
 }
 
+func TestRunFetchPathwaySkipsUnavailableOrganismListStatus403(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() {
+		baseURL = oldBaseURL
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/info/pathway":
+			_, _ = writer.Write([]byte("pathway\tKEGG pathway maps\npath\t586 entries\n\tLast update 2026/06/12\n"))
+		case "/list/pathway/sro":
+			http.Error(writer, "forbidden", http.StatusForbidden)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+
+	dirOut := t.TempDir()
+	cfg := pathwayConfig{
+		dirOut:          dirOut,
+		versionToken:    "2026-04",
+		assetNames:      []string{"list", "entry"},
+		organismCodes:   []string{"sro"},
+		retryMax:        1,
+		ruleExisting:    "skip",
+		requestInterval: 0,
+	}
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatalf("runFetchPathway returned error: %v", err)
+	}
+
+	manifest, err := readExistingPathwayManifest(filepath.Join(dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("readExistingPathwayManifest returned error: %v", err)
+	}
+	if len(manifest.Files) != 0 {
+		t.Fatalf("manifest.Files = %#v, want empty", manifest.Files)
+	}
+	if _, err := os.Stat(filepath.Join(dirOut, "pathway", "2026-04", "raw", "sro", "pathway.list.tsv")); !os.IsNotExist(err) {
+		t.Fatalf("sro pathway list exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestRunFetchPathwayContinuesAfterUnavailableOrganismListStatus403(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() {
+		baseURL = oldBaseURL
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/info/pathway":
+			_, _ = writer.Write([]byte("pathway\tKEGG pathway maps\npath\t586 entries\n\tLast update 2026/06/12\n"))
+		case "/list/pathway/sro":
+			http.Error(writer, "forbidden", http.StatusForbidden)
+		case "/list/pathway/hsa":
+			_, _ = writer.Write([]byte("hsa00010\tGlycolysis / Gluconeogenesis\n"))
+		case "/get/hsa00010":
+			_, _ = writer.Write([]byte("ENTRY       hsa00010 Pathway\nNAME        Glycolysis / Gluconeogenesis\n"))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+
+	dirOut := t.TempDir()
+	cfg := pathwayConfig{
+		dirOut:          dirOut,
+		versionToken:    "2026-04",
+		assetNames:      []string{"list", "entry"},
+		organismCodes:   []string{"sro", "hsa"},
+		retryMax:        1,
+		ruleExisting:    "skip",
+		requestInterval: 0,
+	}
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatalf("runFetchPathway returned error: %v", err)
+	}
+
+	manifest, err := readExistingPathwayManifest(filepath.Join(dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatalf("readExistingPathwayManifest returned error: %v", err)
+	}
+	paths := make([]string, 0, len(manifest.Files))
+	for _, file := range manifest.Files {
+		paths = append(paths, file.Path)
+	}
+	expected := []string{"raw/hsa/pathway.list.tsv", "raw/hsa/hsa00010.txt"}
+	if !reflect.DeepEqual(paths, expected) {
+		t.Fatalf("manifest file paths = %#v, want %#v", paths, expected)
+	}
+}
+
+func TestRunFetchPathwayReferenceListStatus403StillFails(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() {
+		baseURL = oldBaseURL
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/info/pathway":
+			_, _ = writer.Write([]byte("pathway\tKEGG pathway maps\npath\t586 entries\n\tLast update 2026/06/12\n"))
+		case "/list/pathway":
+			http.Error(writer, "forbidden", http.StatusForbidden)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+
+	cfg := pathwayConfig{
+		dirOut:               t.TempDir(),
+		versionToken:         "2026-04",
+		assetNames:           []string{"list"},
+		shouldFetchReference: true,
+		retryMax:             1,
+		ruleExisting:         "skip",
+		requestInterval:      0,
+	}
+	err := runFetchPathway(&cfg)
+	if err == nil {
+		t.Fatal("runFetchPathway returned nil error")
+	}
+	if !httpx.IsUnexpectedStatus(err, http.StatusForbidden) {
+		t.Fatalf("runFetchPathway error = %v, want 403", err)
+	}
+}
+
 func TestDerivePathwayListURLReferenceAndOrganism(t *testing.T) {
 	if value := derivePathwayListURL(&pathwayConfig{shouldFetchReference: true}); value != "https://rest.kegg.jp/list/pathway" {
 		t.Fatalf("derivePathwayListURL reference = %q", value)
 	}
 	if value := derivePathwayListURL(&pathwayConfig{organismCode: "hsa"}); value != "https://rest.kegg.jp/list/pathway/hsa" {
 		t.Fatalf("derivePathwayListURL organism = %q", value)
+	}
+}
+
+func TestShouldSkipPathwayScopeListError(t *testing.T) {
+	errForbidden := httpx.UnexpectedStatusError{URL: "https://rest.kegg.jp/list/pathway/sro", Status: "403 Forbidden", Code: http.StatusForbidden}
+	errMissing := httpx.UnexpectedStatusError{URL: "https://rest.kegg.jp/list/pathway/sro", Status: "404 Not Found", Code: http.StatusNotFound}
+	errServer := httpx.UnexpectedStatusError{URL: "https://rest.kegg.jp/list/pathway/sro", Status: "503 Service Unavailable", Code: http.StatusServiceUnavailable}
+
+	if !shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errForbidden) {
+		t.Fatal("organism 403 should be skipped")
+	}
+	if !shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errMissing) {
+		t.Fatal("organism 404 should be skipped")
+	}
+	if shouldSkipPathwayScopeListError(&pathwayConfig{shouldFetchReference: true}, errForbidden) {
+		t.Fatal("reference 403 should not be skipped")
+	}
+	if shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errServer) {
+		t.Fatal("organism 503 should not be skipped")
 	}
 }
 
