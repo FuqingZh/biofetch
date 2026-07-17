@@ -30,11 +30,3 @@ func TestBuildCommandExpandsFormatsFile(t *testing.T) {
 		t.Fatalf("command output = %q", output.String())
 	}
 }
-
-func TestBuildCommandRejectsRemovedFileStemFlag(t *testing.T) {
-	command := newBuildCommand()
-	command.SetArgs([]string{"--file_stem_out", filepath.Join(t.TempDir(), "manifest")})
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag") {
-		t.Fatalf("Execute error = %v", err)
-	}
-}

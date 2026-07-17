@@ -106,11 +106,21 @@ bytes = 11
 
 func TestBuildUsesFixedOutputNames(t *testing.T) {
 	root := t.TempDir()
-	if _, err := Build(root, root, []string{"toml"}); err != nil {
+	result, err := Build(root, root, nil)
+	if err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "manifest.toml")); err != nil {
+	fileTOML := filepath.Join(root, "manifest.toml")
+	if !reflect.DeepEqual(result.Files, []string{fileTOML}) {
+		t.Fatalf("result files = %#v, want only %s", result.Files, fileTOML)
+	}
+	if _, err := os.Stat(fileTOML); err != nil {
 		t.Fatalf("fixed-name output missing: %v", err)
+	}
+	for _, fileName := range []string{"manifest.json", "manifest.tsv", "manifest.lock"} {
+		if _, err := os.Stat(filepath.Join(root, fileName)); !os.IsNotExist(err) {
+			t.Fatalf("unexpected default output %s: %v", fileName, err)
+		}
 	}
 }
 
