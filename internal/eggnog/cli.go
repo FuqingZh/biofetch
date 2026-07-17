@@ -83,19 +83,12 @@ func createCOGLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
-				return err
-			}
-			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
-				return err
-			}
 			return runLockCOG(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "NCBI COG release token")
+	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -215,19 +208,12 @@ func createMapperLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
-				return err
-			}
-			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
-				return err
-			}
 			return runLockMapper(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "eggNOG-mapper database version")
+	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock

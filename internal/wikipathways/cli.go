@@ -83,19 +83,12 @@ func createGMTLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
-				return err
-			}
-			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
-				return err
-			}
 			return runLockGMT(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways GMT version token")
+	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock

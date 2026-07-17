@@ -42,8 +42,7 @@ type mapperConfig struct {
 }
 
 type mapperLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -86,18 +85,22 @@ func runFetchMapper(cfg *mapperConfig) error {
 }
 
 func runLockMapper(cfg *mapperLockConfig) error {
-	versionToken, err := normalizeMapperVersionToken(cfg.VersionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	versionToken, err = normalizeMapperVersionToken(versionToken)
 	if err != nil {
 		return err
 	}
 	source := buildMapperSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "lock", cfg.DirLogs, cfg.DirOut, source)
+	_, closeRun, err := logx.StartVersionedRun("biofetch eggnog", "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch eggnog")
+	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,

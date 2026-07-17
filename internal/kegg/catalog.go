@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
@@ -34,9 +35,8 @@ type catalogConfig struct {
 }
 
 type catalogLockConfig struct {
-	dirOut       string
+	dirSnapshot  string
 	dirLogs      string
-	versionToken string
 	shouldDryRun bool
 }
 
@@ -131,8 +131,7 @@ func createCatalogLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -181,13 +180,11 @@ func validateCatalogFetchConfig(cfg *catalogConfig) error {
 }
 
 func validateCatalogLockConfig(cfg *catalogLockConfig) error {
-	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
 	}
-	if strings.TrimSpace(cfg.versionToken) == "" {
-		return fmt.Errorf("version is required")
-	}
-	if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+	if !isValidKEGGSnapshotVersionToken(versionToken) {
 		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	return nil
@@ -282,7 +279,11 @@ func runFetchCatalog(cfg *catalogConfig) error {
 }
 
 func runLockCatalog(cfg *catalogLockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -297,8 +298,8 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 
 	manifestExisting, _ := readExistingCatalogManifest(fileManifest)
 	cfgManifest := catalogConfig{
-		version:               firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:          firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		version:               versionToken,
+		versionToken:          versionToken,
 		sourceRelease:         manifestExisting.SourceRelease,
 		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
 		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,

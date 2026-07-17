@@ -141,8 +141,7 @@ func TestRunFetchMapperDownloadsAndReuses(t *testing.T) {
 
 func TestRunLockMapperRejectsCurrentVersion(t *testing.T) {
 	cfg := mapperLockConfig{}
-	cfg.DirOut = t.TempDir()
-	cfg.VersionToken = "current"
+	cfg.DirSnapshot = filepath.Join(t.TempDir(), "current")
 	err := runLockMapper(&cfg)
 	if err == nil {
 		t.Fatal("runLockMapper returned nil error")

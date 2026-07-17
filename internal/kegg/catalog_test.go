@@ -130,3 +130,42 @@ func TestReadExistingCatalogManifestBackfillsReleaseRange(t *testing.T) {
 		t.Fatalf("manifestRead = %#v", manifestRead)
 	}
 }
+
+func TestRunLockCatalogUsesDirectoryVersionIdentity(t *testing.T) {
+	dirSnapshot := filepath.Join(t.TempDir(), "catalog", "2026-04")
+	dirRaw := filepath.Join(dirSnapshot, "raw")
+	if err := os.MkdirAll(dirRaw, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirRaw, keggCatalogFileName), []byte("T01001\thsa\tHomo sapiens\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile raw returned error: %v", err)
+	}
+	dataOld, err := toml.Marshal(catalogManifestFile{
+		Database:      "kegg",
+		Asset:         "catalog",
+		Catalog:       keggCatalogAsset,
+		Version:       "118.0",
+		VersionToken:  "118.0",
+		SourceRelease: "118.0+/04-01",
+	})
+	if err != nil {
+		t.Fatalf("toml.Marshal returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirSnapshot, "manifest.lock"), dataOld, 0o644); err != nil {
+		t.Fatalf("os.WriteFile manifest returned error: %v", err)
+	}
+
+	if err := runLockCatalog(&catalogLockConfig{dirSnapshot: dirSnapshot}); err != nil {
+		t.Fatalf("runLockCatalog returned error: %v", err)
+	}
+	manifest, err := readExistingCatalogManifest(filepath.Join(dirSnapshot, "manifest.lock"))
+	if err != nil {
+		t.Fatalf("readExistingCatalogManifest returned error: %v", err)
+	}
+	if manifest.Version != "2026-04" || manifest.VersionToken != "2026-04" {
+		t.Fatalf("manifest identity = version %q, version_token %q", manifest.Version, manifest.VersionToken)
+	}
+	if manifest.SourceRelease != "118.0+/04-01" {
+		t.Fatalf("SourceRelease = %q", manifest.SourceRelease)
+	}
+}

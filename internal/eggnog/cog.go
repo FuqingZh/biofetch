@@ -40,8 +40,7 @@ type cogConfig struct {
 }
 
 type cogLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -81,18 +80,22 @@ func runFetchCOG(cfg *cogConfig) error {
 }
 
 func runLockCOG(cfg *cogLockConfig) error {
-	versionToken, err := normalizeCOGVersionToken(cfg.VersionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	versionToken, err = normalizeCOGVersionToken(versionToken)
 	if err != nil {
 		return err
 	}
 	source := buildCOGSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "lock", cfg.DirLogs, cfg.DirOut, source)
+	_, closeRun, err := logx.StartVersionedRun("biofetch eggnog", "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch eggnog")
+	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,

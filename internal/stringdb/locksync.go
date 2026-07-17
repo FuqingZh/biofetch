@@ -13,9 +13,8 @@ import (
 )
 
 type lockConfig struct {
-	dirOut       string
+	dirSnapshot  string
 	dirLogs      string
-	versionToken string
 	shouldDryRun bool
 }
 
@@ -33,7 +32,11 @@ type syncConfig struct {
 }
 
 func runLock(cfg *lockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, cfg.versionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch string", "lock", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -53,7 +56,7 @@ func runLock(cfg *lockConfig) error {
 		return nil
 	}
 
-	if err := writeManifest(fileManifest, cfg.versionToken, records, time.Now()); err != nil {
+	if err := writeManifest(fileManifest, versionToken, records, time.Now()); err != nil {
 		return err
 	}
 

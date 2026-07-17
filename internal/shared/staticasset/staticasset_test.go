@@ -381,7 +381,7 @@ func TestLockScansRawRecursivelyAndIgnoresPartFiles(t *testing.T) {
 	}
 	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
 	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
-	if err := Lock(source, options, nil); err != nil {
+	if err := Lock(source, DeriveVersionDir(options.DirOut, source), options, nil); err != nil {
 		t.Fatalf("Lock returned error: %v", err)
 	}
 	manifest, ok, err := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
@@ -418,7 +418,7 @@ func TestLockIgnoresFilesOutsideRaw(t *testing.T) {
 
 	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
 	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
-	if err := Lock(source, options, nil); err != nil {
+	if err := Lock(source, DeriveVersionDir(options.DirOut, source), options, nil); err != nil {
 		t.Fatalf("Lock returned error: %v", err)
 	}
 	manifest, ok, err := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
@@ -452,7 +452,7 @@ func TestLockWritesHashProgress(t *testing.T) {
 		ProgressWriter: &progress,
 	}
 	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
-	if err := Lock(source, options, nil); err != nil {
+	if err := Lock(source, DeriveVersionDir(options.DirOut, source), options, nil); err != nil {
 		t.Fatalf("Lock returned error: %v", err)
 	}
 	text := progress.String()
@@ -483,7 +483,7 @@ func TestLockWritesCurrentFileProgressForMultipleFiles(t *testing.T) {
 		ProgressWriter: &progress,
 	}
 	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
-	if err := Lock(source, options, nil); err != nil {
+	if err := Lock(source, DeriveVersionDir(options.DirOut, source), options, nil); err != nil {
 		t.Fatalf("Lock returned error: %v", err)
 	}
 	text := progress.String()

@@ -94,19 +94,12 @@ func createKBLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
-				return err
-			}
-			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
-				return err
-			}
 			return runLockKB(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProtKB version token")
+	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -226,19 +219,12 @@ func createUniRefLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
-				return err
-			}
-			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
-				return err
-			}
 			return runLockUniRef(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniRef version token")
+	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -359,19 +345,12 @@ func createIDMappingLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
-				return err
-			}
-			if err := cliopt.ValidateVersionRequired(cfg.VersionToken); err != nil {
-				return err
-			}
 			return runLockIDMapping(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt ID mapping version token")
+	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock

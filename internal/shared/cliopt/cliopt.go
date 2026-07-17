@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,10 @@ import (
 
 type DirOutConfig struct {
 	DirOut string
+}
+
+type DirSnapshotConfig struct {
+	DirSnapshot string
 }
 
 type VersionConfig struct {
@@ -52,6 +57,10 @@ type InsecureTLSConfig struct {
 
 func BindDirOutFlag(flags *pflag.FlagSet, cfg *DirOutConfig, usage string) {
 	flags.StringVar(&cfg.DirOut, "dir_out", cfg.DirOut, usage)
+}
+
+func BindDirSnapshotFlag(flags *pflag.FlagSet, cfg *DirSnapshotConfig) {
+	flags.StringVar(&cfg.DirSnapshot, "dir_snapshot", cfg.DirSnapshot, "Existing snapshot directory containing raw/ and manifest.lock")
 }
 
 func BindVersionFlag(flags *pflag.FlagSet, cfg *VersionConfig, usage string) {
@@ -98,6 +107,19 @@ func ValidateDirOutRequired(dirOut string) error {
 		return fmt.Errorf("dir_out is required")
 	}
 	return nil
+}
+
+func SnapshotVersionToken(dirSnapshot string) (string, error) {
+	dirSnapshot = strings.TrimSpace(dirSnapshot)
+	if dirSnapshot == "" {
+		return "", fmt.Errorf("dir_snapshot is required")
+	}
+	dirClean := filepath.Clean(dirSnapshot)
+	versionToken := filepath.Base(dirClean)
+	if versionToken == "." || versionToken == string(filepath.Separator) || versionToken == "" {
+		return "", fmt.Errorf("dir_snapshot must identify a version directory: %s", dirSnapshot)
+	}
+	return versionToken, nil
 }
 
 func ValidateVersionRequired(versionToken string) error {

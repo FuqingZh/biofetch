@@ -32,6 +32,15 @@ Download a database asset and write its snapshot lock:
 biofetch go ontology fetch --dir_out /database/bioinfo/resources/go
 ```
 
+Rebuild a snapshot lock from an existing snapshot directory. The directory
+name is the authoritative `version_token`; `lock` does not accept a separate
+`--version`:
+
+```bash
+biofetch kegg catalog lock \
+  --dir_snapshot /database/bioinfo/resources/kegg/catalog/2026-04
+```
+
 Build the aggregate manifest for an entire resource tree:
 
 ```bash

@@ -388,8 +388,7 @@ func TestRunLockAnnotationPreservesManifestURL(t *testing.T) {
 	}
 
 	cfg := annotationLockConfig{}
-	cfg.DirOut = dirOut
-	cfg.VersionToken = "2026-05-01"
+	cfg.DirSnapshot = filepath.Join(dirOut, "annotation", "2026-05-01")
 	if err := runLockAnnotation(&cfg); err != nil {
 		t.Fatalf("runLockAnnotation returned error: %v", err)
 	}
@@ -419,8 +418,7 @@ func TestRunLockAnnotationDerivesURLAndScopeFromRawFiles(t *testing.T) {
 	}
 
 	cfg := annotationLockConfig{}
-	cfg.DirOut = dirOut
-	cfg.VersionToken = "2026-05-01"
+	cfg.DirSnapshot = filepath.Join(dirOut, "annotation", "2026-05-01")
 	if err := runLockAnnotation(&cfg); err != nil {
 		t.Fatalf("runLockAnnotation returned error: %v", err)
 	}
@@ -454,8 +452,7 @@ func TestRunLockAnnotationRejectsInvalidRawFileName(t *testing.T) {
 	}
 
 	cfg := annotationLockConfig{}
-	cfg.DirOut = dirOut
-	cfg.VersionToken = "2026-05-01"
+	cfg.DirSnapshot = filepath.Join(dirOut, "annotation", "2026-05-01")
 	err := runLockAnnotation(&cfg)
 	if err == nil {
 		t.Fatal("runLockAnnotation returned nil error")

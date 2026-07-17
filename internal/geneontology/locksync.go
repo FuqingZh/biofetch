@@ -14,8 +14,7 @@ import (
 )
 
 type ontologyLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -32,7 +31,14 @@ type ontologySyncConfig struct {
 }
 
 func runLockOntology(cfg *ontologyLockConfig) error {
-	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	if err := validateOptionalOntologyVersionToken(versionToken); err != nil {
+		return err
+	}
+	dirVersion := cfg.DirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch go", "lock", cfg.DirLogs, dirVersion)
 	if err != nil {
@@ -44,7 +50,7 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 		return err
 	}
 
-	records, err := scanOntologyRecords(dirVersion, cfg.VersionToken, urlsExisting)
+	records, err := scanOntologyRecords(dirVersion, versionToken, urlsExisting)
 	if err != nil {
 		return err
 	}
@@ -57,8 +63,8 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 	}
 
 	cfgManifest := ontologyConfig{
-		version:       cfg.VersionToken,
-		VersionConfig: cliopt.VersionConfig{VersionToken: cfg.VersionToken},
+		version:       versionToken,
+		VersionConfig: cliopt.VersionConfig{VersionToken: versionToken},
 	}
 	if err := tomlx.WriteFileAtomic(fileManifest, buildOntologyManifestFile(&cfgManifest, records, time.Now())); err != nil {
 		return err

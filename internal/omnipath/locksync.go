@@ -1,6 +1,7 @@
 package omnipath
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
@@ -13,10 +14,8 @@ import (
 )
 
 type lockConfig struct {
-	dirOut       string
+	dirSnapshot  string
 	dirLogs      string
-	versionToken string
-	dataset      string
 	shouldDryRun bool
 }
 
@@ -34,16 +33,20 @@ type syncConfig struct {
 }
 
 func runLockEnzSub(cfg *lockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "enz_sub", cfg.versionToken)
-	return runLockCommon(cfg, dirVersion, "enz_sub")
+	return runLockCommon(cfg, "enz_sub", "")
 }
 
 func runLockInteractions(cfg *lockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "interactions", cfg.dataset, cfg.versionToken)
-	return runLockCommon(cfg, dirVersion, "interactions")
+	dataset := filepath.Base(filepath.Dir(filepath.Clean(cfg.dirSnapshot)))
+	return runLockCommon(cfg, "interactions", dataset)
 }
 
-func runLockCommon(cfg *lockConfig, dirVersion string, asset string) error {
+func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "lock", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -59,9 +62,9 @@ func runLockCommon(cfg *lockConfig, dirVersion string, asset string) error {
 	manifest := manifestFile{
 		Database:     "omnipath",
 		Asset:        asset,
-		Dataset:      firstNonEmpty(manifestExisting.Dataset, cfg.dataset),
-		Version:      firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		VersionToken: firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		Dataset:      dataset,
+		Version:      versionToken,
+		VersionToken: versionToken,
 		DownloadedAt: time.Now().Format(time.RFC3339),
 		Scope: func() manifestScope {
 			scopeType, scopeValue := deriveOmniPathManifestScope(records)

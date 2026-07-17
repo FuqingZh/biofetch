@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
@@ -13,9 +14,8 @@ import (
 )
 
 type keggLockConfig struct {
-	dirOut          string
+	dirSnapshot     string
 	dirLogs         string
-	versionToken    string
 	requestInterval time.Duration
 	shouldDryRun    bool
 }
@@ -32,7 +32,11 @@ type keggSyncConfig struct {
 }
 
 func runLockPathway(cfg *keggLockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -47,8 +51,8 @@ func runLockPathway(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingPathwayManifest(fileManifest)
 	cfgManifest := pathwayConfig{
-		version:               firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:          firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		version:               versionToken,
+		versionToken:          versionToken,
 		sourceRelease:         manifestExisting.SourceRelease,
 		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
 		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,
@@ -164,7 +168,11 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 }
 
 func runLockBrite(cfg *keggLockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -179,8 +187,8 @@ func runLockBrite(cfg *keggLockConfig) error {
 
 	manifestExisting, _ := readExistingBriteManifest(fileManifest)
 	cfgManifest := briteConfig{
-		version:               firstNonEmpty(manifestExisting.Version, cfg.versionToken),
-		versionToken:          firstNonEmpty(manifestExisting.VersionToken, cfg.versionToken),
+		version:               versionToken,
+		versionToken:          versionToken,
 		sourceRelease:         manifestExisting.SourceRelease,
 		sourceReleaseStart:    manifestExisting.SourceReleaseStart,
 		sourceReleaseEnd:      manifestExisting.SourceReleaseEnd,

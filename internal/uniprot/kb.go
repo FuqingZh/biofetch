@@ -39,8 +39,7 @@ type kbConfig struct {
 }
 
 type kbLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -84,18 +83,22 @@ func runFetchKB(cfg *kbConfig) error {
 }
 
 func runLockKB(cfg *kbLockConfig) error {
-	versionToken, err := normalizeKBFixedVersionToken(cfg.VersionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	versionToken, err = normalizeKBFixedVersionToken(versionToken)
 	if err != nil {
 		return err
 	}
 	source := buildKBSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "lock", cfg.DirLogs, cfg.DirOut, source)
+	_, closeRun, err := logx.StartVersionedRun("biofetch uniprot", "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch uniprot")
+	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,

@@ -207,14 +207,16 @@ func DeriveVersionDir(dirOut string, source Source) string {
 	return buildVersionDir(dirOut, source)
 }
 
-func Lock(source Source, options Options, trace TraceSink) error {
+func Lock(source Source, dirVersion string, options Options, trace TraceSink) error {
 	if err := validateSourceIdentity(source); err != nil {
 		return err
 	}
-	if err := validateOptions(options); err != nil {
+	if strings.TrimSpace(dirVersion) == "" {
+		return fmt.Errorf("dir_snapshot is required")
+	}
+	if err := validateLockOptions(options); err != nil {
 		return err
 	}
-	dirVersion := buildVersionDir(options.DirOut, source)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	urlsExisting, err := buildExistingURLMap(fileManifest)
 	if err != nil {
@@ -236,6 +238,16 @@ func Lock(source Source, options Options, trace TraceSink) error {
 		return err
 	}
 	emit(trace, source, TraceEvent{Event: "write_manifest", Path: fileManifest, Status: fmt.Sprintf("files=%d", len(records))})
+	return nil
+}
+
+func validateLockOptions(options Options) error {
+	if options.RetryMax < 1 {
+		return fmt.Errorf("retry_max must be >= 1")
+	}
+	if options.WorkersMax < 1 {
+		return fmt.Errorf("workers_max must be >= 1")
+	}
 	return nil
 }
 

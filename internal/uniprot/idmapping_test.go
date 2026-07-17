@@ -200,8 +200,7 @@ func TestRunFetchIDMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
 
 func TestRunLockIDMappingRejectsCurrentVersion(t *testing.T) {
 	cfg := idMappingLockConfig{}
-	cfg.DirOut = t.TempDir()
-	cfg.VersionToken = "current"
+	cfg.DirSnapshot = filepath.Join(t.TempDir(), "current")
 	err := runLockIDMapping(&cfg)
 	if err == nil {
 		t.Fatal("runLockIDMapping returned nil error")

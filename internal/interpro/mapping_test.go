@@ -188,8 +188,7 @@ func TestRunFetchMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
 
 func TestRunLockMappingRejectsCurrentVersion(t *testing.T) {
 	cfg := mappingLockConfig{}
-	cfg.DirOut = t.TempDir()
-	cfg.VersionToken = "current"
+	cfg.DirSnapshot = filepath.Join(t.TempDir(), "current")
 	err := runLockMapping(&cfg)
 	if err == nil {
 		t.Fatal("runLockMapping returned nil error")

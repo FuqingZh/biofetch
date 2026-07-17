@@ -38,8 +38,7 @@ type gmtConfig struct {
 }
 
 type gmtLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -92,14 +91,18 @@ func runFetchGMT(cfg *gmtConfig, readerConfirm io.Reader, writerConfirm io.Write
 }
 
 func runLockGMT(cfg *gmtLockConfig) error {
-	source := buildGMTSource(cfg.VersionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch wikipathways", "lock", cfg.DirLogs, cfg.DirOut, source)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	source := buildGMTSource(versionToken, nil)
+	_, closeRun, err := logx.StartVersionedRun("biofetch wikipathways", "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch wikipathways")
+	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,

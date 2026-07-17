@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+func TestSnapshotVersionToken(t *testing.T) {
+	got, err := SnapshotVersionToken(filepath.Join("data", "kegg", "catalog", "2026-04"))
+	if err != nil {
+		t.Fatalf("SnapshotVersionToken returned error: %v", err)
+	}
+	if got != "2026-04" {
+		t.Fatalf("SnapshotVersionToken = %q", got)
+	}
+}
+
+func TestSnapshotVersionTokenRequiresDirectory(t *testing.T) {
+	if _, err := SnapshotVersionToken(""); err == nil {
+		t.Fatal("SnapshotVersionToken returned nil error")
+	}
+}
+
 func TestValidateDownloadControlConfig(t *testing.T) {
 	cfg := DownloadControlConfig{WorkersMax: 1, RequestInterval: 0}
 	if err := ValidateDownloadControlConfig(&cfg); err != nil {

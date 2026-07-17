@@ -168,20 +168,13 @@ func createEnzSubLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
-			}
-			if strings.TrimSpace(cfg.versionToken) == "" {
-				return fmt.Errorf("version is required")
-			}
 			return runLockEnzSub(&cfg)
 		},
 	}
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
@@ -231,7 +224,6 @@ func createEnzSubSyncCommand() *cobra.Command {
 
 func createInteractionsLockCommand() *cobra.Command {
 	cfg := lockConfig{}
-	cfg.dataset = "kinaseextra"
 
 	command := &cobra.Command{
 		Use:           "lock",
@@ -240,21 +232,13 @@ func createInteractionsLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
-			}
-			if strings.TrimSpace(cfg.versionToken) == "" {
-				return fmt.Errorf("version is required")
-			}
 			return runLockInteractions(&cfg)
 		},
 	}
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
-	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command

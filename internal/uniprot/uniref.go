@@ -35,8 +35,7 @@ type unirefConfig struct {
 }
 
 type unirefLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -80,18 +79,22 @@ func runFetchUniRef(cfg *unirefConfig) error {
 }
 
 func runLockUniRef(cfg *unirefLockConfig) error {
-	versionToken, err := normalizeUniRefFixedVersionToken(cfg.VersionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	versionToken, err = normalizeUniRefFixedVersionToken(versionToken)
 	if err != nil {
 		return err
 	}
 	source := buildUniRefSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "lock", cfg.DirLogs, cfg.DirOut, source)
+	_, closeRun, err := logx.StartVersionedRun("biofetch uniprot", "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch uniprot")
+	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,

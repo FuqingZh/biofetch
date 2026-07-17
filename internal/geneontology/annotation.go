@@ -43,8 +43,7 @@ type annotationConfig struct {
 }
 
 type annotationLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -99,7 +98,11 @@ func runFetchAnnotation(cfg *annotationConfig) error {
 }
 
 func runLockAnnotation(cfg *annotationLockConfig) error {
-	dirVersion := filepath.Join(cfg.DirOut, "annotation", cfg.VersionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.DirSnapshot
 	if !cfg.ShouldDryRun {
 		if err := validateAnnotationRawFiles(dirVersion); err != nil {
 			return err
@@ -109,16 +112,16 @@ func runLockAnnotation(cfg *annotationLockConfig) error {
 		Database:     "go",
 		Asset:        "annotation",
 		Source:       "geneontology",
-		Version:      cfg.VersionToken,
-		VersionToken: cfg.VersionToken,
+		Version:      versionToken,
+		VersionToken: versionToken,
 	}
-	trace, closeRun, err := logx.StartSourceRun("biofetch go", "lock", cfg.DirLogs, cfg.DirOut, source)
+	_, closeRun, err := logx.StartVersionedRun("biofetch go", "lock", cfg.DirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch go")
+	if err := staticasset.Lock(source, dirVersion, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
@@ -128,7 +131,7 @@ func runLockAnnotation(cfg *annotationLockConfig) error {
 		return err
 	}
 	if !cfg.ShouldDryRun {
-		if err := finalizeAnnotationLockManifest(filepath.Join(dirVersion, "manifest.lock"), cfg.VersionToken); err != nil {
+		if err := finalizeAnnotationLockManifest(filepath.Join(dirVersion, "manifest.lock"), versionToken); err != nil {
 			return err
 		}
 	}

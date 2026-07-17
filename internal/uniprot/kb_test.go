@@ -229,8 +229,7 @@ func TestRunFetchKBFailsWhenCurrentVersionCannotResolve(t *testing.T) {
 
 func TestRunLockKBRejectsCurrentVersion(t *testing.T) {
 	cfg := kbLockConfig{}
-	cfg.DirOut = t.TempDir()
-	cfg.VersionToken = "current"
+	cfg.DirSnapshot = filepath.Join(t.TempDir(), "current")
 	err := runLockKB(&cfg)
 	if err == nil {
 		t.Fatal("runLockKB returned nil error")

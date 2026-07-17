@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/sets"
@@ -46,8 +47,7 @@ type mappingConfig struct {
 }
 
 type mappingLockConfig struct {
-	dirOut       string
-	versionToken string
+	dirSnapshot  string
 	shouldDryRun bool
 	dirLogs      string
 }
@@ -105,17 +105,21 @@ func runFetchMapping(cfg *mappingConfig) error {
 }
 
 func runLockMapping(cfg *mappingLockConfig) error {
-	if err := validateMappingFixedVersion(cfg.versionToken); err != nil {
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
 		return err
 	}
-	source := buildMappingSource(cfg.versionToken, nil, staticasset.Scope{})
-	trace, closeRun, err := logx.StartSourceRun("biofetch kegg", "lock", cfg.dirLogs, cfg.dirOut, source)
+	if err := validateMappingFixedVersion(versionToken); err != nil {
+		return err
+	}
+	source := buildMappingSource(versionToken, nil, staticasset.Scope{})
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "lock", cfg.dirLogs, cfg.dirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.dirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch kegg")
+	if err := staticasset.Lock(source, cfg.dirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,
@@ -192,10 +196,11 @@ func validateMappingFetchConfig(cfg *mappingConfig) error {
 }
 
 func validateMappingLockConfig(cfg *mappingLockConfig) error {
-	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
 	}
-	return validateMappingFixedVersion(cfg.versionToken)
+	return validateMappingFixedVersion(versionToken)
 }
 
 func validateMappingSyncConfig(cfg *mappingSyncConfig) error {

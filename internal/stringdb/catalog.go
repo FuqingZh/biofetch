@@ -1,6 +1,7 @@
 package stringdb
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/tomlx"
 	"crypto/sha256"
 	"fmt"
@@ -23,8 +24,7 @@ type catalogConfig struct {
 }
 
 type catalogLockConfig struct {
-	dirOut       string
-	versionToken string
+	dirSnapshot  string
 	shouldDryRun bool
 }
 
@@ -111,8 +111,7 @@ func createCatalogLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "STRING asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "STRING release version token")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	return commandLock
 }
@@ -165,13 +164,8 @@ func validateCatalogFetchConfig(cfg *catalogConfig) error {
 }
 
 func validateCatalogLockConfig(cfg *catalogLockConfig) error {
-	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
-	}
-	if strings.TrimSpace(cfg.versionToken) == "" {
-		return fmt.Errorf("version is required")
-	}
-	return nil
+	_, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	return err
 }
 
 func validateCatalogSyncConfig(cfg *catalogSyncConfig) error {
@@ -236,10 +230,14 @@ func runFetchCatalog(cfg *catalogConfig) error {
 }
 
 func runLockCatalog(cfg *catalogLockConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+	if err != nil {
+		return err
+	}
+	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
-	records, err := scanCatalogRecords(dirVersion, cfg.versionToken)
+	records, err := scanCatalogRecords(dirVersion, versionToken)
 	if err != nil {
 		return err
 	}
@@ -251,7 +249,7 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 		return nil
 	}
 
-	if err := writeCatalogManifest(fileManifest, cfg.versionToken, records, time.Now()); err != nil {
+	if err := writeCatalogManifest(fileManifest, versionToken, records, time.Now()); err != nil {
 		return err
 	}
 

@@ -282,7 +282,7 @@ func TestRunFetchMappingWritesEmptyOrganismScopedFileOnStatus400(t *testing.T) {
 }
 
 func TestRunLockMappingRejectsMissingVersion(t *testing.T) {
-	cfg := mappingLockConfig{dirOut: t.TempDir()}
+	cfg := mappingLockConfig{dirSnapshot: t.TempDir()}
 	err := runLockMapping(&cfg)
 	if err == nil {
 		t.Fatal("runLockMapping returned nil error")

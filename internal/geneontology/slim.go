@@ -33,8 +33,7 @@ type slimConfig struct {
 }
 
 type slimLockConfig struct {
-	cliopt.DirOutConfig
-	cliopt.VersionConfig
+	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
 }
@@ -95,20 +94,24 @@ func runFetchSlim(cfg *slimConfig) error {
 }
 
 func runLockSlim(cfg *slimLockConfig) error {
+	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
+	if err != nil {
+		return err
+	}
 	source := staticasset.Source{
 		Database:     "go",
 		Asset:        "slim",
 		Source:       "geneontology",
-		Version:      cfg.VersionToken,
-		VersionToken: cfg.VersionToken,
+		Version:      versionToken,
+		VersionToken: versionToken,
 	}
-	trace, closeRun, err := logx.StartSourceRun("biofetch go", "lock", cfg.DirLogs, cfg.DirOut, source)
+	_, closeRun, err := logx.StartVersionedRun("biofetch go", "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
-	if err := staticasset.Lock(source, staticasset.Options{
-		DirOut:       cfg.DirOut,
+	trace := logx.NewStaticAssetTraceSink("biofetch go")
+	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
 		WorkersMax:   1,

@@ -1,6 +1,7 @@
 package kegg
 
 import (
+	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/sets"
 	"bufio"
 	"fmt"
@@ -177,8 +178,7 @@ func createMappingLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -327,7 +327,6 @@ func createPathwayFetchCommand() *cobra.Command {
 
 func createPathwayLockCommand() *cobra.Command {
 	cfg := keggLockConfig{}
-	requestIntervalMs := 350
 
 	commandLock := &cobra.Command{
 		Use:           "lock",
@@ -336,14 +335,11 @@ func createPathwayLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
-			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+			versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+			if err != nil {
+				return err
 			}
-			if strings.TrimSpace(cfg.versionToken) == "" {
-				return fmt.Errorf("version is required")
-			}
-			if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+			if !isValidKEGGSnapshotVersionToken(versionToken) {
 				return fmt.Errorf("version must be a local snapshot key like 2026-04")
 			}
 			return runLockPathway(&cfg)
@@ -352,9 +348,7 @@ func createPathwayLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
-	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -611,7 +605,6 @@ func createBriteFetchCommand() *cobra.Command {
 
 func createBriteLockCommand() *cobra.Command {
 	cfg := keggLockConfig{}
-	requestIntervalMs := 350
 
 	commandLock := &cobra.Command{
 		Use:           "lock",
@@ -620,14 +613,11 @@ func createBriteLockCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
-			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+			versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
+			if err != nil {
+				return err
 			}
-			if strings.TrimSpace(cfg.versionToken) == "" {
-				return fmt.Errorf("version is required")
-			}
-			if !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
+			if !isValidKEGGSnapshotVersionToken(versionToken) {
 				return fmt.Errorf("version must be a local snapshot key like 2026-04")
 			}
 			return runLockBrite(&cfg)
@@ -636,9 +626,7 @@ func createBriteLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
-	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
+	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock

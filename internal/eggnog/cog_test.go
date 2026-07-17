@@ -127,8 +127,7 @@ func TestRunFetchCOGDownloadsAndReuses(t *testing.T) {
 
 func TestRunLockCOGRejectsCurrentVersion(t *testing.T) {
 	cfg := cogLockConfig{}
-	cfg.DirOut = t.TempDir()
-	cfg.VersionToken = "current"
+	cfg.DirSnapshot = filepath.Join(t.TempDir(), "current")
 	err := runLockCOG(&cfg)
 	if err == nil {
 		t.Fatal("runLockCOG returned nil error")

@@ -1,7 +1,7 @@
 # Biofetch resource and manifest contract
 
-Version: v1.0
-Date: 2026-07-15
+Version: v1.1
+Date: 2026-07-17
 Status: current
 
 ## Ownership boundary
@@ -37,6 +37,21 @@ A published version token is immutable. If upstream content changes, publish a
 new version token, rebuild its lock, and regenerate every aggregate manifest
 that references the resource tree. Do not silently replace files behind a
 published lock.
+
+### Rebuilding a snapshot lock
+
+Every database-specific `lock` command accepts one required
+`--dir_snapshot`, pointing directly at the existing directory that contains
+`raw/` and `manifest.lock`. The final directory segment is the authoritative
+`version_token`; database-specific token formats are validated after deriving
+the value from the path. `lock` does not accept `--dir_out` or `--version` and
+does not discover a latest snapshot.
+
+Existing source metadata may be preserved while rebuilding, but an existing
+lock must never override the directory-derived `version` or `version_token`.
+Fetch and sync retain their root-directory and version selectors because they
+create or restore a snapshot rather than rebuild one already identified by its
+directory.
 
 ## Two manifest layers
 
