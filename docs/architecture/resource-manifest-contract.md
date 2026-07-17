@@ -27,11 +27,15 @@ layout is:
   manifest.lock
 ```
 
-Established shorter or nested layouts remain valid when `version_token`
-appears as a complete directory segment in the lock's resource-relative path,
-for example `string/v12.0/catalog/manifest.lock`. File records use canonical
-forward-slash paths below `raw/`; absolute paths, `..`, and paths outside
-`raw/` are invalid.
+Nested asset layouts remain valid, but the snapshot directory containing
+`manifest.lock` always ends in `version_token`, for example
+`omnipath/interactions/kinaseextra/2025-08-13/manifest.lock`. File records use
+canonical forward-slash paths below `raw/`; absolute paths, `..`, and paths
+outside `raw/` are invalid.
+
+STRING uses explicit sibling assets: `string/network/<version_token>` for
+protein network data plus its supporting aliases and protein metadata, and
+`string/catalog/<version_token>` for the upstream species catalog.
 
 A published version token is immutable. If upstream content changes, publish a
 new version token, rebuild its lock, and regenerate every aggregate manifest
@@ -52,6 +56,13 @@ lock must never override the directory-derived `version` or `version_token`.
 Fetch and sync retain their root-directory and version selectors because they
 create or restore a snapshot rather than rebuild one already identified by its
 directory.
+
+Locking always computes SHA256 from the current file bytes; size or mtime is
+never accepted as a hash substitute. File hashing uses deterministic ordered
+parallelism controlled by `--workers_max`, with a conservative default of 4.
+The option limits concurrent file readers, not directory discovery. Operators
+must benchmark higher values against the actual storage system because shared
+filesystems can lose throughput under excessive concurrency.
 
 ## Two manifest layers
 

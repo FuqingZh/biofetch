@@ -2,6 +2,7 @@ package stringdb
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/filehash"
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
@@ -9,7 +10,6 @@ import (
 	"biofetch/internal/shared/tomlx"
 	"bufio"
 	"compress/gzip"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,7 +77,7 @@ func runFetch(cfg *config) error {
 		return err
 	}
 
-	dirVersion := filepath.Join(cfg.dirOut, cfg.versionToken)
+	dirVersion := filepath.Join(cfg.dirOut, "network", cfg.versionToken)
 	_, closeRun, err := logx.StartVersionedRun("biofetch string", "fetch", cfg.dirLogs, dirVersion)
 	if err != nil {
 		return err
@@ -461,12 +461,11 @@ func calculateSHA256ForFile(filePath string) (string, error) {
 	}
 	defer fileIn.Close()
 
-	hashSHA256 := sha256.New()
-	if _, err := io.Copy(hashSHA256, fileIn); err != nil {
+	digest, err := filehash.SHA256(fileIn)
+	if err != nil {
 		return "", fmt.Errorf("hash %s: %w", filePath, err)
 	}
-
-	return fmt.Sprintf("%x", hashSHA256.Sum(nil)), nil
+	return digest, nil
 }
 
 func validateGzipFile(filePath string) error {
@@ -608,7 +607,7 @@ func buildManifestFile(
 
 	return manifestFile{
 		Database:     "string",
-		Asset:        "database",
+		Asset:        "network",
 		Version:      strings.TrimPrefix(versionToken, "v"),
 		VersionToken: versionToken,
 		DownloadedAt: timeDownloaded.Format(time.RFC3339),

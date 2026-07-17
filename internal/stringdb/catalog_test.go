@@ -60,7 +60,7 @@ func TestScanCatalogRecords(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	records, err := scanCatalogRecords(dirVersion, "v12.0")
+	records, err := scanCatalogRecords(dirVersion, "v12.0", 2)
 	if err != nil {
 		t.Fatalf("scanCatalogRecords returned error: %v", err)
 	}

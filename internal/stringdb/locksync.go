@@ -15,6 +15,7 @@ import (
 type lockConfig struct {
 	dirSnapshot  string
 	dirLogs      string
+	workersMax   int
 	shouldDryRun bool
 }
 
@@ -32,6 +33,9 @@ type syncConfig struct {
 }
 
 func runLock(cfg *lockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -44,7 +48,7 @@ func runLock(cfg *lockConfig) error {
 	}
 	defer closeRun()
 
-	records, err := scanVersionFileRecords(dirVersion)
+	records, err := scanVersionFileRecords(dirVersion, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -65,7 +69,7 @@ func runLock(cfg *lockConfig) error {
 }
 
 func runSync(cfg *syncConfig) error {
-	dirVersion := filepath.Join(cfg.dirOut, cfg.versionToken)
+	dirVersion := filepath.Join(cfg.dirOut, "network", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	_, closeRun, err := logx.StartVersionedRun("biofetch string", "sync", cfg.dirLogs, dirVersion)
 	if err != nil {
@@ -126,7 +130,7 @@ func runSync(cfg *syncConfig) error {
 	return nil
 }
 
-func scanVersionFileRecords(dirVersion string) ([]fileRecord, error) {
+func scanVersionFileRecords(dirVersion string, workersMax int) ([]fileRecord, error) {
 	type taskFileRecord struct {
 		filePath  string
 		speciesID string
@@ -177,7 +181,7 @@ func scanVersionFileRecords(dirVersion string) ([]fileRecord, error) {
 		}
 	}
 
-	return parallel.MapOrdered(tasks, func(task taskFileRecord) (fileRecord, error) {
+	return parallel.MapOrderedWithWorkers(tasks, workersMax, func(task taskFileRecord) (fileRecord, error) {
 		return buildFileRecord(task.filePath, task.speciesID, task.assetName, task.pathRel, task.urlFile)
 	})
 }

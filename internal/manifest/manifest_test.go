@@ -28,9 +28,9 @@ path = "raw/go-basic.obo"
 sha256 = "`+validSHA256+`"
 bytes = 7
 `)
-	writeLock(t, root, "string/v12.0", `
+	writeLock(t, root, "string/network/v12.0", `
 database = "string"
-asset = "database"
+asset = "network"
 version = "12.0"
 version_token = "v12.0"
 
@@ -116,7 +116,7 @@ func TestBuildTreatsFileStemLiterally(t *testing.T) {
 	}
 }
 
-func TestBuildAcceptsAssetDirectoryNestedBelowVersion(t *testing.T) {
+func TestBuildRejectsAssetDirectoryNestedBelowVersion(t *testing.T) {
 	root := t.TempDir()
 	writeLock(t, root, "string/v12.0/catalog", `
 database = "string"
@@ -127,8 +127,8 @@ path = "raw/species.tsv"
 sha256 = "`+validSHA256+`"
 bytes = 1
 `)
-	if _, err := Build(root, filepath.Join(root, "aggregate"), []string{"toml"}); err != nil {
-		t.Fatalf("Build returned error: %v", err)
+	if _, err := Build(root, filepath.Join(root, "aggregate"), []string{"toml"}); err == nil || !strings.Contains(err.Error(), "does not match snapshot directory") {
+		t.Fatalf("Build error = %v", err)
 	}
 }
 
@@ -143,7 +143,7 @@ path = "raw/go.obo"
 sha256 = "`+validSHA256+`"
 bytes = 1
 `)
-	writeLock(t, root, "string/v12.0", `
+	writeLock(t, root, "string/network/v12.0", `
 database = "string"
 version_token = "v12.0"
 [[files]]
@@ -157,7 +157,7 @@ bytes = 1
 		t.Fatal("Build returned nil error")
 	}
 	text := err.Error()
-	for _, expected := range []string{"go/ontology/wrong-dir/manifest.lock", "string/v12.0/manifest.lock"} {
+	for _, expected := range []string{"go/ontology/wrong-dir/manifest.lock", "string/network/v12.0/manifest.lock"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("error does not list %q: %v", expected, err)
 		}

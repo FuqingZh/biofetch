@@ -20,9 +20,9 @@ Each managed snapshot has a stable version directory:
 ```
 
 Some established databases use a shorter or nested path, such as
-`string/<version_token>/catalog/`. The lock's `version_token` must occur as a
-complete directory segment in its resource-relative path. Every file recorded
-by `manifest.lock` is relative to the lock's directory and lives under `raw/`.
+`omnipath/interactions/<dataset>/<version_token>/`. The lock's
+`version_token` is the final snapshot-directory segment. Every file recorded by
+`manifest.lock` is relative to the lock's directory and lives under `raw/`.
 
 ## Common commands
 
@@ -38,8 +38,14 @@ name is the authoritative `version_token`; `lock` does not accept a separate
 
 ```bash
 biofetch kegg catalog lock \
-  --dir_snapshot /database/bioinfo/resources/kegg/catalog/2026-04
+  --dir_snapshot /database/bioinfo/resources/kegg/catalog/2026-04 \
+  --workers_max 4
 ```
+
+Every `lock` performs a complete SHA256 pass over the snapshot's `raw/`
+files. Hashing is parallel and deterministic; `--workers_max` defaults to 4
+and can be tuned for the storage system. More workers can reduce performance
+on shared filesystems, so increase it only after measurement.
 
 Build the aggregate manifest for an entire resource tree:
 

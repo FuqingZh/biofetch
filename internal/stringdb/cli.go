@@ -30,13 +30,33 @@ func NewCommand() *cobra.Command {
 		Short:         "Manage STRING raw assets and manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
 	}
 
 	commandString.AddCommand(createCatalogCommand())
-	commandString.AddCommand(createFetchCommand())
-	commandString.AddCommand(createLockCommand())
-	commandString.AddCommand(createSyncCommand())
+	commandString.AddCommand(createNetworkCommand())
 	return commandString
+}
+
+func createNetworkCommand() *cobra.Command {
+	commandNetwork := &cobra.Command{
+		Use:           "network",
+		Short:         "Manage STRING protein network assets",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+
+	commandNetwork.AddCommand(createFetchCommand())
+	commandNetwork.AddCommand(createLockCommand())
+	commandNetwork.AddCommand(createSyncCommand())
+	return commandNetwork
 }
 
 func createCatalogCommand() *cobra.Command {
@@ -45,6 +65,10 @@ func createCatalogCommand() *cobra.Command {
 		Short:         "Manage STRING shared catalog assets",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
 	}
 
 	commandCatalog.AddCommand(createCatalogFetchCommand())
@@ -75,9 +99,9 @@ func createFetchCommand() *cobra.Command {
 	}
 
 	commandFetch.Example = strings.Join([]string{
-		"biofetch string fetch --dir_out /data/string --taxids 7070 --should_dry_run",
-		"biofetch string fetch --dir_out /data/string --taxids 7070 --taxids 9606",
-		"biofetch string fetch --dir_out /data/string --taxids @taxids.txt --version v12.0",
+		"biofetch string network fetch --dir_out /data/string --taxids 7070 --should_dry_run",
+		"biofetch string network fetch --dir_out /data/string --taxids 7070 --taxids 9606",
+		"biofetch string network fetch --dir_out /data/string --taxids @taxids.txt --version v12.0",
 	}, "\n")
 
 	flags := commandFetch.Flags()
@@ -124,6 +148,7 @@ func createLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock

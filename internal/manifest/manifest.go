@@ -355,9 +355,9 @@ func readSnapshot(root string, fileLock string) (snapshot, error) {
 	if pathSnapshot == ".." || strings.HasPrefix(pathSnapshot, ".."+string(filepath.Separator)) {
 		return snapshot{}, fmt.Errorf("snapshot is outside resource root")
 	}
-	if !pathHasDirectorySegment(pathSnapshot, lock.VersionToken) {
+	if filepath.Base(dirSnapshot) != lock.VersionToken {
 		return snapshot{}, fmt.Errorf(
-			"version_token %q is not present in snapshot path %q",
+			"version_token %q does not match snapshot directory %q",
 			lock.VersionToken,
 			filepath.ToSlash(pathSnapshot),
 		)
@@ -418,15 +418,6 @@ func readSnapshot(root string, fileLock string) (snapshot, error) {
 		item.RecordCount = int64(len(lock.Brites))
 	}
 	return item, nil
-}
-
-func pathHasDirectorySegment(pathValue string, segment string) bool {
-	for _, part := range strings.Split(filepath.Clean(pathValue), string(filepath.Separator)) {
-		if part == segment {
-			return true
-		}
-	}
-	return false
 }
 
 func validateLockFile(file lockFileEnvelope) error {

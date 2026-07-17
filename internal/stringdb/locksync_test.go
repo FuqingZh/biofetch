@@ -26,7 +26,7 @@ func TestScanVersionFileRecords(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	records, err := scanVersionFileRecords(dirVersion)
+	records, err := scanVersionFileRecords(dirVersion, 2)
 	if err != nil {
 		t.Fatalf("scanVersionFileRecords returned error: %v", err)
 	}

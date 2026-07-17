@@ -2,6 +2,7 @@ package stringdb
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
 	"crypto/sha256"
 	"fmt"
@@ -25,6 +26,7 @@ type catalogConfig struct {
 
 type catalogLockConfig struct {
 	dirSnapshot  string
+	workersMax   int
 	shouldDryRun bool
 }
 
@@ -112,6 +114,7 @@ func createCatalogLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	return commandLock
 }
@@ -230,6 +233,9 @@ func runFetchCatalog(cfg *catalogConfig) error {
 }
 
 func runLockCatalog(cfg *catalogLockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -237,7 +243,7 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
-	records, err := scanCatalogRecords(dirVersion, versionToken)
+	records, err := scanCatalogRecords(dirVersion, versionToken, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -483,12 +489,10 @@ func readExistingCatalogRecords(fileManifest string) ([]catalogRecord, error) {
 	return records, nil
 }
 
-func scanCatalogRecords(dirVersion string, versionToken string) ([]catalogRecord, error) {
+func scanCatalogRecords(dirVersion string, versionToken string, workersMax int) ([]catalogRecord, error) {
 	fileName := deriveCatalogFileName(versionToken)
 	filePath := filepath.Join(dirVersion, "raw", fileName)
-	record, err := buildCatalogRecord(filePath, filepath.ToSlash(filepath.Join("raw", fileName)), stringCatalogAsset, deriveCatalogURL(versionToken))
-	if err != nil {
-		return nil, err
-	}
-	return []catalogRecord{record}, nil
+	return parallel.MapOrderedWithWorkers([]string{filePath}, workersMax, func(path string) (catalogRecord, error) {
+		return buildCatalogRecord(path, filepath.ToSlash(filepath.Join("raw", fileName)), stringCatalogAsset, deriveCatalogURL(versionToken))
+	})
 }
