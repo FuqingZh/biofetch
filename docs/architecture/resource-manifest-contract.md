@@ -96,10 +96,15 @@ TOML is the canonical default. JSON and the flattened TSV view are rendered
 from the same in-memory model. No generation timestamp is stored, so the same
 resource tree and output location produce byte-identical output.
 
+The caller selects an existing output directory with `--dir_out`; generated
+names are fixed as `manifest.toml`, `manifest.json`, and `manifest.tsv`.
+`manifest.lock` is reserved for authoritative snapshot locks and is never used
+for the derived aggregate manifest.
+
 ## Path resolution
 
-Before generation, the input root and output parent directory are resolved to
-physical paths. `resource_root` is relative to the final manifest's directory.
+Before generation, the input root and existing output directory are resolved
+to physical paths. `resource_root` is relative to the final manifest's directory.
 Each `snapshots.path` is relative to `resource_root`, and
 `snapshots.manifest.path` is relative to the snapshot directory.
 
@@ -111,8 +116,8 @@ content and its SHA256.
 
 1. Fetch or sync all intended snapshots and finish each `manifest.lock`.
 2. Confirm every lock has the common envelope, raw-only canonical paths,
-   valid SHA256 values, and a resource path containing `version_token` as a
-   complete directory segment.
+   valid SHA256 values, and a final snapshot directory matching
+   `version_token`.
 3. Run `biofetch manifest build` for all publication formats. The builder
    validates every discovered lock before creating temporary output files.
 4. Validate TOML/JSON/TSV agreement and repeat the build to confirm byte

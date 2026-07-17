@@ -24,6 +24,10 @@ func TestManifestBuildHelpIsAvailable(t *testing.T) {
 	if err := RunCLI([]string{"manifest", "build", "--help"}); err != nil {
 		t.Fatalf("RunCLI manifest build help returned error: %v", err)
 	}
+	err := RunCLI([]string{"manifest", "build", "--file_stem_out", "/tmp/manifest"})
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("removed manifest output flag error = %v", err)
+	}
 }
 
 func TestLockCommandsUseSnapshotDirectoryFlag(t *testing.T) {

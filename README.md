@@ -52,14 +52,15 @@ Build the aggregate manifest for an entire resource tree:
 ```bash
 biofetch manifest build \
   --dir_in /database/bioinfo/resources \
-  --file_stem_out /database/bioinfo/manifest \
+  --dir_out /database/bioinfo/meta \
   --formats toml
 ```
 
 `--formats` accepts `toml`, `tsv`, and `json` as comma-separated values,
 repeated options, or `@file` entries. TOML is the default canonical format.
-The output stem is literal: a stem ending in `.toml` produces
-`.toml.toml` for TOML output.
+Output names are fixed as `manifest.toml`, `manifest.json`, and
+`manifest.tsv` within `--dir_out`. The aggregate manifest is derived from
+snapshot locks and is therefore never named `manifest.lock`.
 
 See [docs/README.md](docs/README.md) for the current architecture and
 validation contract.

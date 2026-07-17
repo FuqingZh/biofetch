@@ -20,7 +20,7 @@ func NewCommand() *cobra.Command {
 
 func newBuildCommand() *cobra.Command {
 	var dirIn string
-	var fileStemOut string
+	var dirOut string
 	formatsInput := []string{"toml"}
 	command := &cobra.Command{
 		Use:           "build",
@@ -33,7 +33,7 @@ func newBuildCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := Build(dirIn, fileStemOut, formats)
+			result, err := Build(dirIn, dirOut, formats)
 			if err != nil {
 				return err
 			}
@@ -52,7 +52,7 @@ func newBuildCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&dirIn, "dir_in", "", "Biofetch resource tree containing snapshot manifest.lock files")
-	flags.StringVar(&fileStemOut, "file_stem_out", "", "Literal output file stem; format extensions are appended")
+	flags.StringVar(&dirOut, "dir_out", "", "Existing directory for fixed-name manifest output files")
 	flags.StringSliceVar(&formatsInput, "formats", formatsInput, "Output formats: toml|tsv|json; repeat, comma-separate, or use @file")
 	return command
 }

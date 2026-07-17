@@ -19,12 +19,15 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const schemaVersion = "biofetch-manifest-v1"
+const (
+	schemaVersion      = "biofetch-manifest-v1"
+	outputFileBaseName = "manifest"
+)
 
 type buildConfig struct {
-	dirIn       string
-	fileStemOut string
-	formats     []string
+	dirIn   string
+	dirOut  string
+	formats []string
 }
 
 type BuildResult struct {
@@ -108,16 +111,16 @@ type outputFile struct {
 	data []byte
 }
 
-func Build(dirIn string, fileStemOut string, formats []string) (BuildResult, error) {
-	model, stemPhysical, formatsResolved, err := buildModel(buildConfig{
-		dirIn:       dirIn,
-		fileStemOut: fileStemOut,
-		formats:     formats,
+func Build(dirIn string, dirOut string, formats []string) (BuildResult, error) {
+	model, dirOutPhysical, formatsResolved, err := buildModel(buildConfig{
+		dirIn:   dirIn,
+		dirOut:  dirOut,
+		formats: formats,
 	})
 	if err != nil {
 		return BuildResult{}, err
 	}
-	outputs, err := renderOutputs(model, stemPhysical, formatsResolved)
+	outputs, err := renderOutputs(model, dirOutPhysical, formatsResolved)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -142,7 +145,7 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 	if err != nil {
 		return aggregateManifest{}, "", nil, err
 	}
-	stemPhysical, outputParent, err := canonicalOutputStem(cfg.fileStemOut)
+	dirOutPhysical, err := canonicalDirectory(cfg.dirOut, "dir_out")
 	if err != nil {
 		return aggregateManifest{}, "", nil, err
 	}
@@ -150,7 +153,7 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 	if err != nil {
 		return aggregateManifest{}, "", nil, err
 	}
-	resourceRoot, err := filepath.Rel(outputParent, rootPhysical)
+	resourceRoot, err := filepath.Rel(dirOutPhysical, rootPhysical)
 	if err != nil {
 		return aggregateManifest{}, "", nil, fmt.Errorf("resolve resource_root: %w", err)
 	}
@@ -238,7 +241,7 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 			errors.Join(validationErrors...),
 		)
 	}
-	return model, stemPhysical, formats, nil
+	return model, dirOutPhysical, formats, nil
 }
 
 func canonicalDirectory(value string, optionName string) (string, error) {
@@ -261,22 +264,6 @@ func canonicalDirectory(value string, optionName string) (string, error) {
 		return "", fmt.Errorf("%s must be a directory: %s", optionName, value)
 	}
 	return filepath.Clean(pathPhysical), nil
-}
-
-func canonicalOutputStem(value string) (string, string, error) {
-	if strings.TrimSpace(value) == "" {
-		return "", "", fmt.Errorf("file_stem_out is required")
-	}
-	pathAbsolute, err := filepath.Abs(value)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve file_stem_out: %w", err)
-	}
-	parentPhysical, err := canonicalDirectory(filepath.Dir(pathAbsolute), "file_stem_out parent")
-	if err != nil {
-		return "", "", err
-	}
-	stemPhysical := filepath.Join(parentPhysical, filepath.Base(pathAbsolute))
-	return stemPhysical, parentPhysical, nil
 }
 
 func normalizeFormats(values []string) ([]string, error) {
@@ -449,7 +436,7 @@ func validateLockFile(file lockFileEnvelope) error {
 	return nil
 }
 
-func renderOutputs(model aggregateManifest, stem string, formats []string) ([]outputFile, error) {
+func renderOutputs(model aggregateManifest, dirOut string, formats []string) ([]outputFile, error) {
 	outputs := make([]outputFile, 0, len(formats))
 	for _, format := range formats {
 		var data []byte
@@ -466,7 +453,8 @@ func renderOutputs(model aggregateManifest, stem string, formats []string) ([]ou
 		if err != nil {
 			return nil, fmt.Errorf("render %s: %w", format, err)
 		}
-		outputs = append(outputs, outputFile{path: stem + "." + format, data: data})
+		fileName := outputFileBaseName + "." + format
+		outputs = append(outputs, outputFile{path: filepath.Join(dirOut, fileName), data: data})
 	}
 	return outputs, nil
 }
