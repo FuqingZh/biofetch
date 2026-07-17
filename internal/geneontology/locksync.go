@@ -17,6 +17,7 @@ type ontologyLockConfig struct {
 	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
+	workersMax int
 }
 
 type ontologySyncConfig struct {
@@ -31,6 +32,9 @@ type ontologySyncConfig struct {
 }
 
 func runLockOntology(cfg *ontologyLockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.DirSnapshot)
 	if err != nil {
 		return err
@@ -50,7 +54,7 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 		return err
 	}
 
-	records, err := scanOntologyRecords(dirVersion, versionToken, urlsExisting)
+	records, err := scanOntologyRecords(dirVersion, versionToken, urlsExisting, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -155,6 +159,7 @@ func scanOntologyRecords(
 	dirVersion string,
 	versionToken string,
 	urlsExisting map[string]string,
+	workersMax int,
 ) ([]ontologyRecord, error) {
 	type taskOntologyRecord struct {
 		filePath string
@@ -187,7 +192,7 @@ func scanOntologyRecords(
 		})
 	}
 
-	records, err := parallel.MapOrdered(tasks, func(task taskOntologyRecord) (ontologyRecord, error) {
+	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task taskOntologyRecord) (ontologyRecord, error) {
 		return buildOntologyRecord(task.filePath, task.pathRel, task.asset)
 	})
 	if err != nil {

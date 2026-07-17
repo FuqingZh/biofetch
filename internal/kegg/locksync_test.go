@@ -22,7 +22,7 @@ func TestScanPathwayRecords(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	records, err := scanPathwayRecords(dirVersion)
+	records, err := scanPathwayRecords(dirVersion, 2)
 	if err != nil {
 		t.Fatalf("scanPathwayRecords returned error: %v", err)
 	}

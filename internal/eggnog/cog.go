@@ -43,6 +43,7 @@ type cogLockConfig struct {
 	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
+	workersMax int
 }
 
 type cogSyncConfig struct {
@@ -98,7 +99,7 @@ func runLockCOG(cfg *cogLockConfig) error {
 	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
-		WorkersMax:   1,
+		WorkersMax:   cfg.workersMax,
 		ShouldDryRun: cfg.ShouldDryRun,
 	}, trace); err != nil {
 		logx.Errorf("biofetch eggnog", "lock failed: %v", err)

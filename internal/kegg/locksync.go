@@ -16,6 +16,7 @@ import (
 type keggLockConfig struct {
 	dirSnapshot     string
 	dirLogs         string
+	workersMax      int
 	requestInterval time.Duration
 	shouldDryRun    bool
 }
@@ -32,6 +33,9 @@ type keggSyncConfig struct {
 }
 
 func runLockPathway(cfg *keggLockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -44,7 +48,7 @@ func runLockPathway(cfg *keggLockConfig) error {
 	}
 	defer closeRun()
 
-	records, err := scanPathwayRecords(dirVersion)
+	records, err := scanPathwayRecords(dirVersion, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -168,6 +172,9 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 }
 
 func runLockBrite(cfg *keggLockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -180,7 +187,7 @@ func runLockBrite(cfg *keggLockConfig) error {
 	}
 	defer closeRun()
 
-	records, err := scanBriteRecords(dirVersion)
+	records, err := scanBriteRecords(dirVersion, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -303,7 +310,7 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 	return nil
 }
 
-func scanPathwayRecords(dirVersion string) ([]pathwayRecord, error) {
+func scanPathwayRecords(dirVersion string, workersMax int) ([]pathwayRecord, error) {
 	type taskPathwayRecord struct {
 		filePath string
 		pathRel  string
@@ -345,7 +352,7 @@ func scanPathwayRecords(dirVersion string) ([]pathwayRecord, error) {
 		}
 	}
 
-	records, err := parallel.MapOrdered(tasks, func(task taskPathwayRecord) (pathwayRecord, error) {
+	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task taskPathwayRecord) (pathwayRecord, error) {
 		return buildScannedPathwayRecord(task.filePath, task.pathRel, task.scopeKey, task.fileName)
 	})
 	if err != nil {
@@ -386,7 +393,7 @@ func buildScannedPathwayRecord(filePath string, pathRel string, scopeKey string,
 	}
 }
 
-func scanBriteRecords(dirVersion string) ([]briteRecord, error) {
+func scanBriteRecords(dirVersion string, workersMax int) ([]briteRecord, error) {
 	type taskBriteRecord struct {
 		filePath string
 		pathRel  string
@@ -428,7 +435,7 @@ func scanBriteRecords(dirVersion string) ([]briteRecord, error) {
 		}
 	}
 
-	records, err := parallel.MapOrdered(tasks, func(task taskBriteRecord) (briteRecord, error) {
+	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task taskBriteRecord) (briteRecord, error) {
 		return buildScannedBriteRecord(task.filePath, task.pathRel, task.scopeKey, task.fileName)
 	})
 	if err != nil {

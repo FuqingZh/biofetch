@@ -89,6 +89,7 @@ func createCOGLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -214,6 +215,7 @@ func createMapperLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock

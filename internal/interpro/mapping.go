@@ -48,6 +48,7 @@ type mappingLockConfig struct {
 	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
+	workersMax int
 }
 
 type mappingSyncConfig struct {
@@ -107,7 +108,7 @@ func runLockMapping(cfg *mappingLockConfig) error {
 	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
-		WorkersMax:   1,
+		WorkersMax:   cfg.workersMax,
 		ShouldDryRun: cfg.ShouldDryRun,
 	}, trace); err != nil {
 		logx.Errorf("biofetch interpro", "lock failed: %v", err)

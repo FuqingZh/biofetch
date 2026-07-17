@@ -22,7 +22,7 @@ func TestScanOntologyRecords(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	records, err := scanOntologyRecords(dirVersion, "2026-01-23", nil)
+	records, err := scanOntologyRecords(dirVersion, "2026-01-23", nil, 2)
 	if err != nil {
 		t.Fatalf("scanOntologyRecords returned error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestScanOntologyRecordsPreservesExistingManifestURLs(t *testing.T) {
 
 	records, err := scanOntologyRecords(dirVersion, "2026-01-23", map[string]string{
 		"raw/go-basic.obo": ontologyCurrentBaseURL + "go-basic.obo",
-	})
+	}, 2)
 	if err != nil {
 		t.Fatalf("scanOntologyRecords returned error: %v", err)
 	}

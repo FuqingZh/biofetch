@@ -22,7 +22,7 @@ func TestScanOmniPathRecords(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	records, err := scanOmniPathRecords(dirVersion, "enz_sub", manifestFile{})
+	records, err := scanOmniPathRecords(dirVersion, "enz_sub", manifestFile{}, 2)
 	if err != nil {
 		t.Fatalf("scanOmniPathRecords returned error: %v", err)
 	}

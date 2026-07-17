@@ -37,6 +37,7 @@ type catalogConfig struct {
 type catalogLockConfig struct {
 	dirSnapshot  string
 	dirLogs      string
+	workersMax   int
 	shouldDryRun bool
 }
 
@@ -132,6 +133,7 @@ func createCatalogLockCommand() *cobra.Command {
 	flags := commandLock.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
@@ -279,6 +281,9 @@ func runFetchCatalog(cfg *catalogConfig) error {
 }
 
 func runLockCatalog(cfg *catalogLockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -291,7 +296,7 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 	}
 	defer closeRun()
 
-	records, err := scanCatalogRecords(dirVersion)
+	records, err := scanCatalogRecords(dirVersion, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -602,7 +607,7 @@ func readExistingCatalogRecords(fileManifest string) ([]catalogRecord, error) {
 	return records, nil
 }
 
-func scanCatalogRecords(dirVersion string) ([]catalogRecord, error) {
+func scanCatalogRecords(dirVersion string, workersMax int) ([]catalogRecord, error) {
 	type taskCatalogRecord struct {
 		filePath string
 		pathRel  string
@@ -610,14 +615,14 @@ func scanCatalogRecords(dirVersion string) ([]catalogRecord, error) {
 		urlFile  string
 	}
 
-	return parallel.MapOrdered([]taskCatalogRecord{
+	return parallel.MapOrderedWithWorkers([]taskCatalogRecord{
 		{
 			filePath: filepath.Join(dirVersion, "raw", keggCatalogFileName),
 			pathRel:  filepath.ToSlash(filepath.Join("raw", keggCatalogFileName)),
 			asset:    keggCatalogAsset,
 			urlFile:  deriveKEGGCatalogURL(),
 		},
-	}, func(task taskCatalogRecord) (catalogRecord, error) {
+	}, workersMax, func(task taskCatalogRecord) (catalogRecord, error) {
 		return buildCatalogRecord(task.filePath, task.pathRel, task.asset, task.urlFile)
 	})
 }

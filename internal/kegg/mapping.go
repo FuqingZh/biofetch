@@ -48,6 +48,7 @@ type mappingConfig struct {
 
 type mappingLockConfig struct {
 	dirSnapshot  string
+	workersMax   int
 	shouldDryRun bool
 	dirLogs      string
 }
@@ -105,6 +106,9 @@ func runFetchMapping(cfg *mappingConfig) error {
 }
 
 func runLockMapping(cfg *mappingLockConfig) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -122,7 +126,7 @@ func runLockMapping(cfg *mappingLockConfig) error {
 	if err := staticasset.Lock(source, cfg.dirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
-		WorkersMax:   1,
+		WorkersMax:   cfg.workersMax,
 		ShouldDryRun: cfg.shouldDryRun,
 	}, trace); err != nil {
 		logx.Errorf("biofetch kegg", "lock failed: %v", err)

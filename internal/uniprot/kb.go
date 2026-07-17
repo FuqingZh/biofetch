@@ -42,6 +42,7 @@ type kbLockConfig struct {
 	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
+	workersMax int
 }
 
 type kbSyncConfig struct {
@@ -101,7 +102,7 @@ func runLockKB(cfg *kbLockConfig) error {
 	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
-		WorkersMax:   1,
+		WorkersMax:   cfg.workersMax,
 		ShouldDryRun: cfg.ShouldDryRun,
 	}, trace); err != nil {
 		logx.Errorf("biofetch uniprot", "lock failed: %v", err)

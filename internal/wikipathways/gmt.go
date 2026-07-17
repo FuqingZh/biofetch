@@ -41,6 +41,7 @@ type gmtLockConfig struct {
 	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
+	workersMax int
 }
 
 type gmtSyncConfig struct {
@@ -105,7 +106,7 @@ func runLockGMT(cfg *gmtLockConfig) error {
 	if err := staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
-		WorkersMax:   1,
+		WorkersMax:   cfg.workersMax,
 		ShouldDryRun: cfg.ShouldDryRun,
 	}, trace); err != nil {
 		logx.Errorf("biofetch wikipathways", "lock failed: %v", err)

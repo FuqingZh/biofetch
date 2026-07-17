@@ -175,6 +175,7 @@ func createEnzSubLockCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
@@ -239,6 +240,7 @@ func createInteractionsLockCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
 	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command

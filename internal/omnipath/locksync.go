@@ -16,6 +16,7 @@ import (
 type lockConfig struct {
 	dirSnapshot  string
 	dirLogs      string
+	workersMax   int
 	shouldDryRun bool
 }
 
@@ -42,6 +43,9 @@ func runLockInteractions(cfg *lockConfig) error {
 }
 
 func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
+	if err := cliopt.NormalizeLockWorkersMax(&cfg.workersMax); err != nil {
+		return err
+	}
 	versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 	if err != nil {
 		return err
@@ -54,7 +58,7 @@ func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
 	}
 	defer closeRun()
 	manifestExisting, _ := readExistingManifest(fileManifest)
-	records, err := scanOmniPathRecords(dirVersion, asset, manifestExisting)
+	records, err := scanOmniPathRecords(dirVersion, asset, manifestExisting, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -259,7 +263,7 @@ func runSyncArchive(cfg *syncConfig, dirVersion string, manifestExisting manifes
 	return nil
 }
 
-func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manifestFile) ([]recordFile, error) {
+func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manifestFile, workersMax int) ([]recordFile, error) {
 	type taskRecordFile struct {
 		filePath string
 		pathRel  string
@@ -337,7 +341,7 @@ func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manif
 		})
 	}
 
-	records, err := parallel.MapOrdered(tasks, func(task taskRecordFile) (recordFile, error) {
+	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task taskRecordFile) (recordFile, error) {
 		return buildRecord(task.filePath, task.pathRel, task.urlFile, task.asset)
 	})
 	if err != nil {

@@ -46,6 +46,7 @@ type annotationLockConfig struct {
 	cliopt.DirSnapshotConfig
 	cliopt.DryRunConfig
 	cliopt.LogConfig
+	workersMax int
 }
 
 type annotationSyncConfig struct {
@@ -124,7 +125,7 @@ func runLockAnnotation(cfg *annotationLockConfig) error {
 	if err := staticasset.Lock(source, dirVersion, staticasset.Options{
 		RuleExisting: "skip",
 		RetryMax:     1,
-		WorkersMax:   1,
+		WorkersMax:   cfg.workersMax,
 		ShouldDryRun: cfg.ShouldDryRun,
 	}, trace); err != nil {
 		logx.Errorf("biofetch go", "lock failed: %v", err)
