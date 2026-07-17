@@ -1,6 +1,6 @@
 # Static Database Downloads Plan
 
-Status: superseded by `../architecture/resource-manifest-contract.md`
+Status: archived; superseded by `../../architecture/resource-manifest-contract.md`
 
 ## Goal
 

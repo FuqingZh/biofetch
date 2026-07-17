@@ -1,5 +1,7 @@
 # Static Database Downloads Smoke Evidence
 
+Status: archived; not an active validation contract
+
 ## Scope
 
 This file records PR 6 smoke evidence for the static database download series.

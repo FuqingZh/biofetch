@@ -2,7 +2,7 @@
 
 Version: v1.0
 Date: 2026-06-15
-Status: current
+Status: archived; not an active contract
 
 ## Purpose
 
@@ -18,20 +18,20 @@ current state, and continuation order.
 
 Read these first:
 
-- `docs/refactor/2026-05-26-static_database_downloads-architecture.md`
-- `docs/refactor/2026-05-26-static_database_downloads-pr_plan.md`
-- `docs/implementation-plan/20260531-v1.0-diamond-uniprot-annotation-resources-pr-roadmap.md`
-- `docs/refactor/2026-06-06-download_unification-pr_plan.md`
-- `docs/refactor/2026-06-10-run_logs-and-kegg_batching-plan.md`
-- `docs/refactor/2026-06-15-run_logs-and-kegg_batching-closeout.md`
+- `docs/archive/refactor/2026-05-26-static_database_downloads-architecture.md`
+- `docs/archive/refactor/2026-05-26-static_database_downloads-pr_plan.md`
+- `docs/archive/implementation-plan/20260531-v1.0-diamond-uniprot-annotation-resources-pr-roadmap.md`
+- `docs/archive/refactor/2026-06-06-download_unification-pr_plan.md`
+- `docs/archive/refactor/2026-06-10-run_logs-and-kegg_batching-plan.md`
+- `docs/archive/refactor/2026-06-15-run_logs-and-kegg_batching-closeout.md`
 
 Supporting plans:
 
-- `docs/refactor/2026-06-05-staticasset_chunked_downloads-plan.md`
-- `docs/refactor/2026-06-06-kegg_pathway_local_reuse_performance-plan.md`
-- `docs/refactor/2026-06-06-kegg_pathway_local_reuse_performance-verification.md`
-- `docs/refactor/2026-05-26-static_database_downloads-smoke.md`
-- `docs/refactor/2026-05-26-static_database_downloads-verification.md`
+- `docs/archive/refactor/2026-06-05-staticasset_chunked_downloads-plan.md`
+- `docs/archive/refactor/2026-06-06-kegg_pathway_local_reuse_performance-plan.md`
+- `docs/archive/refactor/2026-06-06-kegg_pathway_local_reuse_performance-verification.md`
+- `docs/archive/refactor/2026-05-26-static_database_downloads-smoke.md`
+- `docs/archive/refactor/2026-05-26-static_database_downloads-verification.md`
 
 ## Tool Boundary Decision
 

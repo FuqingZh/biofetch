@@ -1,5 +1,7 @@
 # Download Unification PR Plan
 
+Status: archived; not an active implementation plan
+
 ## Goal
 
 Make database downloads behave consistently across `biofetch`:

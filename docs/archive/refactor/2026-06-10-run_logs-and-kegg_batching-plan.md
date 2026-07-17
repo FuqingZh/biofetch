@@ -1,5 +1,7 @@
 # Run Logs and KEGG Batching Plan
 
+Status: archived; not an active implementation plan
+
 ## Goal
 
 Add a shared run-log capability for database download commands and improve KEGG

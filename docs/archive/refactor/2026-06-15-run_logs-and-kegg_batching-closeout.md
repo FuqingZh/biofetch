@@ -2,15 +2,15 @@
 
 Version: v1.0
 Date: 2026-06-15
-Status: current
+Status: archived; not an active contract
 
 Related plan:
 
-- `docs/refactor/2026-06-10-run_logs-and-kegg_batching-plan.md`
+- `docs/archive/refactor/2026-06-10-run_logs-and-kegg_batching-plan.md`
 
 Related session handoff:
 
-- `docs/refactor/2026-06-15-session_handoff-closeout.md`
+- `docs/archive/refactor/2026-06-15-session_handoff-closeout.md`
 
 ## Purpose
 

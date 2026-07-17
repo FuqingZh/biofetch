@@ -2,7 +2,7 @@
 
 Version: v1.0
 Date: 2026-06-15
-Status: proposed
+Status: archived; not an active implementation plan
 
 ## Goal
 

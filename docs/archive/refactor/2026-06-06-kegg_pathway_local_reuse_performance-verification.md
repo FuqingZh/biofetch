@@ -1,5 +1,7 @@
 # KEGG Pathway Local Reuse Performance Verification
 
+Status: archived; not an active validation contract
+
 ## Scope
 
 This note records how to verify the local planning optimization for repeated

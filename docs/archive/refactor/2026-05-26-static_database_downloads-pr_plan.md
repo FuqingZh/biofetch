@@ -1,6 +1,6 @@
 # Static Database Downloads PR Plan
 
-Status: superseded by `../architecture/resource-manifest-contract.md`
+Status: archived; superseded by `../../architecture/resource-manifest-contract.md`
 
 ## PR 1: Shared Static Asset Kernel
 

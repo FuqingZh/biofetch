@@ -64,6 +64,9 @@ The option limits concurrent file readers, not directory discovery. Operators
 must benchmark higher values against the actual storage system because shared
 filesystems can lose throughput under excessive concurrency.
 
+The current production-storage measurement is recorded in the
+[CephFS lock and manifest benchmark](../benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md).
+
 ## Two manifest layers
 
 ### Snapshot `manifest.lock`
@@ -128,6 +131,5 @@ content and its SHA256.
 6. Treat cleanup of legacy `tidy/`, subcell, or DMND assets as a separate,
    caller-approved migration after consumer audit.
 
-The release gate is `go test ./...`, `go vet ./...`, a built-binary CLI smoke,
-and a read-only aggregate build against the real resource tree with outputs in
-temporary storage.
+The maintained local and real-resource release gates are defined in the
+[test contract](../testing/20260717-v1.0-test-contract.md).

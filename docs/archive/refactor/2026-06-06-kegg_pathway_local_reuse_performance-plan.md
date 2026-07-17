@@ -1,5 +1,7 @@
 # KEGG Pathway Local Reuse Performance Plan
 
+Status: archived; not an active implementation plan
+
 ## Goal
 
 Speed up repeated `biofetch kegg pathway fetch` runs when the version directory

@@ -1,6 +1,6 @@
 # Static Database Downloads Verification
 
-Status: superseded by `../architecture/resource-manifest-contract.md`
+Status: archived; superseded by `../../architecture/resource-manifest-contract.md`
 
 ## Verification Goals
 

@@ -1,5 +1,7 @@
 # Static Asset Chunked Downloads Plan
 
+Status: archived; not an active implementation plan
+
 ## Goal
 
 Improve large-file download resilience for all databases that use
@@ -309,4 +311,3 @@ rerun the same command, and verify:
 - no decompression or content-level validation
 - no replacement of `--workers_max`; chunk workers are internally capped and
   separate from asset-level workers
-
