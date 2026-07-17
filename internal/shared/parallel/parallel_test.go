@@ -70,3 +70,9 @@ func TestDeriveWorkerCountMaxHonorsWorkersMax(t *testing.T) {
 		t.Fatalf("deriveWorkerCountMax = %d, want 2", value)
 	}
 }
+
+func TestDeriveWorkerCountMaxHonorsExplicitValueAboveDefaultCap(t *testing.T) {
+	if value := deriveWorkerCountMax(32, 16); value != 16 {
+		t.Fatalf("deriveWorkerCountMax = %d, want 16", value)
+	}
+}

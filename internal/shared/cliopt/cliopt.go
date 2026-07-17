@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	DefaultLockWorkersMax = 4
+	LockWorkersMaxLimit   = 64
+)
+
 type DirOutConfig struct {
 	DirOut string
 }
@@ -61,6 +66,30 @@ func BindDirOutFlag(flags *pflag.FlagSet, cfg *DirOutConfig, usage string) {
 
 func BindDirSnapshotFlag(flags *pflag.FlagSet, cfg *DirSnapshotConfig) {
 	flags.StringVar(&cfg.DirSnapshot, "dir_snapshot", cfg.DirSnapshot, "Existing snapshot directory containing raw/ and manifest.lock")
+}
+
+func BindLockWorkersFlag(flags *pflag.FlagSet, workersMax *int) {
+	if *workersMax == 0 {
+		*workersMax = DefaultLockWorkersMax
+	}
+	flags.IntVar(workersMax, "workers_max", *workersMax, "Max concurrent workers for hashing snapshot files (1-64)")
+}
+
+func ValidateLockWorkersMax(workersMax int) error {
+	if workersMax < 1 {
+		return fmt.Errorf("workers_max must be >= 1")
+	}
+	if workersMax > LockWorkersMaxLimit {
+		return fmt.Errorf("workers_max must be <= %d", LockWorkersMaxLimit)
+	}
+	return nil
+}
+
+func NormalizeLockWorkersMax(workersMax *int) error {
+	if *workersMax == 0 {
+		*workersMax = DefaultLockWorkersMax
+	}
+	return ValidateLockWorkersMax(*workersMax)
 }
 
 func BindVersionFlag(flags *pflag.FlagSet, cfg *VersionConfig, usage string) {

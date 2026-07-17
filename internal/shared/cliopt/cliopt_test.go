@@ -24,6 +24,30 @@ func TestSnapshotVersionTokenRequiresDirectory(t *testing.T) {
 	}
 }
 
+func TestNormalizeLockWorkersMaxAppliesDefault(t *testing.T) {
+	workersMax := 0
+	if err := NormalizeLockWorkersMax(&workersMax); err != nil {
+		t.Fatalf("NormalizeLockWorkersMax returned error: %v", err)
+	}
+	if workersMax != DefaultLockWorkersMax {
+		t.Fatalf("workersMax = %d, want %d", workersMax, DefaultLockWorkersMax)
+	}
+}
+
+func TestNormalizeLockWorkersMaxRejectsNegative(t *testing.T) {
+	workersMax := -1
+	if err := NormalizeLockWorkersMax(&workersMax); err == nil {
+		t.Fatal("NormalizeLockWorkersMax returned nil error")
+	}
+}
+
+func TestNormalizeLockWorkersMaxRejectsAboveLimit(t *testing.T) {
+	workersMax := LockWorkersMaxLimit + 1
+	if err := NormalizeLockWorkersMax(&workersMax); err == nil {
+		t.Fatal("NormalizeLockWorkersMax returned nil error")
+	}
+}
+
 func TestValidateDownloadControlConfig(t *testing.T) {
 	cfg := DownloadControlConfig{WorkersMax: 1, RequestInterval: 0}
 	if err := ValidateDownloadControlConfig(&cfg); err != nil {

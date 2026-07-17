@@ -1,10 +1,11 @@
 package staticasset
 
 import (
+	"biofetch/internal/shared/cliopt"
+	"biofetch/internal/shared/filehash"
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -214,6 +215,9 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 	if strings.TrimSpace(dirVersion) == "" {
 		return fmt.Errorf("dir_snapshot is required")
 	}
+	if err := cliopt.NormalizeLockWorkersMax(&options.WorkersMax); err != nil {
+		return err
+	}
 	if err := validateLockOptions(options); err != nil {
 		return err
 	}
@@ -223,7 +227,7 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	progress := newProgressReporter(source, options, 0, 0)
-	records, err := scanRecords(dirVersion, urlsExisting, progress)
+	records, err := scanRecords(dirVersion, urlsExisting, progress, options.WorkersMax)
 	if err != nil {
 		progress.finish(false)
 		return err
@@ -244,9 +248,6 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 func validateLockOptions(options Options) error {
 	if options.RetryMax < 1 {
 		return fmt.Errorf("retry_max must be >= 1")
-	}
-	if options.WorkersMax < 1 {
-		return fmt.Errorf("workers_max must be >= 1")
 	}
 	return nil
 }
@@ -583,22 +584,24 @@ func buildRecordWithProgress(filePath string, asset Asset, progress *progressRep
 	}, nil
 }
 
-func scanRecords(dirVersion string, urlsExisting map[string]string, progress *progressReporter) ([]FileRecord, error) {
+func scanRecords(dirVersion string, urlsExisting map[string]string, progress *progressReporter, workersMax int) ([]FileRecord, error) {
 	tasks, err := planScanRecords(dirVersion, urlsExisting)
 	if err != nil {
 		return nil, err
 	}
 	progress.planScan(tasks)
-	records := make([]FileRecord, 0, len(tasks))
-	for _, task := range tasks {
+	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task scanTask) (FileRecord, error) {
 		asset := Asset{Name: filepath.Base(task.filePath), Path: task.pathRel, URL: task.url}
 		progress.startScanFile(asset)
 		record, err := buildRecordWithProgress(task.filePath, asset, progress)
 		if err != nil {
-			return nil, err
+			return FileRecord{}, err
 		}
-		records = append(records, record)
 		progress.finishFile(asset, true)
+		return record, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	sortRecords(records)
 	return records, nil
@@ -847,7 +850,6 @@ func calculateSHA256ForFile(filePath string, progress httpx.DownloadProgressFunc
 		return "", fmt.Errorf("open %s for sha256: %w", filePath, err)
 	}
 	defer fileIn.Close()
-	hashSHA256 := sha256.New()
 	var reader io.Reader = fileIn
 	if progress != nil {
 		infoFile, err := fileIn.Stat()
@@ -861,10 +863,11 @@ func calculateSHA256ForFile(filePath string, progress httpx.DownloadProgressFunc
 		}
 		progress(0, infoFile.Size())
 	}
-	if _, err := io.Copy(hashSHA256, reader); err != nil {
+	digest, err := filehash.SHA256(reader)
+	if err != nil {
 		return "", fmt.Errorf("hash %s: %w", filePath, err)
 	}
-	return fmt.Sprintf("%x", hashSHA256.Sum(nil)), nil
+	return digest, nil
 }
 
 type hashProgressReader struct {

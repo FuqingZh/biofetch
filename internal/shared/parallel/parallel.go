@@ -6,7 +6,10 @@ import (
 	"sync"
 )
 
-const maxWorkerCount = 8
+const (
+	defaultWorkerCountMax  = 8
+	explicitWorkerCountMax = 64
+)
 
 type taskIndexed[T any] struct {
 	index int
@@ -180,12 +183,15 @@ func deriveWorkerCountMax(countTasks int, workersMax int) int {
 	countWorkers := workersMax
 	if countWorkers <= 0 {
 		countWorkers = runtime.NumCPU()
+		if countWorkers > defaultWorkerCountMax {
+			countWorkers = defaultWorkerCountMax
+		}
 	}
 	if countWorkers < 1 {
 		countWorkers = 1
 	}
-	if countWorkers > maxWorkerCount {
-		countWorkers = maxWorkerCount
+	if countWorkers > explicitWorkerCountMax {
+		countWorkers = explicitWorkerCountMax
 	}
 	if countWorkers > countTasks {
 		countWorkers = countTasks
