@@ -105,6 +105,36 @@ func TestNestedOmniPathRestoreUsesExactSnapshot(t *testing.T) {
 	}
 }
 
+func TestFlatRestoresRejectMismatchedAssetPath(t *testing.T) {
+	for _, asset := range cliAssets {
+		if asset[0] == "omnipath" && asset[1] == "interactions" {
+			continue
+		}
+		snapshot := t.TempDir() + "/resources/wrong/v1"
+		args := append(append([]string{}, asset...), "restore", snapshot, "--dry-run")
+		err := RunCLI(args)
+		if err == nil || !strings.Contains(err.Error(), "must identify asset") {
+			t.Fatalf("RunCLI(%q) mismatched snapshot error = %v", args, err)
+		}
+	}
+}
+
+func TestNestedOmniPathRestoreRejectsMismatchedAssetAndDataset(t *testing.T) {
+	root := t.TempDir() + "/resources"
+	for _, test := range []struct {
+		snapshot string
+		want     string
+	}{
+		{snapshot: root + "/wrong/kinaseextra/v1", want: "must identify"},
+		{snapshot: root + "/interactions/not-kinaseextra/v1", want: "dataset must be kinaseextra"},
+	} {
+		err := RunCLI([]string{"omnipath", "interactions", "restore", test.snapshot, "--dry-run"})
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("nested restore %q error = %v, want %q", test.snapshot, err, test.want)
+		}
+	}
+}
+
 func errString(err error) string {
 	if err == nil {
 		return ""

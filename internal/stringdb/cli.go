@@ -166,7 +166,7 @@ func createSyncCommand() *cobra.Command {
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			cfg.dirOut, cfg.versionToken, err = cliopt.SnapshotRootVersion(args[0])
+			cfg.dirOut, cfg.versionToken, err = cliopt.FlatSnapshotRootVersion(args[0], "network")
 			if err != nil {
 				return err
 			}

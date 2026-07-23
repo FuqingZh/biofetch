@@ -106,7 +106,7 @@ func createCOGRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "cog"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
@@ -226,7 +226,7 @@ func createMapperRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "mapper"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {

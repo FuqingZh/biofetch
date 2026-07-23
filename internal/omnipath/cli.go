@@ -3,7 +3,6 @@ package omnipath
 import (
 	"biofetch/internal/shared/cliopt"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -201,7 +200,7 @@ func createEnzSubRestoreCommand() *cobra.Command {
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			cfg.dirOut, cfg.versionToken, err = cliopt.SnapshotRootVersion(args[0])
+			cfg.dirOut, cfg.versionToken, err = cliopt.FlatSnapshotRootVersion(args[0], "enz_sub")
 			if err != nil {
 				return err
 			}
@@ -267,14 +266,11 @@ func createInteractionsRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			snapshot := filepath.Clean(args[0])
-			cfg.versionToken = filepath.Base(snapshot)
-			cfg.dataset = filepath.Base(filepath.Dir(snapshot))
-			dirInteractions := filepath.Dir(filepath.Dir(snapshot))
-			if filepath.Base(dirInteractions) != "interactions" {
-				return fmt.Errorf("snapshot must identify <resource-root>/interactions/<dataset>/<version>: %s", args[0])
+			var err error
+			cfg.dirOut, cfg.dataset, cfg.versionToken, err = cliopt.NestedSnapshotRootDatasetVersion(args[0], "interactions")
+			if err != nil {
+				return err
 			}
-			cfg.dirOut = filepath.Dir(dirInteractions)
 			if strings.TrimSpace(cfg.dirOut) == "" {
 				return fmt.Errorf("output is required")
 			}

@@ -582,3 +582,13 @@ func eventNames(events []TraceEvent) []string {
 	}
 	return names
 }
+
+func TestLockRequiresSnapshotWithPublicSpelling(t *testing.T) {
+	err := Lock(Source{Database: "test", Asset: "asset", Version: "v1", VersionToken: "v1"}, "", Options{
+		RetryMax:   1,
+		WorkersMax: 1,
+	}, nil)
+	if err == nil || err.Error() != "snapshot is required" {
+		t.Fatalf("Lock error = %v", err)
+	}
+}

@@ -213,7 +213,7 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	if strings.TrimSpace(dirVersion) == "" {
-		return fmt.Errorf("dir_snapshot is required")
+		return fmt.Errorf("snapshot is required")
 	}
 	if err := cliopt.NormalizeLockWorkersMax(&options.WorkersMax); err != nil {
 		return err

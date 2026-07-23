@@ -226,8 +226,8 @@ func BindListFileFlag(flags *pflag.FlagSet, values *[]string, optionName string)
 	flags.Var(&listFileValue{values: values, optionName: optionName}, optionName+"-file", "Read "+optionName+" from a file")
 }
 
-func ApplyFlatSnapshot(dirOut *DirOutConfig, version *VersionConfig, snapshot string) error {
-	dirRoot, versionToken, err := SnapshotRootVersion(snapshot)
+func ApplyFlatSnapshot(dirOut *DirOutConfig, version *VersionConfig, snapshot string, expectedAsset string) error {
+	dirRoot, versionToken, err := FlatSnapshotRootVersion(snapshot, expectedAsset)
 	if err != nil {
 		return err
 	}
@@ -236,7 +236,7 @@ func ApplyFlatSnapshot(dirOut *DirOutConfig, version *VersionConfig, snapshot st
 	return nil
 }
 
-func SnapshotRootVersion(snapshot string) (string, string, error) {
+func FlatSnapshotRootVersion(snapshot string, expectedAsset string) (string, string, error) {
 	versionToken, err := SnapshotVersionToken(snapshot)
 	if err != nil {
 		return "", "", err
@@ -247,7 +247,36 @@ func SnapshotRootVersion(snapshot string) (string, string, error) {
 	if dirAsset == "." || dirRoot == "." || filepath.Base(dirAsset) == "." {
 		return "", "", fmt.Errorf("snapshot must identify <resource-root>/<asset>/<version>: %s", snapshot)
 	}
+	if filepath.Base(dirAsset) != expectedAsset {
+		return "", "", fmt.Errorf("snapshot must identify asset %q: %s", expectedAsset, snapshot)
+	}
+	if filepath.Clean(filepath.Join(dirRoot, expectedAsset, versionToken)) != dirSnapshot {
+		return "", "", fmt.Errorf("snapshot path does not match asset %q: %s", expectedAsset, snapshot)
+	}
 	return dirRoot, versionToken, nil
+}
+
+func NestedSnapshotRootDatasetVersion(snapshot string, expectedAsset string) (string, string, string, error) {
+	versionToken, err := SnapshotVersionToken(snapshot)
+	if err != nil {
+		return "", "", "", err
+	}
+	dirSnapshot := filepath.Clean(snapshot)
+	dirDataset := filepath.Dir(dirSnapshot)
+	dataset := filepath.Base(dirDataset)
+	dirAsset := filepath.Dir(dirDataset)
+	dirRoot := filepath.Dir(dirAsset)
+	if dataset == "." || dataset == "" || filepath.Base(dirAsset) != expectedAsset {
+		return "", "", "", fmt.Errorf(
+			"snapshot must identify <resource-root>/%s/<dataset>/<version>: %s",
+			expectedAsset,
+			snapshot,
+		)
+	}
+	if filepath.Clean(filepath.Join(dirRoot, expectedAsset, dataset, versionToken)) != dirSnapshot {
+		return "", "", "", fmt.Errorf("snapshot path does not match asset %q: %s", expectedAsset, snapshot)
+	}
+	return dirRoot, dataset, versionToken, nil
 }
 
 func readListInputFile(filePath string, optionName string) ([]string, error) {

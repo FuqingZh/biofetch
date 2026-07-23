@@ -117,7 +117,7 @@ func createKBRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "kb"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
@@ -237,7 +237,7 @@ func createUniRefRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "uniref"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
@@ -358,7 +358,7 @@ func createIDMappingRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "idmapping"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {

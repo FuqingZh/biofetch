@@ -152,7 +152,7 @@ func createAnnotationRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "annotation"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
@@ -264,7 +264,7 @@ func createSlimRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "slim"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
@@ -380,7 +380,7 @@ func createOntologyRestoreCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "ontology"); err != nil {
 				return err
 			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
