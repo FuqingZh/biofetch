@@ -107,7 +107,7 @@ func runRestoreOntology(cfg *ontologyRestoreConfig) error {
 	if cfg.ShouldDryRun {
 		for _, record := range recordsManifest {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 		}
 		logf("dry-run restore done (files=%d)", len(recordsManifest))
 		return nil

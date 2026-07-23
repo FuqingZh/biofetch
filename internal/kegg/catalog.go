@@ -350,7 +350,7 @@ func runRestoreCatalog(cfg *catalogRestoreConfig) error {
 	if cfg.shouldDryRun {
 		for _, item := range manifestExisting.Files {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(item.Path))
-			logf("[dry-run] sync %s -> %s", item.URL, filePath)
+			logf("[dry-run] restore %s -> %s", item.URL, filePath)
 		}
 		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil

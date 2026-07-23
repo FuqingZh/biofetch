@@ -88,7 +88,7 @@ func runRestore(cfg *restoreConfig) error {
 	if cfg.shouldDryRun {
 		for _, record := range recordsManifest {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.pathRel))
-			logf("[dry-run] sync %s -> %s", record.url, filePath)
+			logf("[dry-run] restore %s -> %s", record.url, filePath)
 		}
 		logf("dry-run restore done (files=%d)", len(recordsManifest))
 		return nil

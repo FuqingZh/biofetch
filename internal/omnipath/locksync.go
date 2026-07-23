@@ -121,7 +121,7 @@ func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error
 	for _, record := range manifestExisting.Files {
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.Path))
 		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 			continue
 		}
 
@@ -222,7 +222,7 @@ func runRestoreArchive(cfg *restoreConfig, dirVersion string, manifestExisting m
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] sync archive %s -> %s", manifestExisting.QueryURL, dirVersion)
+		logf("[dry-run] restore archive %s -> %s", manifestExisting.QueryURL, dirVersion)
 		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil
 	}

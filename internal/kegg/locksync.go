@@ -107,7 +107,7 @@ func runRestorePathway(cfg *keggRestoreConfig) error {
 		}
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
 		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 			continue
 		}
 
@@ -246,7 +246,7 @@ func runRestoreBrite(cfg *keggRestoreConfig) error {
 		}
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
 		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 			continue
 		}
 
