@@ -14,10 +14,9 @@ Read these documents in order:
    concurrency, and real-resource validation requirements.
 4. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
    for the current measured storage baseline.
-
-There is no active implementation plan. New plans should be created only for
-approved work that is not already represented by the current architecture and
-tests.
+5. [CLI v2, InterProScan, and AO adoption implementation plan](implementation-plan/20260723-v1.0-cli-v2-interpro-scan-ao-adoption-implementation-plan.md)
+   for the approved breaking CLI migration, new InterProScan distribution
+   asset, delivery slices, verification, and AO completion gates.
 
 ## History
 
