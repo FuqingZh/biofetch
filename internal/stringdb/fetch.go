@@ -164,7 +164,7 @@ func resolveTaxIDs(cfg *config, limiterRequest *httpx.RequestLimiter) ([]string,
 }
 
 func parseTaxIDs(valuesInput []string) ([]string, error) {
-	valuesResolved, err := cliopt.ExpandAtFileTokens(valuesInput, "taxids")
+	valuesResolved, err := cliopt.ExpandListTokens(valuesInput, "", "taxids")
 	if err != nil {
 		return nil, err
 	}
@@ -183,10 +183,6 @@ func parseTaxIDs(valuesInput []string) ([]string, error) {
 		return nil, fmt.Errorf("taxids must not be empty")
 	}
 	return cliopt.SortedUniqueStrings(valuesValid), nil
-}
-
-func readTaxIDsFromFile(fileTaxIDs string) ([]string, error) {
-	return parseTaxIDs([]string{"@" + fileTaxIDs})
 }
 
 func fetchAllSpeciesTaxIDs(cfg *config, limiterRequest *httpx.RequestLimiter) ([]string, error) {
@@ -317,7 +313,7 @@ func planSyncDownloadTasks(
 			assetName:  record.assetName,
 			pathRel:    record.pathRel,
 			urlFile:    record.url,
-			textAction: fmt.Sprintf("sync downloading %s", filepath.Base(filePath)),
+			textAction: fmt.Sprintf("restore downloading %s", filepath.Base(filePath)),
 		})
 	}
 
@@ -338,7 +334,7 @@ func runDownloadTasks(
 		func(task downloadTask) (fileRecord, error) {
 			logf("%s", task.textAction)
 			if err := os.MkdirAll(filepath.Dir(task.filePath), 0o755); err != nil {
-				return fileRecord{}, fmt.Errorf("create sync dir: %w", err)
+				return fileRecord{}, fmt.Errorf("create restore dir: %w", err)
 			}
 			if err := downloadFileWithRetry(
 				clientHTTP,

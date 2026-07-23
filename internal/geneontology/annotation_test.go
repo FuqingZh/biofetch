@@ -30,7 +30,7 @@ func TestResolveAnnotationDatasetsSupportsAtFileAndComma(t *testing.T) {
 	if err := os.WriteFile(fileDatasets, []byte("# comment\nmgi\n"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
-	datasets, err := resolveAnnotationDatasets([]string{"goa_human,sgd", "@" + fileDatasets})
+	datasets, err := resolveAnnotationDatasets([]string{"goa_human,sgd", "mgi"})
 	if err != nil {
 		t.Fatalf("resolveAnnotationDatasets returned error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestResolveAnnotationFormatsSupportsAtFileAndComma(t *testing.T) {
 	if err := os.WriteFile(fileFormats, []byte("# comment\ngpi\n"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
-	formats, err := resolveAnnotationFormats([]string{"gaf,gpad", "@" + fileFormats})
+	formats, err := resolveAnnotationFormats([]string{"gaf,gpad", "gpi"})
 	if err != nil {
 		t.Fatalf("resolveAnnotationFormats returned error: %v", err)
 	}
@@ -494,15 +494,15 @@ func TestRunSyncAnnotationDownloadsFromManifest(t *testing.T) {
 		t.Fatalf("os.Remove returned error: %v", err)
 	}
 
-	cfg := createDefaultAnnotationSyncConfig()
+	cfg := createDefaultAnnotationRestoreConfig()
 	cfg.DirOut = dirOut
 	cfg.VersionToken = "2026-05-01"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.RetryWait = time.Millisecond
 	cfg.WorkersMax = 1
-	if err := runSyncAnnotation(&cfg); err != nil {
-		t.Fatalf("runSyncAnnotation returned error: %v", err)
+	if err := runRestoreAnnotation(&cfg); err != nil {
+		t.Fatalf("runRestoreAnnotation returned error: %v", err)
 	}
 	data, err := os.ReadFile(fileOut)
 	if err != nil {
@@ -551,15 +551,15 @@ func TestRunSyncAnnotationDerivesMissingManifestScope(t *testing.T) {
 		t.Fatalf("os.Remove returned error: %v", err)
 	}
 
-	cfg := createDefaultAnnotationSyncConfig()
+	cfg := createDefaultAnnotationRestoreConfig()
 	cfg.DirOut = dirOut
 	cfg.VersionToken = "2026-05-01"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.RetryWait = time.Millisecond
 	cfg.WorkersMax = 1
-	if err := runSyncAnnotation(&cfg); err != nil {
-		t.Fatalf("runSyncAnnotation returned error: %v", err)
+	if err := runRestoreAnnotation(&cfg); err != nil {
+		t.Fatalf("runRestoreAnnotation returned error: %v", err)
 	}
 	manifest, ok, err := staticasset.ReadManifest(filepath.Join(dirOut, "annotation", "2026-05-01", "manifest.lock"))
 	if err != nil {
@@ -583,7 +583,7 @@ func TestAnnotationCommandHelpListsActions(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"fetch", "lock", "sync"} {
+	for _, want := range []string{"fetch", "lock", "restore"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help output missing %q: %s", want, text)
 		}

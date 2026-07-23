@@ -54,7 +54,7 @@ func TestRunFetchUniRefRequiresLargeAssetsFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchUniRef returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_assets") {
+	if !strings.Contains(err.Error(), "allow-large-downloads") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "uniref")); !os.IsNotExist(statErr) {

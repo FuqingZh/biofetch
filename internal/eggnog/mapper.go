@@ -48,7 +48,7 @@ type mapperLockConfig struct {
 	workersMax int
 }
 
-type mapperSyncConfig struct {
+type mapperRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -66,7 +66,7 @@ func runFetchMapper(cfg *mapperConfig) error {
 		return err
 	}
 	if hasLargeMapperAsset(assets) && !cfg.shouldAllowLargeAssets {
-		return fmt.Errorf("selected eggNOG mapper assets are large downloads; pass --should_allow_large_assets to fetch")
+		return fmt.Errorf("selected eggNOG mapper assets are large downloads; pass --allow-large-downloads to fetch")
 	}
 	versionToken, err := normalizeMapperVersionToken(firstNonEmpty(cfg.VersionToken, defaultMapperVersion))
 	if err != nil {
@@ -113,19 +113,19 @@ func runLockMapper(cfg *mapperLockConfig) error {
 	return nil
 }
 
-func runSyncMapper(cfg *mapperSyncConfig) error {
+func runRestoreMapper(cfg *mapperRestoreConfig) error {
 	versionToken, err := normalizeMapperVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
 	source := buildMapperSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch eggnog", "sync failed: %v", err)
+		logx.Errorf("biofetch eggnog", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -135,7 +135,7 @@ func resolveMapperAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return sortedMapperAssetNames(), nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}

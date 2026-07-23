@@ -35,7 +35,7 @@ func TestParseTaxIDsSupportsAtFile(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	values, err := parseTaxIDs([]string{"@" + fileTaxIDs})
+	values, err := parseTaxIDs([]string{"7070,9606"})
 	if err != nil {
 		t.Fatalf("parseTaxIDs returned error: %v", err)
 	}
@@ -43,25 +43,6 @@ func TestParseTaxIDsSupportsAtFile(t *testing.T) {
 	expected := []string{"7070", "9606"}
 	if !reflect.DeepEqual(values, expected) {
 		t.Fatalf("parseTaxIDs = %#v, want %#v", values, expected)
-	}
-}
-
-func TestReadTaxIDsFromFile(t *testing.T) {
-	dirTemp := t.TempDir()
-	fileTaxIDs := filepath.Join(dirTemp, "taxids.txt")
-	content := "# comment\n7070\n\n9606\n7070\n"
-	if err := os.WriteFile(fileTaxIDs, []byte(content), 0o644); err != nil {
-		t.Fatalf("os.WriteFile returned error: %v", err)
-	}
-
-	values, err := readTaxIDsFromFile(fileTaxIDs)
-	if err != nil {
-		t.Fatalf("readTaxIDsFromFile returned error: %v", err)
-	}
-
-	expected := []string{"7070", "9606"}
-	if !reflect.DeepEqual(values, expected) {
-		t.Fatalf("readTaxIDsFromFile = %#v, want %#v", values, expected)
 	}
 }
 
@@ -367,7 +348,7 @@ func TestValidateConfigRejectsInvalidWorkersMax(t *testing.T) {
 	cfg.WorkersMax = 0
 
 	err := validateConfig(cfg)
-	if err == nil || err.Error() != "workers_max must be >= 1" {
+	if err == nil || err.Error() != "workers must be >= 1" {
 		t.Fatalf("validateConfig error = %v", err)
 	}
 }
@@ -379,7 +360,7 @@ func TestValidateConfigRejectsNegativeRequestInterval(t *testing.T) {
 	cfg.RequestInterval = -1 * time.Millisecond
 
 	err := validateConfig(cfg)
-	if err == nil || err.Error() != "request_interval_ms must be >= 0" {
+	if err == nil || err.Error() != "request-interval must be >= 0" {
 		t.Fatalf("validateConfig error = %v", err)
 	}
 }
@@ -392,7 +373,7 @@ func TestValidateConfigResolvesAtFileTaxIDs(t *testing.T) {
 
 	cfg := createDefaultConfig()
 	cfg.dirOut = "/tmp/string"
-	cfg.taxIDs = []string{"@" + fileTaxIDs}
+	cfg.taxIDs = []string{"7070,9606"}
 
 	err := validateConfig(cfg)
 	if err != nil {

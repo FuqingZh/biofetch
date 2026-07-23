@@ -29,7 +29,7 @@ Some established databases use a shorter or nested path, such as
 Download a database asset and write its snapshot lock:
 
 ```bash
-biofetch go ontology fetch --dir_out /database/bioinfo/resources/go
+biofetch go ontology fetch --output /database/bioinfo/resources/go
 ```
 
 Rebuild a snapshot lock from an existing snapshot directory. The directory
@@ -38,12 +38,12 @@ name is the authoritative `version_token`; `lock` does not accept a separate
 
 ```bash
 biofetch kegg catalog lock \
-  --dir_snapshot /database/bioinfo/resources/kegg/catalog/2026-04 \
-  --workers_max 4
+  /database/bioinfo/resources/kegg/catalog/2026-04 \
+  --workers 4
 ```
 
 Every `lock` performs a complete SHA256 pass over the snapshot's `raw/`
-files. Hashing is parallel and deterministic; `--workers_max` defaults to 4
+files. Hashing is parallel and deterministic; `--workers` defaults to 4
 and can be tuned for the storage system. More workers can reduce performance
 on shared filesystems, so increase it only after measurement.
 
@@ -51,16 +51,31 @@ Build the aggregate manifest for an entire resource tree:
 
 ```bash
 biofetch manifest build \
-  --dir_in /database/bioinfo/resources \
-  --dir_out /database/bioinfo/meta \
+  /database/bioinfo/resources \
+  --output /database/bioinfo/meta \
   --formats toml
 ```
 
 `--formats` accepts `toml`, `tsv`, and `json` as comma-separated values,
-repeated options, or `@file` entries. TOML is the default canonical format.
+repeated options, or through `--formats-file`. TOML is the default canonical format.
 Output names are fixed as `manifest.toml`, `manifest.json`, and
-`manifest.tsv` within `--dir_out`. The aggregate manifest is derived from
+`manifest.tsv` within `--output`. The aggregate manifest is derived from
 snapshot locks and is therefore never named `manifest.lock`.
+
+Restore missing or invalid files from the URLs and SHA256 records in one exact
+snapshot lock:
+
+```bash
+biofetch kegg catalog restore \
+  /database/bioinfo/resources/kegg/catalog/2026-04 \
+  --on-existing skip \
+  --retry-wait 3s
+```
+
+Long options use lowercase kebab-case. Fetch output uses `-o` / `--output`;
+durations accept native values such as `350ms`, `3s`, and `1m`. Use
+`biofetch --version` for build information and `biofetch completion <shell>`
+for Cobra-generated completion scripts.
 
 See [docs/README.md](docs/README.md) for the current architecture and
 validation contract.

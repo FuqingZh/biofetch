@@ -45,7 +45,7 @@ func createAnnotationCommand() *cobra.Command {
 
 	commandAnnotation.AddCommand(createAnnotationFetchCommand())
 	commandAnnotation.AddCommand(createAnnotationLockCommand())
-	commandAnnotation.AddCommand(createAnnotationSyncCommand())
+	commandAnnotation.AddCommand(createAnnotationRestoreCommand())
 	return commandAnnotation
 }
 
@@ -59,7 +59,7 @@ func createOntologyCommand() *cobra.Command {
 
 	commandOntology.AddCommand(createOntologyFetchCommand())
 	commandOntology.AddCommand(createOntologyLockCommand())
-	commandOntology.AddCommand(createOntologySyncCommand())
+	commandOntology.AddCommand(createOntologyRestoreCommand())
 	return commandOntology
 }
 
@@ -73,14 +73,12 @@ func createSlimCommand() *cobra.Command {
 
 	commandSlim.AddCommand(createSlimFetchCommand())
 	commandSlim.AddCommand(createSlimLockCommand())
-	commandSlim.AddCommand(createSlimSyncCommand())
+	commandSlim.AddCommand(createSlimRestoreCommand())
 	return commandSlim
 }
 
 func createAnnotationFetchCommand() *cobra.Command {
 	cfg := createDefaultAnnotationConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
@@ -89,8 +87,6 @@ func createAnnotationFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateAnnotationConfig(&cfg); err != nil {
 				return err
 			}
@@ -99,10 +95,10 @@ func createAnnotationFetchCommand() *cobra.Command {
 	}
 
 	commandFetch.Example = strings.Join([]string{
-		"biofetch go annotation fetch --dir_out /data/go",
-		"biofetch go annotation fetch --dir_out /data/go --datasets goa_human",
-		"biofetch go annotation fetch --dir_out /data/go --datasets goa_human --formats gaf,gpad,gpi",
-		"biofetch go annotation fetch --dir_out /data/go --version 2026-01-23 --datasets mgi,sgd --formats gaf",
+		"biofetch go annotation fetch --output /data/go",
+		"biofetch go annotation fetch --output /data/go --datasets goa_human",
+		"biofetch go annotation fetch --output /data/go --datasets goa_human --formats gaf,gpad,gpi",
+		"biofetch go annotation fetch --output /data/go --version 2026-01-23 --datasets mgi,sgd --formats gaf",
 	}, "\n")
 
 	flags := commandFetch.Flags()
@@ -110,10 +106,12 @@ func createAnnotationFetchCommand() *cobra.Command {
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
 	flags.StringSliceVar(&cfg.datasetNames, "datasets", nil, "GO annotation dataset file stems, e.g. goa_human or mgi; omit to discover all datasets for selected formats")
-	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO annotation formats: gaf|gpad|gpi; omit for gaf, repeat the flag, use commas, or use @file")
+	cliopt.BindListFileFlag(flags, &cfg.datasetNames, "datasets")
+	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO annotation formats: gaf|gpad|gpi; omit for gaf, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.formatNames, "formats")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -125,39 +123,38 @@ func createAnnotationLockCommand() *cobra.Command {
 	cfg := annotationLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild GO annotation manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockAnnotation(&cfg)
 		},
 	}
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createAnnotationSyncCommand() *cobra.Command {
-	cfg := createDefaultAnnotationSyncConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
+func createAnnotationRestoreCommand() *cobra.Command {
+	cfg := createDefaultAnnotationRestoreConfig()
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync GO annotation files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore GO annotation files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -173,28 +170,24 @@ func createAnnotationSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncAnnotation(&cfg)
+			return runRestoreAnnotation(&cfg)
 		},
 	}
 
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO annotation version token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
-	return commandSync
+	return commandRestore
 }
 
 func createSlimFetchCommand() *cobra.Command {
 	cfg := createDefaultSlimConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandSlim := &cobra.Command{
 		Use:           "fetch",
@@ -203,8 +196,6 @@ func createSlimFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateSlimConfig(&cfg); err != nil {
 				return err
 			}
@@ -213,20 +204,22 @@ func createSlimFetchCommand() *cobra.Command {
 	}
 
 	commandSlim.Example = strings.Join([]string{
-		"biofetch go slim fetch --dir_out /data/go --should_dry_run",
-		"biofetch go slim fetch --dir_out /data/go --subsets goslim_generic --formats obo,tsv",
-		"biofetch go slim fetch --dir_out /data/go --version 2026-01-23 --subsets goslim_plant --formats obo",
+		"biofetch go slim fetch --output /data/go --dry-run",
+		"biofetch go slim fetch --output /data/go --subsets goslim_generic --formats obo,tsv",
+		"biofetch go slim fetch --output /data/go --version 2026-01-23 --subsets goslim_plant --formats obo",
 	}, "\n")
 
 	flags := commandSlim.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
-	flags.StringSliceVar(&cfg.subsetNames, "subsets", nil, "GO Slim subset IDs; omit for goslim_generic, repeat the flag, use commas, or use @file")
-	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO Slim formats: obo|owl|json|tsv; omit for obo, repeat the flag, use commas, or use @file")
+	flags.StringSliceVar(&cfg.subsetNames, "subsets", nil, "GO Slim subset IDs; omit for goslim_generic, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.subsetNames, "subsets")
+	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO Slim formats: obo|owl|json|tsv; omit for obo, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.formatNames, "formats")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -238,43 +231,42 @@ func createSlimLockCommand() *cobra.Command {
 	cfg := slimLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild GO Slim manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockSlim(&cfg)
 		},
 	}
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createSlimSyncCommand() *cobra.Command {
-	cfg := slimSyncConfig{}
+func createSlimRestoreCommand() *cobra.Command {
+	cfg := slimRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
 	cfg.WorkersMax = 1
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync GO Slim files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore GO Slim files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -290,28 +282,24 @@ func createSlimSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncSlim(&cfg)
+			return runRestoreSlim(&cfg)
 		},
 	}
 
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO Slim version token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
-	return commandSync
+	return commandRestore
 }
 
 func createOntologyFetchCommand() *cobra.Command {
 	cfg := createDefaultOntologyConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandOntology := &cobra.Command{
 		Use:           "fetch",
@@ -320,8 +308,6 @@ func createOntologyFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateOntologyConfig(&cfg); err != nil {
 				return err
 			}
@@ -330,10 +316,10 @@ func createOntologyFetchCommand() *cobra.Command {
 	}
 
 	commandOntology.Example = strings.Join([]string{
-		"biofetch go ontology fetch --dir_out /data/go --should_dry_run",
-		"biofetch go ontology fetch --dir_out /data/go",
-		"biofetch go ontology fetch --dir_out /data/go --version 2026-01-23 --assets go-basic.obo",
-		"biofetch go ontology fetch --dir_out /data/go --assets go-basic.obo --assets go.obo",
+		"biofetch go ontology fetch --output /data/go --dry-run",
+		"biofetch go ontology fetch --output /data/go",
+		"biofetch go ontology fetch --output /data/go --version 2026-01-23 --assets go-basic.obo",
+		"biofetch go ontology fetch --output /data/go --assets go-basic.obo --assets go.obo",
 	}, "\n")
 
 	flags := commandOntology.Flags()
@@ -344,11 +330,12 @@ func createOntologyFetchCommand() *cobra.Command {
 		&cfg.assetNames,
 		"assets",
 		nil,
-		"Ontology assets; omit to fetch all discovered ontology files, or pass inline values, repeat the flag, or use @file with one asset per line (# comments and blank lines ignored)",
+		"Ontology assets; omit to fetch all discovered ontology files, or pass inline values or repeat the flag",
 	)
+	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite (skip reuses manifest/cache when size matches)")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -360,43 +347,42 @@ func createOntologyLockCommand() *cobra.Command {
 	cfg := ontologyLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild GO ontology manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockOntology(&cfg)
 		},
 	}
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createOntologySyncCommand() *cobra.Command {
-	cfg := ontologySyncConfig{}
+func createOntologyRestoreCommand() *cobra.Command {
+	cfg := ontologyRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
 	cfg.WorkersMax = 1
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync GO ontology files from manifest.lock and refresh manifest with cache-aware skip reuse",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore GO ontology files from manifest.lock and refresh manifest with cache-aware skip reuse",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -412,21 +398,19 @@ func createOntologySyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncOntology(&cfg)
+			return runRestoreOntology(&cfg)
 		},
 	}
 
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO ontology version token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite (skip reuses manifest/cache when size matches)")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
-	return commandSync
+	return commandRestore
 }
 
 func createDefaultOntologyConfig() ontologyConfig {

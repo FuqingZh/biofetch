@@ -72,10 +72,10 @@ func TestScanCatalogRecords(t *testing.T) {
 	}
 }
 
-func TestValidateCatalogSyncConfigRequiresVersion(t *testing.T) {
-	cfg := catalogSyncConfig{dirOut: "/tmp/string"}
-	err := validateCatalogSyncConfig(&cfg)
+func TestValidateCatalogRestoreConfigRequiresVersion(t *testing.T) {
+	cfg := catalogRestoreConfig{dirOut: "/tmp/string"}
+	err := validateCatalogRestoreConfig(&cfg)
 	if err == nil || !strings.Contains(err.Error(), "version is required") {
-		t.Fatalf("validateCatalogSyncConfig expected version error, got: %v", err)
+		t.Fatalf("validateCatalogRestoreConfig expected version error, got: %v", err)
 	}
 }

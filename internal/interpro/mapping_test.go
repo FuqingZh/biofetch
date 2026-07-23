@@ -101,7 +101,7 @@ func TestRunFetchMappingRequiresLargeDownloadFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchMapping returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_assets") {
+	if !strings.Contains(err.Error(), "allow-large-downloads") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "mapping")); !os.IsNotExist(statErr) {
@@ -196,14 +196,14 @@ func TestRunLockMappingRejectsCurrentVersion(t *testing.T) {
 }
 
 func TestRunSyncMappingRejectsCurrentVersion(t *testing.T) {
-	cfg := mappingSyncConfig{}
+	cfg := mappingRestoreConfig{}
 	cfg.DirOut = t.TempDir()
 	cfg.VersionToken = "current"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
-	err := runSyncMapping(&cfg)
+	err := runRestoreMapping(&cfg)
 	if err == nil {
-		t.Fatal("runSyncMapping returned nil error")
+		t.Fatal("runRestoreMapping returned nil error")
 	}
 }

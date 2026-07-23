@@ -61,26 +61,22 @@ type InsecureTLSConfig struct {
 }
 
 func BindDirOutFlag(flags *pflag.FlagSet, cfg *DirOutConfig, usage string) {
-	flags.StringVar(&cfg.DirOut, "dir_out", cfg.DirOut, usage)
-}
-
-func BindDirSnapshotFlag(flags *pflag.FlagSet, cfg *DirSnapshotConfig) {
-	flags.StringVar(&cfg.DirSnapshot, "dir_snapshot", cfg.DirSnapshot, "Existing snapshot directory containing raw/ and manifest.lock")
+	flags.StringVarP(&cfg.DirOut, "output", "o", cfg.DirOut, usage)
 }
 
 func BindLockWorkersFlag(flags *pflag.FlagSet, workersMax *int) {
 	if *workersMax == 0 {
 		*workersMax = DefaultLockWorkersMax
 	}
-	flags.IntVar(workersMax, "workers_max", *workersMax, "Max concurrent workers for hashing snapshot files (1-64)")
+	flags.IntVar(workersMax, "workers", *workersMax, "Max concurrent workers for hashing snapshot files (1-64)")
 }
 
 func ValidateLockWorkersMax(workersMax int) error {
 	if workersMax < 1 {
-		return fmt.Errorf("workers_max must be >= 1")
+		return fmt.Errorf("workers must be >= 1")
 	}
 	if workersMax > LockWorkersMaxLimit {
-		return fmt.Errorf("workers_max must be <= %d", LockWorkersMaxLimit)
+		return fmt.Errorf("workers must be <= %d", LockWorkersMaxLimit)
 	}
 	return nil
 }
@@ -97,43 +93,43 @@ func BindVersionFlag(flags *pflag.FlagSet, cfg *VersionConfig, usage string) {
 }
 
 func BindDryRunFlag(flags *pflag.FlagSet, cfg *DryRunConfig, usage string) {
-	flags.BoolVar(&cfg.ShouldDryRun, "should_dry_run", cfg.ShouldDryRun, usage)
+	flags.BoolVar(&cfg.ShouldDryRun, "dry-run", cfg.ShouldDryRun, usage)
 }
 
 func BindLogDirFlag(flags *pflag.FlagSet, cfg *LogConfig, usage string) {
-	flags.StringVar(&cfg.DirLogs, "dir_logs", cfg.DirLogs, usage)
+	flags.StringVar(&cfg.DirLogs, "log-dir", cfg.DirLogs, usage)
 }
 
 func BindProgressFlag(flags *pflag.FlagSet, cfg *ProgressConfig, usage string) {
-	flags.BoolVar(&cfg.ShouldDisableProgress, "should_disable_progress", cfg.ShouldDisableProgress, usage)
+	flags.BoolVar(&cfg.ShouldDisableProgress, "no-progress", cfg.ShouldDisableProgress, usage)
 }
 
 func BindRuleExistingFlag(flags *pflag.FlagSet, cfg *ExistingRuleConfig, usage string) {
-	flags.StringVar(&cfg.RuleExisting, "rule_existing", cfg.RuleExisting, usage)
+	flags.StringVar(&cfg.RuleExisting, "on-existing", cfg.RuleExisting, usage)
 }
 
-func BindRetryFlags(flags *pflag.FlagSet, cfg *RetryConfig, retryWaitSec *int) {
-	flags.IntVar(&cfg.RetryMax, "retry_max", cfg.RetryMax, "Max retry attempts on download failures")
-	flags.IntVar(retryWaitSec, "retry_wait_sec", *retryWaitSec, "Wait seconds between retries")
+func BindRetryFlags(flags *pflag.FlagSet, cfg *RetryConfig) {
+	flags.IntVar(&cfg.RetryMax, "max-attempts", cfg.RetryMax, "Max attempts on download failures")
+	flags.DurationVar(&cfg.RetryWait, "retry-wait", cfg.RetryWait, "Wait between download attempts")
 }
 
-func BindDownloadControlFlags(flags *pflag.FlagSet, cfg *DownloadControlConfig, requestIntervalMs *int) {
-	flags.IntVar(&cfg.WorkersMax, "workers_max", cfg.WorkersMax, "Max concurrent download workers")
-	flags.IntVar(
-		requestIntervalMs,
-		"request_interval_ms",
-		*requestIntervalMs,
-		"Minimum global delay between outbound requests in milliseconds",
+func BindDownloadControlFlags(flags *pflag.FlagSet, cfg *DownloadControlConfig) {
+	flags.IntVar(&cfg.WorkersMax, "workers", cfg.WorkersMax, "Max concurrent download workers")
+	flags.DurationVar(
+		&cfg.RequestInterval,
+		"request-interval",
+		cfg.RequestInterval,
+		"Minimum global delay between outbound requests",
 	)
 }
 
 func BindInsecureTLSFlag(flags *pflag.FlagSet, cfg *InsecureTLSConfig, usage string) {
-	flags.BoolVar(&cfg.ShouldAllowInsecureTLS, "should_allow_insecure_tls", cfg.ShouldAllowInsecureTLS, usage)
+	flags.BoolVar(&cfg.ShouldAllowInsecureTLS, "insecure", cfg.ShouldAllowInsecureTLS, usage)
 }
 
 func ValidateDirOutRequired(dirOut string) error {
 	if strings.TrimSpace(dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	return nil
 }
@@ -141,12 +137,12 @@ func ValidateDirOutRequired(dirOut string) error {
 func SnapshotVersionToken(dirSnapshot string) (string, error) {
 	dirSnapshot = strings.TrimSpace(dirSnapshot)
 	if dirSnapshot == "" {
-		return "", fmt.Errorf("dir_snapshot is required")
+		return "", fmt.Errorf("snapshot is required")
 	}
 	dirClean := filepath.Clean(dirSnapshot)
 	versionToken := filepath.Base(dirClean)
 	if versionToken == "." || versionToken == string(filepath.Separator) || versionToken == "" {
-		return "", fmt.Errorf("dir_snapshot must identify a version directory: %s", dirSnapshot)
+		return "", fmt.Errorf("snapshot must identify a version directory: %s", dirSnapshot)
 	}
 	return versionToken, nil
 }
@@ -160,33 +156,33 @@ func ValidateVersionRequired(versionToken string) error {
 
 func ValidateRetryConfig(cfg *RetryConfig) error {
 	if cfg.RetryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.RetryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	return nil
 }
 
 func ValidateDownloadControlConfig(cfg *DownloadControlConfig) error {
 	if cfg.WorkersMax < 1 {
-		return fmt.Errorf("workers_max must be >= 1")
+		return fmt.Errorf("workers must be >= 1")
 	}
 	if cfg.RequestInterval < 0 {
-		return fmt.Errorf("request_interval_ms must be >= 0")
+		return fmt.Errorf("request-interval must be >= 0")
 	}
 	return nil
 }
 
 func ValidateRuleExisting(cfg *ExistingRuleConfig) error {
 	if cfg.RuleExisting != "skip" && cfg.RuleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	cfg.ShouldOverwriteExisting = cfg.RuleExisting == "overwrite"
 	return nil
 }
 
-func ExpandAtFileTokens(valuesInput []string, optionName string) ([]string, error) {
+func ExpandListTokens(valuesInput []string, filePath string, optionName string) ([]string, error) {
 	valuesResolved := make([]string, 0)
 	for _, valueInput := range valuesInput {
 		for _, tokenRaw := range strings.Split(valueInput, ",") {
@@ -195,21 +191,63 @@ func ExpandAtFileTokens(valuesInput []string, optionName string) ([]string, erro
 				continue
 			}
 			if strings.HasPrefix(token, "@") {
-				filePath := strings.TrimSpace(strings.TrimPrefix(token, "@"))
-				if filePath == "" {
-					return nil, fmt.Errorf("%s file path must not be empty", optionName)
-				}
-				valuesFile, err := readListInputFile(filePath, optionName)
-				if err != nil {
-					return nil, err
-				}
-				valuesResolved = append(valuesResolved, valuesFile...)
-				continue
+				return nil, fmt.Errorf("@file syntax is not supported for --%s; use --%s-file", optionName, optionName)
 			}
 			valuesResolved = append(valuesResolved, token)
 		}
 	}
+	if strings.TrimSpace(filePath) != "" {
+		valuesFile, err := readListInputFile(filePath, optionName)
+		if err != nil {
+			return nil, err
+		}
+		valuesResolved = append(valuesResolved, valuesFile...)
+	}
 	return valuesResolved, nil
+}
+
+type listFileValue struct {
+	values     *[]string
+	optionName string
+}
+
+func (value *listFileValue) String() string { return "" }
+func (value *listFileValue) Type() string   { return "file" }
+func (value *listFileValue) Set(filePath string) error {
+	valuesFile, err := readListInputFile(filePath, value.optionName)
+	if err != nil {
+		return err
+	}
+	*value.values = append(*value.values, valuesFile...)
+	return nil
+}
+
+func BindListFileFlag(flags *pflag.FlagSet, values *[]string, optionName string) {
+	flags.Var(&listFileValue{values: values, optionName: optionName}, optionName+"-file", "Read "+optionName+" from a file")
+}
+
+func ApplyFlatSnapshot(dirOut *DirOutConfig, version *VersionConfig, snapshot string) error {
+	dirRoot, versionToken, err := SnapshotRootVersion(snapshot)
+	if err != nil {
+		return err
+	}
+	dirOut.DirOut = dirRoot
+	version.VersionToken = versionToken
+	return nil
+}
+
+func SnapshotRootVersion(snapshot string) (string, string, error) {
+	versionToken, err := SnapshotVersionToken(snapshot)
+	if err != nil {
+		return "", "", err
+	}
+	dirSnapshot := filepath.Clean(snapshot)
+	dirAsset := filepath.Dir(dirSnapshot)
+	dirRoot := filepath.Dir(dirAsset)
+	if dirAsset == "." || dirRoot == "." || filepath.Base(dirAsset) == "." {
+		return "", "", fmt.Errorf("snapshot must identify <resource-root>/<asset>/<version>: %s", snapshot)
+	}
+	return dirRoot, versionToken, nil
 }
 
 func readListInputFile(filePath string, optionName string) ([]string, error) {

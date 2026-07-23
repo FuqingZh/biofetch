@@ -41,7 +41,7 @@ type catalogLockConfig struct {
 	shouldDryRun bool
 }
 
-type catalogSyncConfig struct {
+type catalogRestoreConfig struct {
 	dirOut                 string
 	dirLogs                string
 	versionToken           string
@@ -100,16 +100,16 @@ func createCatalogFetchCommand() *cobra.Command {
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
+		"insecure",
 		false,
 		"Disable TLS certificate verification",
 	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandFetch
 }
 
@@ -117,12 +117,13 @@ func createCatalogLockCommand() *cobra.Command {
 	cfg := catalogLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild KEGG catalog manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			if err := validateCatalogLockConfig(&cfg); err != nil {
 				return err
 			}
@@ -132,48 +133,50 @@ func createCatalogLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
 func createCatalogSyncCommand() *cobra.Command {
-	cfg := catalogSyncConfig{}
+	cfg := catalogRestoreConfig{}
 
 	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync KEGG catalog files from manifest.lock and refresh manifest",
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore KEGG catalog files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateCatalogSyncConfig(&cfg); err != nil {
+			var err error
+			cfg.dirOut, cfg.versionToken, err = cliopt.SnapshotRootVersion(args[0])
+			if err != nil {
 				return err
 			}
-			return runSyncCatalog(&cfg)
+			if err := validateCatalogRestoreConfig(&cfg); err != nil {
+				return err
+			}
+			return runRestoreCatalog(&cfg)
 		},
 	}
 
 	flags := commandSync.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
+		"insecure",
 		false,
 		"Disable TLS certificate verification",
 	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandSync
 }
 
 func validateCatalogFetchConfig(cfg *catalogConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
 		return fmt.Errorf("version must be a local snapshot key like 2026-04")
@@ -192,9 +195,9 @@ func validateCatalogLockConfig(cfg *catalogLockConfig) error {
 	return nil
 }
 
-func validateCatalogSyncConfig(cfg *catalogSyncConfig) error {
+func validateCatalogRestoreConfig(cfg *catalogRestoreConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		return fmt.Errorf("version is required")
@@ -327,10 +330,10 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 	return nil
 }
 
-func runSyncCatalog(cfg *catalogSyncConfig) error {
+func runRestoreCatalog(cfg *catalogRestoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "sync", cfg.dirLogs, dirVersion)
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "restore", cfg.dirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -349,7 +352,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(item.Path))
 			logf("[dry-run] sync %s -> %s", item.URL, filePath)
 		}
-		logf("[dry-run] sync done (files=%d)", len(manifestExisting.Files))
+		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil
 	}
 
@@ -366,7 +369,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 		}
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
+			return fmt.Errorf("create restore dir: %w", err)
 		}
 
 		recordCurrent, ok, err := inspectCatalogFile(filePath, record.PathRel, record.Asset, record.URL)
@@ -374,7 +377,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 			return err
 		}
 		if !ok || recordCurrent.SHA256 != record.SHA256 {
-			logf("sync downloading %s", filepath.Base(filePath))
+			logf("restore downloading %s", filepath.Base(filePath))
 			if err := clientKegg.downloadFile(record.URL, filePath); err != nil {
 				return err
 			}
@@ -405,7 +408,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }

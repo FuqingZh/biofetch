@@ -19,7 +19,7 @@ type lockConfig struct {
 	shouldDryRun bool
 }
 
-type syncConfig struct {
+type restoreConfig struct {
 	dirOut                  string
 	dirLogs                 string
 	versionToken            string
@@ -68,10 +68,10 @@ func runLock(cfg *lockConfig) error {
 	return nil
 }
 
-func runSync(cfg *syncConfig) error {
+func runRestore(cfg *restoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "network", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch string", "sync", cfg.dirLogs, dirVersion)
+	_, closeRun, err := logx.StartVersionedRun("biofetch string", "restore", cfg.dirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func runSync(cfg *syncConfig) error {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.pathRel))
 			logf("[dry-run] sync %s -> %s", record.url, filePath)
 		}
-		logf("dry-run sync done (files=%d)", len(recordsManifest))
+		logf("dry-run restore done (files=%d)", len(recordsManifest))
 		return nil
 	}
 
@@ -125,7 +125,7 @@ func runSync(cfg *syncConfig) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }

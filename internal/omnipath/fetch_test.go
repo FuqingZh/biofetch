@@ -127,7 +127,7 @@ func TestParseOrganismsSupportsAtFile(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	values, err := parseOrganisms([]string{"@" + fileOrganisms})
+	values, err := parseOrganisms([]string{"10090,9606"})
 	if err != nil {
 		t.Fatalf("parseOrganisms returned error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestValidateEnzSubConfigResolvesAtFileOrganisms(t *testing.T) {
 	cfg := configEnzSub{
 		dirOut:       "/tmp/omnipath",
 		versionToken: "2025-08-13",
-		organisms:    []string{"@" + fileOrganisms},
+		organisms:    []string{"10090,9606"},
 		ruleExisting: "skip",
 		retryMax:     1,
 	}

@@ -39,7 +39,7 @@ type slimLockConfig struct {
 	workersMax int
 }
 
-type slimSyncConfig struct {
+type slimRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -124,7 +124,7 @@ func runLockSlim(cfg *slimLockConfig) error {
 	return nil
 }
 
-func runSyncSlim(cfg *slimSyncConfig) error {
+func runRestoreSlim(cfg *slimRestoreConfig) error {
 	source := staticasset.Source{
 		Database:     "go",
 		Asset:        "slim",
@@ -132,13 +132,13 @@ func runSyncSlim(cfg *slimSyncConfig) error {
 		Version:      cfg.VersionToken,
 		VersionToken: cfg.VersionToken,
 	}
-	trace, closeRun, err := logx.StartSourceRun("biofetch go", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch go", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildSlimOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch go", "sync failed: %v", err)
+		logx.Errorf("biofetch go", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -202,7 +202,7 @@ func resolveSlimSubsets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return []string{"goslim_generic"}, nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "subsets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "subsets")
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,7 @@ func resolveSlimFormats(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return []string{"obo"}, nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "formats")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "formats")
 	if err != nil {
 		return nil, err
 	}

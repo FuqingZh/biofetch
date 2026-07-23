@@ -30,7 +30,7 @@ func TestResolveSlimFormatsSupportsAtFileAndComma(t *testing.T) {
 	if err := os.WriteFile(fileFormats, []byte("# comment\njson\n"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
-	formats, err := resolveSlimFormats([]string{"obo,tsv", "@" + fileFormats})
+	formats, err := resolveSlimFormats([]string{"obo,tsv", "json"})
 	if err != nil {
 		t.Fatalf("resolveSlimFormats returned error: %v", err)
 	}

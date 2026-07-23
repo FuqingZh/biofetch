@@ -43,7 +43,7 @@ func TestResolveBriteIDInputsSupportsAtFileAndInputOrder(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	values, err := resolveBriteIDInputs([]string{"hsa00001", "@" + fileBriteIDs}, ruleOrderInput)
+	values, err := resolveBriteIDInputs([]string{"hsa00001", "br08901,br08301"}, ruleOrderInput)
 	if err != nil {
 		t.Fatalf("resolveBriteIDInputs returned error: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestValidateBriteConfigRootOnlyWithIDsFails(t *testing.T) {
 		ruleExisting:           "skip",
 	}
 	err := validateBriteConfig(&cfg)
-	if err == nil || !strings.Contains(err.Error(), "should_download_root_only") {
+	if err == nil || !strings.Contains(err.Error(), "root-only") {
 		t.Fatalf("validateBriteConfig expected root-only conflict error, got: %v", err)
 	}
 }
@@ -233,8 +233,8 @@ func TestValidateBriteConfigRejectsInvalidRuleOrder(t *testing.T) {
 		ruleExisting: "skip",
 	}
 	err := validateBriteConfig(&cfg)
-	if err == nil || !strings.Contains(err.Error(), "rule_order") {
-		t.Fatalf("validateBriteConfig expected rule_order error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "order") {
+		t.Fatalf("validateBriteConfig expected order error, got: %v", err)
 	}
 }
 
@@ -252,9 +252,9 @@ func TestValidateBriteConfigResolvesAtFileInputs(t *testing.T) {
 		dirOut:       "/tmp/kegg",
 		versionToken: "2026-04",
 		organismCodes: []string{
-			"@" + fileOrganisms,
+			"tca,hsa",
 		},
-		briteIDs:     []string{"@" + fileBriteIDs},
+		briteIDs:     []string{"hsa00001,br08301"},
 		ruleOrder:    ruleOrderInput,
 		retryMax:     1,
 		ruleExisting: "skip",

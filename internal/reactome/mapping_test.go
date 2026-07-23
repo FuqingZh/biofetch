@@ -222,15 +222,15 @@ func TestRunLockMappingRejectsCurrentVersion(t *testing.T) {
 }
 
 func TestRunSyncMappingRejectsCurrentVersion(t *testing.T) {
-	cfg := mappingSyncConfig{}
+	cfg := mappingRestoreConfig{}
 	cfg.DirOut = t.TempDir()
 	cfg.VersionToken = "current"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
-	err := runSyncMapping(&cfg)
+	err := runRestoreMapping(&cfg)
 	if err == nil {
-		t.Fatal("runSyncMapping returned nil error")
+		t.Fatal("runRestoreMapping returned nil error")
 	}
 }
 
@@ -270,14 +270,14 @@ func TestRunSyncMappingRehydratesManifest(t *testing.T) {
 	if err := os.Remove(fileOut); err != nil {
 		t.Fatalf("os.Remove returned error: %v", err)
 	}
-	syncCfg := mappingSyncConfig{}
+	syncCfg := mappingRestoreConfig{}
 	syncCfg.DirOut = cfg.DirOut
 	syncCfg.VersionToken = "96"
 	syncCfg.RuleExisting = "skip"
 	syncCfg.RetryMax = 1
 	syncCfg.WorkersMax = 1
-	if err := runSyncMapping(&syncCfg); err != nil {
-		t.Fatalf("runSyncMapping returned error: %v", err)
+	if err := runRestoreMapping(&syncCfg); err != nil {
+		t.Fatalf("runRestoreMapping returned error: %v", err)
 	}
 	if _, err := os.Stat(fileOut); err != nil {
 		t.Fatalf("synced file missing: %v", err)

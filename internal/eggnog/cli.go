@@ -29,14 +29,12 @@ func createCOGCommand() *cobra.Command {
 	}
 	commandCOG.AddCommand(createCOGFetchCommand())
 	commandCOG.AddCommand(createCOGLockCommand())
-	commandCOG.AddCommand(createCOGSyncCommand())
+	commandCOG.AddCommand(createCOGRestoreCommand())
 	return commandCOG
 }
 
 func createCOGFetchCommand() *cobra.Command {
 	cfg := createDefaultCOGConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
@@ -45,8 +43,6 @@ func createCOGFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateCOGConfig(&cfg); err != nil {
 				return err
 			}
@@ -54,8 +50,8 @@ func createCOGFetchCommand() *cobra.Command {
 		},
 	}
 	commandFetch.Example = strings.Join([]string{
-		"biofetch eggnog cog fetch --dir_out /data/eggnog --version COG2024 --assets category_definition",
-		"biofetch eggnog cog fetch --dir_out /data/eggnog --version 2024",
+		"biofetch eggnog cog fetch --output /data/eggnog --version COG2024 --assets category_definition",
+		"biofetch eggnog cog fetch --output /data/eggnog --version 2024",
 	}, "\n")
 
 	flags := commandFetch.Flags()
@@ -63,10 +59,11 @@ func createCOGFetchCommand() *cobra.Command {
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "NCBI COG release token; default COG2024")
 	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "COG assets: all|category_definition|definition|readme; omit or pass all to fetch all supported assets")
-	flags.StringVar(&cfg.baseURL, "base_url", cfg.baseURL, "NCBI COG base URL")
+	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	flags.StringVar(&cfg.baseURL, "base-url", cfg.baseURL, "NCBI COG base URL")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -77,42 +74,41 @@ func createCOGFetchCommand() *cobra.Command {
 func createCOGLockCommand() *cobra.Command {
 	cfg := cogLockConfig{}
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild COG manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockCOG(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createCOGSyncCommand() *cobra.Command {
-	cfg := cogSyncConfig{}
+func createCOGRestoreCommand() *cobra.Command {
+	cfg := cogRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
 	cfg.WorkersMax = 1
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync COG files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore COG files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -128,21 +124,19 @@ func createCOGSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncCOG(&cfg)
+			return runRestoreCOG(&cfg)
 		},
 	}
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "NCBI COG release token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
-	return commandSync
+	return commandRestore
 }
 
 func createMapperCommand() *cobra.Command {
@@ -154,14 +148,12 @@ func createMapperCommand() *cobra.Command {
 	}
 	commandMapper.AddCommand(createMapperFetchCommand())
 	commandMapper.AddCommand(createMapperLockCommand())
-	commandMapper.AddCommand(createMapperSyncCommand())
+	commandMapper.AddCommand(createMapperRestoreCommand())
 	return commandMapper
 }
 
 func createMapperFetchCommand() *cobra.Command {
 	cfg := createDefaultMapperConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
@@ -170,8 +162,6 @@ func createMapperFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateMapperConfig(&cfg); err != nil {
 				return err
 			}
@@ -179,8 +169,8 @@ func createMapperFetchCommand() *cobra.Command {
 		},
 	}
 	commandFetch.Example = strings.Join([]string{
-		"biofetch eggnog mapper fetch --dir_out /data/eggnog --version 5 --assets taxa --should_allow_large_assets",
-		"biofetch eggnog mapper fetch --dir_out /data/eggnog --version 5.0.2 --should_allow_large_assets",
+		"biofetch eggnog mapper fetch --output /data/eggnog --version 5 --assets taxa --allow-large-downloads",
+		"biofetch eggnog mapper fetch --output /data/eggnog --version 5.0.2 --allow-large-downloads",
 	}, "\n")
 
 	flags := commandFetch.Flags()
@@ -188,11 +178,12 @@ func createMapperFetchCommand() *cobra.Command {
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "eggNOG-mapper database version; default 5.0.2")
 	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "eggNOG-mapper assets: all|db|taxa|diamond; omit or pass all to fetch all supported assets")
-	flags.BoolVar(&cfg.shouldAllowLargeAssets, "should_allow_large_assets", false, "Allow large eggNOG-mapper assets")
-	flags.StringVar(&cfg.baseURL, "base_url", cfg.baseURL, "eggNOG-mapper download base URL")
+	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow large eggNOG-mapper assets")
+	flags.StringVar(&cfg.baseURL, "base-url", cfg.baseURL, "eggNOG-mapper download base URL")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -203,42 +194,41 @@ func createMapperFetchCommand() *cobra.Command {
 func createMapperLockCommand() *cobra.Command {
 	cfg := mapperLockConfig{}
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild eggNOG-mapper manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockMapper(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createMapperSyncCommand() *cobra.Command {
-	cfg := mapperSyncConfig{}
+func createMapperRestoreCommand() *cobra.Command {
+	cfg := mapperRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
 	cfg.WorkersMax = 1
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync eggNOG-mapper files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore eggNOG-mapper files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -254,19 +244,17 @@ func createMapperSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncMapper(&cfg)
+			return runRestoreMapper(&cfg)
 		},
 	}
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "eggNOG-mapper database version")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
-	return commandSync
+	return commandRestore
 }

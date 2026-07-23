@@ -42,7 +42,7 @@ type idMappingLockConfig struct {
 	workersMax int
 }
 
-type idMappingSyncConfig struct {
+type idMappingRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -60,7 +60,7 @@ func runFetchIDMapping(cfg *idMappingConfig) error {
 		return err
 	}
 	if !cfg.shouldAllowLargeAssets {
-		return fmt.Errorf("selected UniProt ID mapping assets are multi-GB files; pass --should_allow_large_assets to fetch")
+		return fmt.Errorf("selected UniProt ID mapping assets are multi-GB files; pass --allow-large-downloads to fetch")
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
 	versionToken, err := resolveIDMappingFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
@@ -108,19 +108,19 @@ func runLockIDMapping(cfg *idMappingLockConfig) error {
 	return nil
 }
 
-func runSyncIDMapping(cfg *idMappingSyncConfig) error {
+func runRestoreIDMapping(cfg *idMappingRestoreConfig) error {
 	versionToken, err := normalizeIDMappingFixedVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
 	source := buildIDMappingSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch uniprot", "sync failed: %v", err)
+		logx.Errorf("biofetch uniprot", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -130,7 +130,7 @@ func resolveIDMappingAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return sortedIDMappingAssetNames(), nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}

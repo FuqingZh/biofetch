@@ -28,14 +28,12 @@ func createGMTCommand() *cobra.Command {
 	}
 	commandGMT.AddCommand(createGMTFetchCommand())
 	commandGMT.AddCommand(createGMTLockCommand())
-	commandGMT.AddCommand(createGMTSyncCommand())
+	commandGMT.AddCommand(createGMTRestoreCommand())
 	return commandGMT
 }
 
 func createGMTFetchCommand() *cobra.Command {
 	cfg := createDefaultGMTConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
@@ -44,8 +42,6 @@ func createGMTFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateGMTConfig(&cfg); err != nil {
 				return err
 			}
@@ -53,20 +49,21 @@ func createGMTFetchCommand() *cobra.Command {
 		},
 	}
 	commandFetch.Example = strings.Join([]string{
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species Homo_sapiens --should_dry_run",
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --species @species.txt",
-		"biofetch wikipathways gmt fetch --dir_out /data/wikipathways --should_download_all_organisms",
+		"biofetch wikipathways gmt fetch --output /data/wikipathways --species Homo_sapiens --dry-run",
+		"biofetch wikipathways gmt fetch --output /data/wikipathways --species @species.txt",
+		"biofetch wikipathways gmt fetch --output /data/wikipathways --all-organisms",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways release token; only current/empty is supported in this implementation")
-	flags.StringSliceVar(&cfg.speciesNames, "species", nil, "WikiPathways species labels; repeat the flag, use commas, or use @file")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch GMT files for all species in the current release")
+	flags.StringSliceVar(&cfg.speciesNames, "species", nil, "WikiPathways species labels; repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.speciesNames, "species")
+	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch GMT files for all species in the current release")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -77,42 +74,41 @@ func createGMTFetchCommand() *cobra.Command {
 func createGMTLockCommand() *cobra.Command {
 	cfg := gmtLockConfig{}
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild WikiPathways GMT manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockGMT(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createGMTSyncCommand() *cobra.Command {
-	cfg := gmtSyncConfig{}
+func createGMTRestoreCommand() *cobra.Command {
+	cfg := gmtRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
 	cfg.WorkersMax = 1
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync WikiPathways GMT files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore WikiPathways GMT files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0]); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -128,19 +124,17 @@ func createGMTSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncGMT(&cfg)
+			return runRestoreGMT(&cfg)
 		},
 	}
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways GMT version token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
-	return commandSync
+	return commandRestore
 }

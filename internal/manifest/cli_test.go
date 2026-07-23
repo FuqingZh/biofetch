@@ -17,7 +17,7 @@ func TestBuildCommandExpandsFormatsFile(t *testing.T) {
 	command := newBuildCommand()
 	var output bytes.Buffer
 	command.SetOut(&output)
-	command.SetArgs([]string{"--dir_in", root, "--dir_out", root, "--formats", "@" + fileFormats})
+	command.SetArgs([]string{root, "--output", root, "--formats-file", fileFormats})
 	if err := command.Execute(); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}

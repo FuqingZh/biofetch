@@ -109,15 +109,12 @@ func createMappingCommand() *cobra.Command {
 
 	commandMapping.AddCommand(createMappingFetchCommand())
 	commandMapping.AddCommand(createMappingLockCommand())
-	commandMapping.AddCommand(createMappingSyncCommand())
+	commandMapping.AddCommand(createMappingRestoreCommand())
 	return commandMapping
 }
 
 func createMappingFetchCommand() *cobra.Command {
 	cfg := createDefaultMappingConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 350
-
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
 		Short:         "Fetch KEGG mapping raw assets and update manifest.lock",
@@ -125,8 +122,6 @@ func createMappingFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateMappingFetchConfig(&cfg); err != nil {
 				return err
 			}
@@ -135,27 +130,29 @@ func createMappingFetchCommand() *cobra.Command {
 	}
 
 	commandFetch.Example = strings.Join([]string{
-		"biofetch kegg mapping fetch --dir_out /data/kegg --organisms hsa --assets conv_uniprot,gene_ko,gene_pathway",
-		"biofetch kegg mapping fetch --dir_out /data/kegg --organisms hsa,mmu --assets organism,conv_uniprot,conv_ncbi_geneid,gene_list,gene_ko,gene_pathway,ko_pathway",
-		"biofetch kegg mapping fetch --dir_out /data/kegg --should_download_all_organisms --assets conv_uniprot,gene_ko --should_dry_run",
+		"biofetch kegg mapping fetch --output /data/kegg --organisms hsa --assets conv_uniprot,gene_ko,gene_pathway",
+		"biofetch kegg mapping fetch --output /data/kegg --organisms hsa,mmu --assets organism,conv_uniprot,conv_ncbi_geneid,gene_list,gene_ko,gene_pathway,ko_pathway",
+		"biofetch kegg mapping fetch --output /data/kegg --all-organisms --assets conv_uniprot,gene_ko --dry-run",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Mapping assets: all|organism|conv_uniprot|conv_ncbi_geneid|gene_list|gene_ko|gene_pathway|ko_pathway; omit or pass all to fetch all supported assets")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch organism-scoped mapping assets for all KEGG organisms")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.IntVar(&cfg.workersMax, "workers_max", cfg.workersMax, "Max concurrent download workers")
-	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.BoolVar(&cfg.shouldDisableProgress, "should_disable_progress", false, "Disable download progress display")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.organismCodes, "organisms")
+	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch organism-scoped mapping assets for all KEGG organisms")
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.IntVar(&cfg.workersMax, "workers", cfg.workersMax, "Max concurrent download workers")
+	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.BoolVar(&cfg.shouldDisableProgress, "no-progress", false, "Disable download progress display")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandFetch
 }
 
@@ -163,12 +160,13 @@ func createMappingLockCommand() *cobra.Command {
 	cfg := mappingLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild KEGG mapping manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			if err := validateMappingLockConfig(&cfg); err != nil {
 				return err
 			}
@@ -178,52 +176,49 @@ func createMappingLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createMappingSyncCommand() *cobra.Command {
-	cfg := mappingSyncConfig{}
+func createMappingRestoreCommand() *cobra.Command {
+	cfg := mappingRestoreConfig{}
 	cfg.ruleExisting = "skip"
 	cfg.retryMax = defaultKEGGRetryMax
 	cfg.retryWait = defaultKEGGRetryWait
 	cfg.workersMax = 1
-	requestIntervalMs := 350
-	retryWaitSec := 3
-
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync KEGG mapping files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore KEGG mapping files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
-			if err := validateMappingSyncConfig(&cfg); err != nil {
+			var err error
+			cfg.dirOut, cfg.versionToken, err = cliopt.SnapshotRootVersion(args[0])
+			if err != nil {
 				return err
 			}
-			return runSyncMapping(&cfg)
+			if err := validateMappingRestoreConfig(&cfg); err != nil {
+				return err
+			}
+			return runRestoreMapping(&cfg)
 		},
 	}
 
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.IntVar(&cfg.workersMax, "workers_max", cfg.workersMax, "Max concurrent download workers")
-	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.BoolVar(&cfg.shouldDisableProgress, "should_disable_progress", false, "Disable download progress display")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
-	return commandSync
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.IntVar(&cfg.workersMax, "workers", cfg.workersMax, "Max concurrent download workers")
+	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.BoolVar(&cfg.shouldDisableProgress, "no-progress", false, "Disable download progress display")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	return commandRestore
 }
 
 func createCatalogCommand() *cobra.Command {
@@ -250,15 +245,12 @@ func createPathwayCommand() *cobra.Command {
 
 	commandPathway.AddCommand(createPathwayFetchCommand())
 	commandPathway.AddCommand(createPathwayLockCommand())
-	commandPathway.AddCommand(createPathwaySyncCommand())
+	commandPathway.AddCommand(createPathwayRestoreCommand())
 	return commandPathway
 }
 
 func createPathwayFetchCommand() *cobra.Command {
 	cfg := createDefaultPathwayConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 350
-
 	commandPathway := &cobra.Command{
 		Use:           "fetch",
 		Short:         "Fetch KEGG PATHWAY raw assets and update manifest.lock",
@@ -266,8 +258,6 @@ func createPathwayFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validatePathwayConfig(&cfg); err != nil {
 				return err
 			}
@@ -276,52 +266,50 @@ func createPathwayFetchCommand() *cobra.Command {
 	}
 
 	commandPathway.Example = strings.Join([]string{
-		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --should_dry_run",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --version 2026-04 --organisms hsa",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms @organisms.txt --rule_order input",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --organisms tca",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --should_fetch_reference --pathway_ids @pathway_ids.txt",
-		"biofetch kegg pathway fetch --dir_out /data/kegg --organisms hsa --assets entry --assets kgml --assets image",
+		"biofetch kegg pathway fetch --output /data/kegg --organisms hsa --dry-run",
+		"biofetch kegg pathway fetch --output /data/kegg --version 2026-04 --organisms hsa",
+		"biofetch kegg pathway fetch --output /data/kegg --organisms hsa",
+		"biofetch kegg pathway fetch --output /data/kegg --organisms @organisms.txt --order input",
+		"biofetch kegg pathway fetch --output /data/kegg --organisms hsa --organisms tca",
+		"biofetch kegg pathway fetch --output /data/kegg --include-reference --pathway-ids @pathway_ids.txt",
+		"biofetch kegg pathway fetch --output /data/kegg --organisms hsa --assets entry --assets kgml --assets image",
 	}, "\n")
 
 	flags := commandPathway.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: all|list|entry|kgml|conf|image; omit or pass all to fetch all supported assets within the selected scope")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
-	flags.StringSliceVar(&cfg.pathwayIDs, "pathway_ids", nil, "Pathway IDs; pass inline values, repeat the flag, or use @file with one pathway ID per line (# comments and blank lines ignored)")
+	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.organismCodes, "organisms")
+	flags.StringSliceVar(&cfg.pathwayIDs, "pathway-ids", nil, "Pathway IDs; pass inline values, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.pathwayIDs, "pathway-ids")
 	flags.BoolVar(
 		&cfg.shouldFetchReference,
-		"should_fetch_reference",
+		"include-reference",
 		false,
 		"Fetch reference pathways from /list/pathway",
 	)
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
-		"should_download_all_organisms",
+		"all-organisms",
 		false,
 		"Fetch PATHWAY assets for all KEGG organisms",
 	)
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.StringVar(&cfg.ruleOrder, "rule_order", cfg.ruleOrder, "Traversal order for organisms and pathway IDs: asc|desc|input (input preserves first-seen order)")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.IntVar(
-		&requestIntervalMs,
-		"request_interval_ms",
-		requestIntervalMs,
-		"Delay between KEGG API requests in milliseconds",
-	)
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.StringVar(&cfg.ruleOrder, "order", cfg.ruleOrder, "Traversal order for organisms and pathway IDs: asc|desc|input (input preserves first-seen order)")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
+		"insecure",
 		false,
 		"Disable TLS certificate verification",
 	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return commandPathway
 }
@@ -330,12 +318,13 @@ func createPathwayLockCommand() *cobra.Command {
 	cfg := keggLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild KEGG PATHWAY manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 			if err != nil {
 				return err
@@ -349,28 +338,29 @@ func createPathwayLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createPathwaySyncCommand() *cobra.Command {
-	cfg := keggSyncConfig{}
+func createPathwayRestoreCommand() *cobra.Command {
+	cfg := keggRestoreConfig{}
 	cfg.ruleExisting = "skip"
-	requestIntervalMs := 350
-
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync KEGG PATHWAY files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore KEGG PATHWAY files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			var err error
+			cfg.dirOut, cfg.versionToken, err = cliopt.SnapshotRootVersion(args[0])
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+				return fmt.Errorf("output is required")
 			}
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
@@ -379,23 +369,21 @@ func createPathwaySyncCommand() *cobra.Command {
 				return fmt.Errorf("version must be a local snapshot key like 2026-04")
 			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+				return fmt.Errorf("on-existing must be one of: skip, overwrite")
 			}
 			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
-			return runSyncPathway(&cfg)
+			return runRestorePathway(&cfg)
 		},
 	}
 
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
-	return commandSync
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	return commandRestore
 }
 
 func createDefaultPathwayConfig() pathwayConfig {
@@ -410,22 +398,22 @@ func createDefaultPathwayConfig() pathwayConfig {
 
 func validatePathwayConfig(cfg *pathwayConfig) error {
 	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	if cfg.requestInterval < 0 {
-		return fmt.Errorf("request_interval_ms must be >= 0")
+		return fmt.Errorf("request-interval must be >= 0")
 	}
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
 		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	if strings.TrimSpace(cfg.ruleOrder) == "" {
 		cfg.ruleOrder = ruleOrderAsc
@@ -466,7 +454,7 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	}
 	if countScope != 1 {
 		return fmt.Errorf(
-			"choose exactly one scope: --organisms | --should_download_all_organisms | --should_fetch_reference",
+			"choose exactly one scope: --organisms | --all-organisms | --include-reference",
 		)
 	}
 	if cfg.shouldDownloadAll {
@@ -535,15 +523,12 @@ func createBriteCommand() *cobra.Command {
 
 	commandBrite.AddCommand(createBriteFetchCommand())
 	commandBrite.AddCommand(createBriteLockCommand())
-	commandBrite.AddCommand(createBriteSyncCommand())
+	commandBrite.AddCommand(createBriteRestoreCommand())
 	return commandBrite
 }
 
 func createBriteFetchCommand() *cobra.Command {
 	cfg := createDefaultBriteConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 350
-
 	commandBrite := &cobra.Command{
 		Use:           "fetch",
 		Short:         "Fetch KEGG BRITE raw assets and update manifest.lock",
@@ -551,8 +536,6 @@ func createBriteFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateBriteConfig(&cfg); err != nil {
 				return err
 			}
@@ -561,46 +544,43 @@ func createBriteFetchCommand() *cobra.Command {
 	}
 
 	commandBrite.Example = strings.Join([]string{
-		"biofetch kegg brite fetch --dir_out /data/kegg --catalog br --should_dry_run",
-		"biofetch kegg brite fetch --dir_out /data/kegg --version 2026-04 --catalog br",
-		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --brite_ids @brite_ids.txt",
-		"biofetch kegg brite fetch --dir_out /data/kegg --organisms @organisms.txt --rule_order desc",
-		"biofetch kegg brite fetch --dir_out /data/kegg --organisms hsa --organisms tca",
-		"biofetch kegg brite fetch --dir_out /data/kegg --should_download_all_organisms",
+		"biofetch kegg brite fetch --output /data/kegg --catalog br --dry-run",
+		"biofetch kegg brite fetch --output /data/kegg --version 2026-04 --catalog br",
+		"biofetch kegg brite fetch --output /data/kegg --organisms hsa --brite-ids @brite_ids.txt",
+		"biofetch kegg brite fetch --output /data/kegg --organisms @organisms.txt --order desc",
+		"biofetch kegg brite fetch --output /data/kegg --organisms hsa --organisms tca",
+		"biofetch kegg brite fetch --output /data/kegg --all-organisms",
 	}, "\n")
 
 	flags := commandBrite.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "KEGG asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
-	flags.StringVar(&cfg.catalogCode, "catalog", "", "Reference BRITE catalog; use br or ko")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag, or use @file with one code per line (# comments and blank lines ignored)")
+	flags.StringVar(&cfg.catalogCode, "catalog", "", "Reference BRITE catalog")
+	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.organismCodes, "organisms")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
-		"should_download_all_organisms",
+		"all-organisms",
 		false,
 		"Fetch BRITE assets for all KEGG organisms",
 	)
-	flags.StringSliceVar(&cfg.briteIDs, "brite_ids", nil, "BRITE IDs; pass inline values, repeat the flag, or use @file with one BRITE ID per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadRootOnly, "should_download_root_only", false, "Download only root BRITE hierarchy (*00001) per catalog")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.StringVar(&cfg.ruleOrder, "rule_order", cfg.ruleOrder, "Traversal order for organisms and BRITE IDs: asc|desc|input (input preserves first-seen order)")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.IntVar(
-		&requestIntervalMs,
-		"request_interval_ms",
-		requestIntervalMs,
-		"Delay between KEGG API requests in milliseconds",
-	)
+	flags.StringSliceVar(&cfg.briteIDs, "brite-ids", nil, "BRITE IDs; pass inline values, repeat the flag,")
+	cliopt.BindListFileFlag(flags, &cfg.briteIDs, "brite-ids")
+	flags.BoolVar(&cfg.shouldDownloadRootOnly, "root-only", false, "Download only root BRITE hierarchy (*00001) per catalog")
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.StringVar(&cfg.ruleOrder, "order", cfg.ruleOrder, "Traversal order for organisms and BRITE IDs: asc|desc|input (input preserves first-seen order)")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
+		"insecure",
 		false,
 		"Disable TLS certificate verification",
 	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return commandBrite
 }
@@ -609,12 +589,13 @@ func createBriteLockCommand() *cobra.Command {
 	cfg := keggLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild KEGG BRITE manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			versionToken, err := cliopt.SnapshotVersionToken(cfg.dirSnapshot)
 			if err != nil {
 				return err
@@ -628,28 +609,29 @@ func createBriteLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createBriteSyncCommand() *cobra.Command {
-	cfg := keggSyncConfig{}
+func createBriteRestoreCommand() *cobra.Command {
+	cfg := keggRestoreConfig{}
 	cfg.ruleExisting = "skip"
-	requestIntervalMs := 350
-
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync KEGG BRITE files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore KEGG BRITE files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.requestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			var err error
+			cfg.dirOut, cfg.versionToken, err = cliopt.SnapshotRootVersion(args[0])
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+				return fmt.Errorf("output is required")
 			}
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
@@ -658,23 +640,21 @@ func createBriteSyncCommand() *cobra.Command {
 				return fmt.Errorf("version must be a local snapshot key like 2026-04")
 			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+				return fmt.Errorf("on-existing must be one of: skip, overwrite")
 			}
 			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
-			return runSyncBrite(&cfg)
+			return runRestoreBrite(&cfg)
 		},
 	}
 
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "KEGG asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "KEGG local snapshot key (YYYY-MM)")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&requestIntervalMs, "request_interval_ms", requestIntervalMs, "Delay between KEGG API requests in milliseconds")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
-	return commandSync
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	return commandRestore
 }
 
 func createDefaultBriteConfig() briteConfig {
@@ -689,22 +669,22 @@ func createDefaultBriteConfig() briteConfig {
 
 func validateBriteConfig(cfg *briteConfig) error {
 	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	if cfg.requestInterval < 0 {
-		return fmt.Errorf("request_interval_ms must be >= 0")
+		return fmt.Errorf("request-interval must be >= 0")
 	}
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
 		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	if strings.TrimSpace(cfg.ruleOrder) == "" {
 		cfg.ruleOrder = ruleOrderAsc
@@ -730,13 +710,13 @@ func validateBriteConfig(cfg *briteConfig) error {
 
 	if cfg.shouldDownloadAll {
 		if strings.TrimSpace(cfg.catalogCode) != "" {
-			return fmt.Errorf("catalog must not be set with --should_download_all_organisms")
+			return fmt.Errorf("catalog must not be set with --all-organisms")
 		}
 		if len(cfg.organismCodes) > 0 {
-			return fmt.Errorf("organisms must not be set with --should_download_all_organisms")
+			return fmt.Errorf("organisms must not be set with --all-organisms")
 		}
 		if len(cfg.briteIDs) > 0 {
-			return fmt.Errorf("brite_ids is not allowed with --should_download_all_organisms")
+			return fmt.Errorf("brite_ids is not allowed with --all-organisms")
 		}
 	} else {
 		countSources := 0
@@ -747,13 +727,13 @@ func validateBriteConfig(cfg *briteConfig) error {
 			countSources++
 		}
 		if countSources != 1 {
-			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --should_download_all_organisms")
+			return fmt.Errorf("choose exactly one source: --catalog | --organisms | --all-organisms")
 		}
 	}
 
 	if cfg.shouldDownloadRootOnly {
 		if len(cfg.briteIDs) > 0 {
-			return fmt.Errorf("brite_ids is not allowed with --should_download_root_only")
+			return fmt.Errorf("brite_ids is not allowed with --root-only")
 		}
 	}
 	if strings.TrimSpace(cfg.catalogCode) != "" && cfg.catalogCode != "br" && cfg.catalogCode != "ko" {
@@ -774,7 +754,7 @@ func validateRuleOrder(ruleOrder string) error {
 	case ruleOrderAsc, ruleOrderDesc, ruleOrderInput:
 		return nil
 	default:
-		return fmt.Errorf("rule_order must be one of: asc, desc, input")
+		return fmt.Errorf("order must be one of: asc, desc, input")
 	}
 }
 
@@ -789,7 +769,7 @@ func resolveKEGGOrganismInputs(valuesInput []string, ruleOrder string) ([]string
 
 func resolvePathwayIDInputs(valuesInput []string, ruleOrder string) ([]string, error) {
 	return resolveOrderedListInputs(valuesInput, ruleOrder, orderedListInputSpec{
-		nameOption:  "pathway_ids",
+		nameOption:  "pathway-ids",
 		nameValue:   "pathway id",
 		fnNormalize: normalizePathwayID,
 		fnValidate:  isValidPathwayID,
@@ -798,7 +778,7 @@ func resolvePathwayIDInputs(valuesInput []string, ruleOrder string) ([]string, e
 
 func resolveBriteIDInputs(valuesInput []string, ruleOrder string) ([]string, error) {
 	return resolveOrderedListInputs(valuesInput, ruleOrder, orderedListInputSpec{
-		nameOption:  "brite_ids",
+		nameOption:  "brite-ids",
 		nameValue:   "BRITE id",
 		fnNormalize: normalizeBriteID,
 		fnValidate:  isValidBriteID,

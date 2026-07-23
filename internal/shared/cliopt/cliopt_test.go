@@ -58,7 +58,7 @@ func TestValidateDownloadControlConfig(t *testing.T) {
 func TestValidateDownloadControlConfigRejectsInvalidWorkersMax(t *testing.T) {
 	cfg := DownloadControlConfig{WorkersMax: 0}
 	err := ValidateDownloadControlConfig(&cfg)
-	if err == nil || err.Error() != "workers_max must be >= 1" {
+	if err == nil || err.Error() != "workers must be >= 1" {
 		t.Fatalf("ValidateDownloadControlConfig error = %v", err)
 	}
 }
@@ -66,32 +66,30 @@ func TestValidateDownloadControlConfigRejectsInvalidWorkersMax(t *testing.T) {
 func TestValidateDownloadControlConfigRejectsNegativeRequestInterval(t *testing.T) {
 	cfg := DownloadControlConfig{WorkersMax: 1, RequestInterval: -1 * time.Millisecond}
 	err := ValidateDownloadControlConfig(&cfg)
-	if err == nil || err.Error() != "request_interval_ms must be >= 0" {
+	if err == nil || err.Error() != "request-interval must be >= 0" {
 		t.Fatalf("ValidateDownloadControlConfig error = %v", err)
 	}
 }
 
-func TestExpandAtFileTokens(t *testing.T) {
+func TestExpandListTokens(t *testing.T) {
 	fileValues := filepath.Join(t.TempDir(), "values.txt")
-	if err := os.WriteFile(fileValues, []byte("# comment\nc\n\na\n"), 0o644); err != nil {
-		t.Fatalf("os.WriteFile returned error: %v", err)
+	if err := os.WriteFile(fileValues, []byte("# comment\nc\na\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-
-	values, err := ExpandAtFileTokens([]string{"b,a", "@" + fileValues}, "values")
+	values, err := ExpandListTokens([]string{"b,a"}, fileValues, "values")
 	if err != nil {
-		t.Fatalf("ExpandAtFileTokens returned error: %v", err)
+		t.Fatal(err)
 	}
-
 	expected := []string{"b", "a", "c", "a"}
 	if !reflect.DeepEqual(values, expected) {
-		t.Fatalf("ExpandAtFileTokens = %#v, want %#v", values, expected)
+		t.Fatalf("values = %#v, want %#v", values, expected)
 	}
 }
 
-func TestExpandAtFileTokensRejectsMissingFile(t *testing.T) {
-	_, err := ExpandAtFileTokens([]string{"@missing.txt"}, "values")
+func TestExpandListTokensRejectsAtSyntax(t *testing.T) {
+	_, err := ExpandListTokens([]string{"@missing.txt"}, "", "values")
 	if err == nil {
-		t.Fatal("ExpandAtFileTokens returned nil error for missing file")
+		t.Fatal("expected @ syntax rejection")
 	}
 }
 

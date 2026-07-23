@@ -34,7 +34,7 @@ func TestParseOntologyAssetNamesSupportsAtFile(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	assets, err := parseOntologyAssetNames([]string{"@" + fileAssets})
+	assets, err := parseOntologyAssetNames([]string{"go-basic.obo,go.obo"})
 	if err != nil {
 		t.Fatalf("parseOntologyAssetNames returned error: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestValidateOntologyConfigRejectsInvalidWorkersMax(t *testing.T) {
 	cfg.WorkersMax = 0
 
 	err := validateOntologyConfig(&cfg)
-	if err == nil || err.Error() != "workers_max must be >= 1" {
+	if err == nil || err.Error() != "workers must be >= 1" {
 		t.Fatalf("validateOntologyConfig error = %v", err)
 	}
 }
@@ -544,7 +544,7 @@ func TestValidateOntologyConfigRejectsNegativeRequestInterval(t *testing.T) {
 	cfg.RequestInterval = -1 * time.Millisecond
 
 	err := validateOntologyConfig(&cfg)
-	if err == nil || err.Error() != "request_interval_ms must be >= 0" {
+	if err == nil || err.Error() != "request-interval must be >= 0" {
 		t.Fatalf("validateOntologyConfig error = %v", err)
 	}
 }

@@ -158,14 +158,14 @@ func TestRunSyncGMTRehydratesManifest(t *testing.T) {
 	if err := os.Remove(fileOut); err != nil {
 		t.Fatalf("os.Remove returned error: %v", err)
 	}
-	syncCfg := gmtSyncConfig{}
+	syncCfg := gmtRestoreConfig{}
 	syncCfg.DirOut = cfg.DirOut
 	syncCfg.VersionToken = "2026-05-10"
 	syncCfg.RuleExisting = "skip"
 	syncCfg.RetryMax = 1
 	syncCfg.WorkersMax = 1
-	if err := runSyncGMT(&syncCfg); err != nil {
-		t.Fatalf("runSyncGMT returned error: %v", err)
+	if err := runRestoreGMT(&syncCfg); err != nil {
+		t.Fatalf("runRestoreGMT returned error: %v", err)
 	}
 	if _, err := os.Stat(fileOut); err != nil {
 		t.Fatalf("synced file missing: %v", err)

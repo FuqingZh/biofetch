@@ -44,7 +44,7 @@ type gmtLockConfig struct {
 	workersMax int
 }
 
-type gmtSyncConfig struct {
+type gmtRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -115,15 +115,15 @@ func runLockGMT(cfg *gmtLockConfig) error {
 	return nil
 }
 
-func runSyncGMT(cfg *gmtSyncConfig) error {
+func runRestoreGMT(cfg *gmtRestoreConfig) error {
 	source := buildGMTSource(cfg.VersionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch wikipathways", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch wikipathways", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildGMTOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch wikipathways", "sync failed: %v", err)
+		logx.Errorf("biofetch wikipathways", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -176,7 +176,7 @@ func parseGMTAssetsFromIndex(data []byte, baseURL string) ([]gmtAsset, error) {
 func resolveGMTAssets(assetsAvailable []gmtAsset, speciesNames []string, shouldDownloadAll bool) ([]gmtAsset, error) {
 	if shouldDownloadAll {
 		if len(speciesNames) > 0 {
-			return nil, fmt.Errorf("species cannot be combined with should_download_all_organisms")
+			return nil, fmt.Errorf("species cannot be combined with all-organisms")
 		}
 		return assetsAvailable, nil
 	}
@@ -206,9 +206,9 @@ func resolveGMTAssets(assetsAvailable []gmtAsset, speciesNames []string, shouldD
 
 func parseGMTSpecies(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("species must be provided unless should_download_all_organisms is set")
+		return nil, fmt.Errorf("species must be provided unless all-organisms is set")
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "species")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "species")
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func validateGMTVersionToken(versionToken string) error {
 	if versionToken == "" || versionToken == "current" {
 		return nil
 	}
-	return fmt.Errorf("historical WikiPathways GMT version %q is not implemented; use current/empty version", versionToken)
+	return fmt.Errorf("historical WikiPathways GMT version %q is not implemented", versionToken)
 }
 
 func formatGMTVersionToken(value string) string {

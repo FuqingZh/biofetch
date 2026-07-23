@@ -53,7 +53,7 @@ type mappingLockConfig struct {
 	dirLogs      string
 }
 
-type mappingSyncConfig struct {
+type mappingRestoreConfig struct {
 	dirOut                 string
 	versionToken           string
 	ruleExisting           string
@@ -135,7 +135,7 @@ func runLockMapping(cfg *mappingLockConfig) error {
 	return nil
 }
 
-func runSyncMapping(cfg *mappingSyncConfig) error {
+func runRestoreMapping(cfg *mappingRestoreConfig) error {
 	if err := validateMappingFixedVersion(cfg.versionToken); err != nil {
 		return err
 	}
@@ -151,13 +151,13 @@ func runSyncMapping(cfg *mappingSyncConfig) error {
 		ShouldDisableProgress:  cfg.shouldDisableProgress,
 	}
 	source := buildMappingSource(cfg.versionToken, nil, staticasset.Scope{})
-	trace, closeRun, err := logx.StartSourceRun("biofetch kegg", "sync", cfg.dirLogs, cfg.dirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch kegg", "restore", cfg.dirLogs, cfg.dirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, options, trace); err != nil {
-		logx.Errorf("biofetch kegg", "sync failed: %v", err)
+		logx.Errorf("biofetch kegg", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -165,36 +165,36 @@ func runSyncMapping(cfg *mappingSyncConfig) error {
 
 func validateMappingFetchConfig(cfg *mappingConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) != "" && !isValidKEGGSnapshotVersionToken(cfg.versionToken) {
 		return fmt.Errorf("version must be a local snapshot key like 2026-04")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	if cfg.workersMax < 1 {
-		return fmt.Errorf("workers_max must be >= 1")
+		return fmt.Errorf("workers must be >= 1")
 	}
 	if cfg.requestInterval < 0 {
-		return fmt.Errorf("request_interval_ms must be >= 0")
+		return fmt.Errorf("request-interval must be >= 0")
 	}
 	if cfg.shouldDownloadAll && len(cfg.organismCodes) > 0 {
-		return fmt.Errorf("choose either --organisms or --should_download_all_organisms, not both")
+		return fmt.Errorf("choose either --organisms or --all-organisms, not both")
 	}
 	assets, err := resolveMappingAssetNames(cfg.assetNames)
 	if err != nil {
 		return err
 	}
 	if hasOrganismScopedMappingAsset(assets) && !cfg.shouldDownloadAll && len(cfg.organismCodes) == 0 {
-		return fmt.Errorf("organism-scoped mapping assets require --organisms or --should_download_all_organisms")
+		return fmt.Errorf("organism-scoped mapping assets require --organisms or --all-organisms")
 	}
 	return nil
 }
@@ -207,27 +207,27 @@ func validateMappingLockConfig(cfg *mappingLockConfig) error {
 	return validateMappingFixedVersion(versionToken)
 }
 
-func validateMappingSyncConfig(cfg *mappingSyncConfig) error {
+func validateMappingRestoreConfig(cfg *mappingRestoreConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if err := validateMappingFixedVersion(cfg.versionToken); err != nil {
 		return err
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	if cfg.workersMax < 1 {
-		return fmt.Errorf("workers_max must be >= 1")
+		return fmt.Errorf("workers must be >= 1")
 	}
 	if cfg.requestInterval < 0 {
-		return fmt.Errorf("request_interval_ms must be >= 0")
+		return fmt.Errorf("request-interval must be >= 0")
 	}
 	return nil
 }

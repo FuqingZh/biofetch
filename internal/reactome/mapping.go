@@ -63,7 +63,7 @@ type mappingLockConfig struct {
 	workersMax int
 }
 
-type mappingSyncConfig struct {
+type mappingRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -132,19 +132,19 @@ func runLockMapping(cfg *mappingLockConfig) error {
 	return nil
 }
 
-func runSyncMapping(cfg *mappingSyncConfig) error {
+func runRestoreMapping(cfg *mappingRestoreConfig) error {
 	versionToken, err := normalizeMappingFixedVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
 	source := buildMappingSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch reactome", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch reactome", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch reactome", "sync failed: %v", err)
+		logx.Errorf("biofetch reactome", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -154,7 +154,7 @@ func resolveMappingAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return append([]string(nil), mappingAssetsSupported...), nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func validateMappingDownloadSizes(clientHTTP *http.Client, assets []staticasset.
 			return err
 		}
 		if ok && bytes > thresholdBytes {
-			return fmt.Errorf("Reactome mapping asset %s is %d bytes, above threshold %d; pass --should_allow_large_assets to fetch", asset.Name, bytes, thresholdBytes)
+			return fmt.Errorf("Reactome mapping asset %s is %d bytes, above threshold %d; pass --allow-large-downloads to fetch", asset.Name, bytes, thresholdBytes)
 		}
 	}
 	return nil

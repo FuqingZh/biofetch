@@ -290,9 +290,9 @@ func TestRunLockMappingRejectsMissingVersion(t *testing.T) {
 }
 
 func TestRunSyncMappingRejectsInvalidVersion(t *testing.T) {
-	cfg := mappingSyncConfig{dirOut: t.TempDir(), versionToken: "current", ruleExisting: "skip", retryMax: 1, workersMax: 1}
-	err := runSyncMapping(&cfg)
+	cfg := mappingRestoreConfig{dirOut: t.TempDir(), versionToken: "current", ruleExisting: "skip", retryMax: 1, workersMax: 1}
+	err := runRestoreMapping(&cfg)
 	if err == nil {
-		t.Fatal("runSyncMapping returned nil error")
+		t.Fatal("runRestoreMapping returned nil error")
 	}
 }
