@@ -50,6 +50,12 @@ func TestRootVersionAndCompletion(t *testing.T) {
 	}
 }
 
+func TestInterProScanParentShowsHelpWithoutArgs(t *testing.T) {
+	if err := RunCLI([]string{"interpro", "scan"}); err != nil {
+		t.Fatalf("RunCLI(interpro scan) error = %v", err)
+	}
+}
+
 func TestLockAndRestoreRequireOneSnapshotOperand(t *testing.T) {
 	for _, asset := range cliAssets {
 		for _, action := range []string{"lock", "restore"} {

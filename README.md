@@ -85,9 +85,8 @@ InterProScan fetch requires the explicit large-download opt-in. It preserves
 the upstream archive and `.md5` file under
 `interpro/scan/<version>/raw/`, verifies MD5 before publishing the archive,
 and records repository-standard SHA256 and byte counts in `manifest.lock`.
-Verifier failures retain the completed `.part` file for inspection or a later
-resumed fetch; they do not create the final archive or a manifest record for
-it.
+Verifier failures remove the completed `.part` so the next invocation restarts
+cleanly; they do not create the final archive or a manifest record for it.
 
 Long options use lowercase kebab-case. Fetch output uses `-o` / `--output`;
 durations accept native values such as `350ms`, `3s`, and `1m`. Use

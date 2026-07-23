@@ -90,7 +90,7 @@ func TestParseScanMD5StrictFilenameBinding(t *testing.T) {
 	}
 }
 
-func TestScanFetchChecksumMismatchLeavesPartAndPartialManifest(t *testing.T) {
+func TestScanFetchChecksumMismatchRemovesPartAndLeavesPartialManifest(t *testing.T) {
 	archive := []byte("archive fixture")
 	archiveName := scanArchiveName(scanTestVersion)
 	server := newScanServer(t, archive, strings.Repeat("0", 32)+"  "+archiveName+"\n", nil)
@@ -106,8 +106,8 @@ func TestScanFetchChecksumMismatchLeavesPartAndPartialManifest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(snapshot, "raw", archiveName)); !os.IsNotExist(err) {
 		t.Fatalf("final archive exists or stat failed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(snapshot, "raw", archiveName+".part")); err != nil {
-		t.Fatalf("archive part not retained: %v", err)
+	if _, err := os.Stat(filepath.Join(snapshot, "raw", archiveName+".part")); !os.IsNotExist(err) {
+		t.Fatalf("archive part exists or stat failed: %v", err)
 	}
 	manifest, ok, err := staticasset.ReadManifest(filepath.Join(snapshot, "manifest.lock"))
 	if err != nil || !ok || len(manifest.Files) != 1 || manifest.Files[0].Asset != "archive.md5" {

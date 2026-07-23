@@ -43,9 +43,9 @@ software distribution. InterProScan accepts only fixed tokens shaped like
 `5.77-108.0`. Its raw snapshot contains the release archive and its upstream
 `.md5`; fetch verifies the completed archive `.part` against that MD5 before
 atomic rename, while the lock continues to record SHA256, bytes, and final
-source URL. A verification failure retains `.part` but publishes neither a
-final archive nor a false archive record. Biofetch does not extract or install
-the distribution.
+source URL. A verification failure removes `.part` to force a clean subsequent
+download and publishes neither a final archive nor a false archive record.
+Biofetch does not extract or install the distribution.
 
 A published version token is immutable. If upstream content changes, publish a
 new version token, rebuild its lock, and regenerate every aggregate manifest

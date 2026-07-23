@@ -130,18 +130,32 @@ func TestFetchVerifiesCompletedPartBeforeRenameAndManifest(t *testing.T) {
 	}
 }
 
-func TestFetchVerifierFailureRetainsPartWithoutFinalOrManifestRecord(t *testing.T) {
+func TestFetchVerifierFailureRemovesPartAndNextInvocationRedownloads(t *testing.T) {
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet {
+			requests++
+			if got := request.Header.Get("Range"); got != "" {
+				t.Fatalf("Range = %q, want clean download", got)
+			}
+		}
 		_, _ = writer.Write([]byte("corrupt"))
 	}))
 	defer server.Close()
 
 	dirOut := t.TempDir()
+	verifications := 0
 	source := Source{
 		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
 		Assets: []Asset{{
 			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
-			VerifyDownloadedFile: func(string) error { return fmt.Errorf("checksum mismatch") },
+			VerifyDownloadedFile: func(string) error {
+				verifications++
+				if verifications == 1 {
+					return fmt.Errorf("checksum mismatch")
+				}
+				return nil
+			},
 		}},
 	}
 	err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 3, WorkersMax: 1}, nil)
@@ -152,12 +166,21 @@ func TestFetchVerifierFailureRetainsPartWithoutFinalOrManifestRecord(t *testing.
 	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
 		t.Fatalf("final file exists or stat failed: %v", err)
 	}
-	if data, err := os.ReadFile(fileOut + ".part"); err != nil || string(data) != "corrupt" {
-		t.Fatalf("retained part = %q, err = %v", data, err)
+	if _, err := os.Stat(fileOut + ".part"); !os.IsNotExist(err) {
+		t.Fatalf("failed part exists or stat failed: %v", err)
 	}
 	manifest, ok, readErr := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
 	if readErr != nil || (ok && len(manifest.Files) != 0) {
 		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, readErr)
+	}
+	if err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil); err != nil {
+		t.Fatalf("second Fetch returned error: %v", err)
+	}
+	if requests != 2 || verifications != 2 {
+		t.Fatalf("requests = %d, verifications = %d, want 2 each", requests, verifications)
+	}
+	if data, err := os.ReadFile(fileOut); err != nil || string(data) != "corrupt" {
+		t.Fatalf("final file = %q, err = %v", data, err)
 	}
 }
 

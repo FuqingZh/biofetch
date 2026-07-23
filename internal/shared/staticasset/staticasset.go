@@ -581,6 +581,10 @@ func downloadFileWithRetry(
 		if err := httpx.DownloadFileWithResume(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
 			if asset.VerifyDownloadedFile != nil {
 				if err := asset.VerifyDownloadedFile(filePart); err != nil {
+					if errRemove := os.Remove(filePart); errRemove != nil && !os.IsNotExist(errRemove) {
+						progress.finishFile(asset, false)
+						return fmt.Errorf("asset %q failed downloaded-file verification (%v) and remove failed part: %w", asset.Name, err, errRemove)
+					}
 					progress.finishFile(asset, false)
 					return fmt.Errorf("asset %q failed downloaded-file verification: %w", asset.Name, err)
 				}
