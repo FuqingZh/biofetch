@@ -150,8 +150,8 @@ func TestDownloadFileWithResumeUsesChunkedForLargeRangeAsset(t *testing.T) {
 	if string(data) != string(body) {
 		t.Fatalf("file content = %q, want %q", string(data), string(body))
 	}
-	if _, err := os.Stat(fileOut + ".parts/state.json"); err != nil {
-		t.Fatalf("state file missing: %v", err)
+	if _, err := os.Stat(fileOut + ".parts"); !os.IsNotExist(err) {
+		t.Fatalf("completed chunk workspace exists or stat failed: %v", err)
 	}
 }
 
@@ -214,6 +214,9 @@ func TestDownloadFileWithResumeReusesCompletedChunks(t *testing.T) {
 	}
 	if infoFile.Size() != int64(len(body)) {
 		t.Fatalf("file size = %d, want %d", infoFile.Size(), len(body))
+	}
+	if _, err := os.Stat(dirParts); !os.IsNotExist(err) {
+		t.Fatalf("completed chunk workspace exists or stat failed: %v", err)
 	}
 }
 
