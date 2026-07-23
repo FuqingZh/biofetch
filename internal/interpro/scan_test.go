@@ -114,6 +114,12 @@ func TestScanFetchChecksumMismatchRemovesPartAndLeavesPartialManifest(t *testing
 	if err != nil || !ok || len(manifest.Files) != 1 || manifest.Files[0].Asset != "archive.md5" {
 		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, err)
 	}
+	restore := scanRestoreConfig{}
+	restore.RetryMax, restore.WorkersMax, restore.RuleExisting = 1, 1, "skip"
+	if err := runRestoreScan(&restore, snapshot); err == nil ||
+		!strings.Contains(err.Error(), "must contain archive and archive.md5") {
+		t.Fatalf("partial manifest restore error = %v", err)
+	}
 }
 
 func TestScanFetchRejectsMalformedMD5BeforeArchiveRequest(t *testing.T) {
@@ -133,6 +139,90 @@ func TestScanFetchRejectsMalformedMD5BeforeArchiveRequest(t *testing.T) {
 	}
 	if archiveRequests != 0 {
 		t.Fatalf("archive requests = %d, want 0", archiveRequests)
+	}
+	snapshot := filepath.Join(cfg.DirOut, "scan", scanTestVersion)
+	if _, err := os.Stat(filepath.Join(snapshot, "raw", archiveName+".md5")); !os.IsNotExist(err) {
+		t.Fatalf("malformed checksum exists or stat failed: %v", err)
+	}
+	manifest, ok, err := staticasset.ReadManifest(filepath.Join(snapshot, "manifest.lock"))
+	if err != nil || (ok && len(manifest.Files) != 0) {
+		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, err)
+	}
+}
+
+func TestScanFetchRecoversWhenMalformedChecksumIsCorrected(t *testing.T) {
+	archive := []byte("archive fixture")
+	archiveName := scanArchiveName(scanTestVersion)
+	checksumRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/" + scanTestVersion + "/" + archiveName + ".md5":
+			if request.Method == http.MethodHead {
+				return
+			}
+			checksumRequests++
+			if checksumRequests == 1 {
+				_, _ = writer.Write([]byte("malformed\n"))
+			} else {
+				_, _ = writer.Write([]byte(md5Line(archive, archiveName)))
+			}
+		case "/" + scanTestVersion + "/" + archiveName:
+			_, _ = writer.Write(archive)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	setScanBaseURL(t, server.URL)
+
+	cfg := scanFetchConfig(t.TempDir())
+	if err := runFetchScan(&cfg); err == nil {
+		t.Fatal("first runFetchScan succeeded")
+	}
+	if err := runFetchScan(&cfg); err != nil {
+		t.Fatalf("second runFetchScan error = %v", err)
+	}
+	if checksumRequests != 2 {
+		t.Fatalf("checksum requests = %d, want 2", checksumRequests)
+	}
+}
+
+func TestScanFetchOverwriteReusesValidatedChecksum(t *testing.T) {
+	archive := []byte("archive fixture")
+	archiveName := scanArchiveName(scanTestVersion)
+	checksumRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/" + scanTestVersion + "/" + archiveName + ".md5":
+			if request.Method == http.MethodHead {
+				return
+			}
+			checksumRequests++
+			if checksumRequests > 1 {
+				_, _ = writer.Write([]byte("changed after validation\n"))
+				return
+			}
+			_, _ = writer.Write([]byte(md5Line(archive, archiveName)))
+		case "/" + scanTestVersion + "/" + archiveName:
+			_, _ = writer.Write(archive)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	setScanBaseURL(t, server.URL)
+
+	cfg := scanFetchConfig(t.TempDir())
+	cfg.RuleExisting = "overwrite"
+	if err := runFetchScan(&cfg); err != nil {
+		t.Fatalf("runFetchScan error = %v", err)
+	}
+	if checksumRequests != 1 {
+		t.Fatalf("checksum requests = %d, want 1", checksumRequests)
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.DirOut, "scan", scanTestVersion, "raw", archiveName+".md5"))
+	if err != nil || string(data) != md5Line(archive, archiveName) {
+		t.Fatalf("checksum = %q, err = %v", data, err)
 	}
 }
 
@@ -263,6 +353,12 @@ func TestScanFreshLockPublishesSourceURLsAndRestoresFromManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(rawDir, archiveName+".md5"), checksum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rawDir, archiveName+".part.parts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rawDir, archiveName+".part.parts", "state.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

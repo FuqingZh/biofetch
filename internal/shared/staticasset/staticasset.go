@@ -18,22 +18,24 @@ import (
 )
 
 type Asset struct {
-	Name                 string
-	Path                 string
-	URL                  string
-	RecoverDownloadError func(string, error) (bool, error) `toml:"-"`
-	VerifyDownloadedFile func(string) error                `toml:"-"`
+	Name                  string
+	Path                  string
+	URL                   string
+	RecoverDownloadError  func(string, error) (bool, error) `toml:"-"`
+	VerifyDownloadedFile  func(string) error                `toml:"-"`
+	ReuseVerifiedExisting bool                              `toml:"-"`
 }
 
 type Source struct {
-	Database     string
-	Asset        string
-	Source       string
-	DirName      string
-	Version      string
-	VersionToken string
-	Scope        Scope
-	Assets       []Asset
+	Database               string
+	Asset                  string
+	Source                 string
+	DirName                string
+	Version                string
+	VersionToken           string
+	Scope                  Scope
+	Assets                 []Asset
+	LockOnlyDeclaredAssets bool
 }
 
 type Scope struct {
@@ -229,7 +231,7 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	progress := newProgressReporter(source, options, 0, 0)
-	records, err := scanRecords(dirVersion, assetsByPath, progress, options.WorkersMax)
+	records, err := scanRecords(dirVersion, assetsByPath, source.LockOnlyDeclaredAssets, progress, options.WorkersMax)
 	if err != nil {
 		progress.finish(false)
 		return err
@@ -426,7 +428,14 @@ func planFetch(
 	for _, asset := range assets {
 		recordExisting, ok := recordsExistingByPath[asset.Path]
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(asset.Path))
-		if !overwrite && ok && shouldReuseRecord(filePath, recordExisting) {
+		reusable := ok && shouldReuseRecord(filePath, recordExisting)
+		if reusable && asset.VerifyDownloadedFile != nil {
+			if err := asset.VerifyDownloadedFile(filePath); err != nil {
+				_ = os.Remove(filePath)
+				reusable = false
+			}
+		}
+		if reusable && (!overwrite || asset.ReuseVerifiedExisting) {
 			recordsReused = append(recordsReused, recordExisting)
 			emit(trace, source, TraceEvent{Event: "reuse_file", Asset: recordExisting.Asset, Path: recordExisting.Path, URL: recordExisting.URL, Bytes: recordExisting.Bytes, SHA256: recordExisting.SHA256, Status: "sha256_match"})
 			continue
@@ -640,8 +649,8 @@ func buildRecordWithProgress(filePath string, asset Asset, progress *progressRep
 	}, nil
 }
 
-func scanRecords(dirVersion string, assetsByPath map[string]Asset, progress *progressReporter, workersMax int) ([]FileRecord, error) {
-	tasks, err := planScanRecords(dirVersion, assetsByPath)
+func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool, progress *progressReporter, workersMax int) ([]FileRecord, error) {
+	tasks, err := planScanRecords(dirVersion, assetsByPath, onlyDeclared)
 	if err != nil {
 		return nil, err
 	}
@@ -667,7 +676,7 @@ func scanRecords(dirVersion string, assetsByPath map[string]Asset, progress *pro
 	return records, nil
 }
 
-func planScanRecords(dirVersion string, assetsByPath map[string]Asset) ([]scanTask, error) {
+func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool) ([]scanTask, error) {
 	tasks := make([]scanTask, 0)
 	dirScan := filepath.Join(dirVersion, "raw")
 	if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
@@ -689,7 +698,10 @@ func planScanRecords(dirVersion string, assetsByPath map[string]Asset) ([]scanTa
 			return err
 		}
 		pathRel = filepath.ToSlash(pathRel)
-		asset := assetsByPath[pathRel]
+		asset, declared := assetsByPath[pathRel]
+		if onlyDeclared && !declared {
+			return nil
+		}
 		tasks = append(tasks, scanTask{
 			filePath: path,
 			pathRel:  pathRel,

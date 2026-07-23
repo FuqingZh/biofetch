@@ -142,6 +142,9 @@ func runRestoreScan(cfg *scanRestoreConfig, snapshot string) error {
 		manifest.Version != version || manifest.VersionToken != version {
 		return fmt.Errorf("manifest identity does not match InterProScan snapshot %s", snapshot)
 	}
+	if err := validateScanManifestFiles(manifest, version); err != nil {
+		return err
+	}
 	cfg.DirOut = dirRoot
 	cfg.VersionToken = version
 	if err := validateScanRestoreConfig(cfg); err != nil {
@@ -176,7 +179,8 @@ func buildScanSources(version string) (staticasset.Source, staticasset.Source) {
 	baseURL := strings.TrimRight(scanBaseURL, "/") + "/" + version
 	checksum := staticasset.Asset{
 		Name: "archive.md5", Path: filepath.ToSlash(filepath.Join("raw", archiveName+".md5")),
-		URL: baseURL + "/" + archiveName + ".md5",
+		URL: baseURL + "/" + archiveName + ".md5", ReuseVerifiedExisting: true,
+		VerifyDownloadedFile: scanMD5FormatVerifier(archiveName),
 	}
 	archive := staticasset.Asset{
 		Name: "archive", Path: filepath.ToSlash(filepath.Join("raw", archiveName)),
@@ -189,7 +193,34 @@ func buildScanSource(version string, assets []staticasset.Asset) staticasset.Sou
 	return staticasset.Source{
 		Database: "interpro", Asset: "scan", Source: "ftp",
 		Version: version, VersionToken: version, Assets: assets,
+		LockOnlyDeclaredAssets: true,
 	}
+}
+
+func validateScanManifestFiles(manifest staticasset.Manifest, version string) error {
+	archiveName := scanArchiveName(version)
+	expected := map[string]string{
+		filepath.ToSlash(filepath.Join("raw", archiveName)):        "archive",
+		filepath.ToSlash(filepath.Join("raw", archiveName+".md5")): "archive.md5",
+	}
+	seen := make(map[string]struct{}, len(manifest.Files))
+	for _, record := range manifest.Files {
+		asset, ok := expected[record.Path]
+		if !ok || record.Asset != asset {
+			return fmt.Errorf("InterProScan manifest contains unexpected file record: %s", record.Path)
+		}
+		if _, duplicate := seen[record.Path]; duplicate {
+			return fmt.Errorf("InterProScan manifest contains duplicate file record: %s", record.Path)
+		}
+		if strings.TrimSpace(record.URL) == "" {
+			return fmt.Errorf("InterProScan manifest file URL is empty: %s", record.Path)
+		}
+		seen[record.Path] = struct{}{}
+	}
+	if len(seen) != len(expected) {
+		return fmt.Errorf("InterProScan manifest must contain archive and archive.md5 records")
+	}
+	return nil
 }
 
 func buildScanRestoreAssets(manifest staticasset.Manifest) []staticasset.Asset {
@@ -213,6 +244,17 @@ func parseScanMD5(data []byte, expectedFilename string) (string, error) {
 		return "", fmt.Errorf("InterProScan MD5 filename %q does not match archive %q", filename, expectedFilename)
 	}
 	return strings.ToLower(string(matches[1])), nil
+}
+
+func scanMD5FormatVerifier(expectedFilename string) func(string) error {
+	return func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = parseScanMD5(data, expectedFilename)
+		return err
+	}
 }
 
 func readScanMD5(path string, expectedFilename string) (string, error) {

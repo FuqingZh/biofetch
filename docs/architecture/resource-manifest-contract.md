@@ -47,6 +47,12 @@ source URL. A verification failure removes `.part` to force a clean subsequent
 download and publishes neither a final archive nor a false archive record.
 Biofetch does not extract or install the distribution.
 
+The checksum file is itself parsed and filename-bound before it is renamed or
+recorded. Once validated for a fetch, it is reused unchanged while the archive
+is downloaded, including under `--on-existing overwrite`. Restore requires
+exactly the official archive and checksum records; a checksum-only partial
+manifest is not restorable.
+
 A published version token is immutable. If upstream content changes, publish a
 new version token, rebuild its lock, and regenerate every aggregate manifest
 that references the resource tree. Do not silently replace files behind a
@@ -72,7 +78,9 @@ to a fixed number of parent directories.
 InterProScan lock additionally requires the official archive and `.md5` pair
 and verifies their MD5 relationship before publishing the rebuilt lock. A
 fresh lock assigns the fixed versioned EBI HTTPS URLs to both records; it does
-not require an older manifest or contact the source.
+not require an older manifest or contact the source. Lock records only those
+two declared files and ignores download scratch paths or other undeclared
+content under `raw/`.
 InterProScan restore uses only the exact snapshot identity, recorded source
 URLs, and recorded SHA256 values; it performs no mutable latest-release
 lookup.
