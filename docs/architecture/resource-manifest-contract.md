@@ -70,7 +70,9 @@ snapshots such as OmniPath interactions remain exact rather than being reduced
 to a fixed number of parent directories.
 
 InterProScan lock additionally requires the official archive and `.md5` pair
-and verifies their MD5 relationship before publishing the rebuilt lock.
+and verifies their MD5 relationship before publishing the rebuilt lock. A
+fresh lock assigns the fixed versioned EBI HTTPS URLs to both records; it does
+not require an older manifest or contact the source.
 InterProScan restore uses only the exact snapshot identity, recorded source
 URLs, and recorded SHA256 values; it performs no mutable latest-release
 lookup.

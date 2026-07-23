@@ -108,7 +108,7 @@ func runLockScan(cfg *scanLockConfig) error {
 	if err := verifyScanSnapshotMD5(cfg.DirSnapshot, version); err != nil {
 		return err
 	}
-	source := buildScanSource(version, nil)
+	_, source := buildScanSources(version)
 	if cfg.ShouldDryRun {
 		return staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{RetryMax: 1, WorkersMax: cfg.workersMax, ShouldDryRun: true}, nil)
 	}

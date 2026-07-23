@@ -4,6 +4,7 @@ import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/staticasset"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
@@ -239,6 +240,87 @@ func TestScanLockVerifiesMD5AndRestoreUsesManifestURLs(t *testing.T) {
 	if err := runLockScan(&scanLockConfig{DirSnapshotConfig: cliopt.DirSnapshotConfig{DirSnapshot: snapshot}, workersMax: 1}); err == nil ||
 		!strings.Contains(err.Error(), "failed MD5 verification") {
 		t.Fatalf("mismatched runLockScan error = %v", err)
+	}
+}
+
+func TestScanFreshLockPublishesSourceURLsAndRestoresFromManifest(t *testing.T) {
+	archive := []byte("official archive fixture")
+	archiveName := scanArchiveName(scanTestVersion)
+	requests := 0
+	server := newScanServer(t, archive, md5Line(archive, archiveName), func(request *http.Request) {
+		requests++
+	})
+	defer server.Close()
+	setScanBaseURL(t, server.URL)
+
+	snapshot := filepath.Join(t.TempDir(), "scan", scanTestVersion)
+	rawDir := filepath.Join(snapshot, "raw")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checksum := []byte(md5Line(archive, archiveName))
+	if err := os.WriteFile(filepath.Join(rawDir, archiveName), archive, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rawDir, archiveName+".md5"), checksum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runLockScan(&scanLockConfig{
+		DirSnapshotConfig: cliopt.DirSnapshotConfig{DirSnapshot: snapshot},
+		workersMax:        2,
+	}); err != nil {
+		t.Fatalf("runLockScan error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("lock made %d network requests, want 0", requests)
+	}
+	manifest, ok, err := staticasset.ReadManifest(filepath.Join(snapshot, "manifest.lock"))
+	if err != nil || !ok {
+		t.Fatalf("ReadManifest ok = %v, err = %v", ok, err)
+	}
+	if manifest.Database != "interpro" || manifest.Asset != "scan" || manifest.Source != "ftp" ||
+		manifest.Version != scanTestVersion || manifest.VersionToken != scanTestVersion {
+		t.Fatalf("manifest identity = %#v", manifest)
+	}
+	if len(manifest.Files) != 2 {
+		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+	want := map[string]struct {
+		asset  string
+		data   []byte
+		urlEnd string
+	}{
+		"raw/" + archiveName:          {asset: "archive", data: archive, urlEnd: "/" + archiveName},
+		"raw/" + archiveName + ".md5": {asset: "archive.md5", data: checksum, urlEnd: "/" + archiveName + ".md5"},
+	}
+	for _, record := range manifest.Files {
+		expected, exists := want[record.Path]
+		if !exists {
+			t.Fatalf("unexpected record = %#v", record)
+		}
+		sum := sha256.Sum256(expected.data)
+		if record.Asset != expected.asset || record.URL != server.URL+"/"+scanTestVersion+expected.urlEnd ||
+			record.SHA256 != hex.EncodeToString(sum[:]) || record.Bytes != int64(len(expected.data)) {
+			t.Fatalf("record = %#v", record)
+		}
+	}
+
+	if err := os.Remove(filepath.Join(rawDir, archiveName)); err != nil {
+		t.Fatal(err)
+	}
+	scanBaseURL = "http://127.0.0.1:1/not-the-manifest-source"
+	restore := scanRestoreConfig{}
+	restore.RetryMax, restore.WorkersMax, restore.RuleExisting = 1, 1, "skip"
+	if err := runRestoreScan(&restore, snapshot); err != nil {
+		t.Fatalf("runRestoreScan error = %v", err)
+	}
+	if requests == 0 {
+		t.Fatal("restore did not use the manifest URL")
+	}
+	data, err := os.ReadFile(filepath.Join(rawDir, archiveName))
+	if err != nil || string(data) != string(archive) {
+		t.Fatalf("restored archive = %q, err = %v", data, err)
 	}
 }
 

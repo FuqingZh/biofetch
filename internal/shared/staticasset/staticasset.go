@@ -104,6 +104,7 @@ type downloadTask struct {
 type scanTask struct {
 	filePath string
 	pathRel  string
+	asset    string
 	url      string
 	bytes    int64
 }
@@ -223,12 +224,12 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	urlsExisting, err := buildExistingURLMap(fileManifest)
+	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets)
 	if err != nil {
 		return err
 	}
 	progress := newProgressReporter(source, options, 0, 0)
-	records, err := scanRecords(dirVersion, urlsExisting, progress, options.WorkersMax)
+	records, err := scanRecords(dirVersion, assetsByPath, progress, options.WorkersMax)
 	if err != nil {
 		progress.finish(false)
 		return err
@@ -639,14 +640,18 @@ func buildRecordWithProgress(filePath string, asset Asset, progress *progressRep
 	}, nil
 }
 
-func scanRecords(dirVersion string, urlsExisting map[string]string, progress *progressReporter, workersMax int) ([]FileRecord, error) {
-	tasks, err := planScanRecords(dirVersion, urlsExisting)
+func scanRecords(dirVersion string, assetsByPath map[string]Asset, progress *progressReporter, workersMax int) ([]FileRecord, error) {
+	tasks, err := planScanRecords(dirVersion, assetsByPath)
 	if err != nil {
 		return nil, err
 	}
 	progress.planScan(tasks)
 	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task scanTask) (FileRecord, error) {
-		asset := Asset{Name: filepath.Base(task.filePath), Path: task.pathRel, URL: task.url}
+		assetName := task.asset
+		if assetName == "" {
+			assetName = filepath.Base(task.filePath)
+		}
+		asset := Asset{Name: assetName, Path: task.pathRel, URL: task.url}
 		progress.startScanFile(asset)
 		record, err := buildRecordWithProgress(task.filePath, asset, progress)
 		if err != nil {
@@ -662,7 +667,7 @@ func scanRecords(dirVersion string, urlsExisting map[string]string, progress *pr
 	return records, nil
 }
 
-func planScanRecords(dirVersion string, urlsExisting map[string]string) ([]scanTask, error) {
+func planScanRecords(dirVersion string, assetsByPath map[string]Asset) ([]scanTask, error) {
 	tasks := make([]scanTask, 0)
 	dirScan := filepath.Join(dirVersion, "raw")
 	if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
@@ -684,10 +689,12 @@ func planScanRecords(dirVersion string, urlsExisting map[string]string) ([]scanT
 			return err
 		}
 		pathRel = filepath.ToSlash(pathRel)
+		asset := assetsByPath[pathRel]
 		tasks = append(tasks, scanTask{
 			filePath: path,
 			pathRel:  pathRel,
-			url:      urlsExisting[pathRel],
+			asset:    asset.Name,
+			url:      asset.URL,
 			bytes:    infoFile.Size(),
 		})
 		return nil
@@ -862,18 +869,23 @@ func readRecords(fileManifest string) ([]FileRecord, error) {
 	return records, nil
 }
 
-func buildExistingURLMap(fileManifest string) (map[string]string, error) {
+func buildLockAssetMap(fileManifest string, sourceAssets []Asset) (map[string]Asset, error) {
 	records, err := readRecords(fileManifest)
 	if err != nil {
 		return nil, err
 	}
-	urls := make(map[string]string, len(records))
+	assets := make(map[string]Asset, len(records)+len(sourceAssets))
 	for _, record := range records {
-		if record.Path != "" && record.URL != "" {
-			urls[record.Path] = record.URL
+		if record.Path != "" {
+			assets[record.Path] = Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
 		}
 	}
-	return urls, nil
+	for _, asset := range sourceAssets {
+		if asset.Path != "" {
+			assets[asset.Path] = asset
+		}
+	}
+	return assets, nil
 }
 
 func writeManifest(fileManifest string, source Source, records []FileRecord, timeDownloaded time.Time) error {
