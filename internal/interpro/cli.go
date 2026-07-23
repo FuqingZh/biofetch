@@ -58,8 +58,7 @@ func createMappingFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "InterPro asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "InterPro release token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "InterPro mapping assets: all|protein2ipr|entries; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "InterPro mapping assets: all|protein2ipr|entries; omit or pass all to fetch all supported assets")
 	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow large InterPro mapping assets")
 	flags.StringVar(&cfg.baseURLCurrentRelease, "current-release-url", cfg.baseURLCurrentRelease, "InterPro current_release base URL, including mirror URLs")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")

@@ -104,8 +104,7 @@ func createFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "STRING asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "STRING release version token")
-	flags.StringSliceVar(&cfg.taxIDs, "taxon-ids", nil, "Taxids; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.taxIDs, "taxon-ids")
+	cliopt.BindStringListFlags(flags, &cfg.taxIDs, "taxon-ids", "Taxids; pass inline values, repeat the flag,")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
 		"all-organisms",

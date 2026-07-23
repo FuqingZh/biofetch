@@ -58,8 +58,7 @@ func createMappingFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "Reactome asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "Reactome snapshot token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Reactome mapping assets; omit or pass all to fetch all supported assets; repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "Reactome mapping assets; omit or pass all to fetch all supported assets; repeat the flag,")
 	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow Reactome mapping assets larger than the configured safety threshold")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)

@@ -105,10 +105,8 @@ func createAnnotationFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
-	flags.StringSliceVar(&cfg.datasetNames, "datasets", nil, "GO annotation dataset file stems, e.g. goa_human or mgi; omit to discover all datasets for selected formats")
-	cliopt.BindListFileFlag(flags, &cfg.datasetNames, "datasets")
-	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO annotation formats: gaf|gpad|gpi; omit for gaf, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.formatNames, "formats")
+	cliopt.BindStringListFlags(flags, &cfg.datasetNames, "datasets", "GO annotation dataset file stems, e.g. goa_human or mgi; omit to discover all datasets for selected formats")
+	cliopt.BindStringListFlags(flags, &cfg.formatNames, "formats", "GO annotation formats: gaf|gpad|gpi; omit for gaf, repeat the flag,")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
@@ -213,10 +211,8 @@ func createSlimFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
-	flags.StringSliceVar(&cfg.subsetNames, "subsets", nil, "GO Slim subset IDs; omit for goslim_generic, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.subsetNames, "subsets")
-	flags.StringSliceVar(&cfg.formatNames, "formats", nil, "GO Slim formats: obo|owl|json|tsv; omit for obo, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.formatNames, "formats")
+	cliopt.BindStringListFlags(flags, &cfg.subsetNames, "subsets", "GO Slim subset IDs; omit for goslim_generic, repeat the flag,")
+	cliopt.BindStringListFlags(flags, &cfg.formatNames, "formats", "GO Slim formats: obo|owl|json|tsv; omit for obo, repeat the flag,")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
@@ -326,13 +322,12 @@ func createOntologyFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "GO asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "GO release date in YYYY-MM-DD; omit to fetch the latest release")
-	flags.StringSliceVar(
+	cliopt.BindStringListFlags(
+		flags,
 		&cfg.assetNames,
 		"assets",
-		nil,
 		"Ontology assets; omit to fetch all discovered ontology files, or pass inline values or repeat the flag",
 	)
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite (skip reuses manifest/cache when size matches)")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
 	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)

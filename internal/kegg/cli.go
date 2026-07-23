@@ -3,9 +3,7 @@ package kegg
 import (
 	"biofetch/internal/shared/cliopt"
 	"biofetch/internal/shared/sets"
-	"bufio"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -16,9 +14,10 @@ import (
 var pathwayAssetNamesSupported = []string{"list", "entry", "kgml", "conf", "image"}
 
 const (
-	ruleOrderAsc   = "asc"
-	ruleOrderDesc  = "desc"
-	ruleOrderInput = "input"
+	ruleOrderAsc               = "asc"
+	ruleOrderDesc              = "desc"
+	ruleOrderInput             = "input"
+	defaultKEGGRequestInterval = 350 * time.Millisecond
 )
 
 type pathwayConfig struct {
@@ -139,10 +138,8 @@ func createMappingFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Mapping assets: all|organism|conv_uniprot|conv_ncbi_geneid|gene_list|gene_ko|gene_pathway|ko_pathway; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.organismCodes, "organisms")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "Mapping assets: all|organism|conv_uniprot|conv_ncbi_geneid|gene_list|gene_ko|gene_pathway|ko_pathway; omit or pass all to fetch all supported assets")
+	cliopt.BindStringListFlags(flags, &cfg.organismCodes, "organisms", "KEGG organism codes; pass inline values, repeat the flag,")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch organism-scoped mapping assets for all KEGG organisms")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
@@ -188,6 +185,7 @@ func createMappingRestoreCommand() *cobra.Command {
 	cfg.retryMax = defaultKEGGRetryMax
 	cfg.retryWait = defaultKEGGRetryWait
 	cfg.workersMax = 1
+	cfg.requestInterval = defaultKEGGRequestInterval
 	commandRestore := &cobra.Command{
 		Use:           "restore SNAPSHOT",
 		Short:         "Restore KEGG mapping files from manifest.lock and refresh manifest",
@@ -279,12 +277,9 @@ func createPathwayFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "PATHWAY assets: all|list|entry|kgml|conf|image; omit or pass all to fetch all supported assets within the selected scope")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.organismCodes, "organisms")
-	flags.StringSliceVar(&cfg.pathwayIDs, "pathway-ids", nil, "Pathway IDs; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.pathwayIDs, "pathway-ids")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "PATHWAY assets: all|list|entry|kgml|conf|image; omit or pass all to fetch all supported assets within the selected scope")
+	cliopt.BindStringListFlags(flags, &cfg.organismCodes, "organisms", "KEGG organism codes; pass inline values, repeat the flag,")
+	cliopt.BindStringListFlags(flags, &cfg.pathwayIDs, "pathway-ids", "Pathway IDs; pass inline values, repeat the flag,")
 	flags.BoolVar(
 		&cfg.shouldFetchReference,
 		"include-reference",
@@ -347,6 +342,7 @@ func createPathwayLockCommand() *cobra.Command {
 func createPathwayRestoreCommand() *cobra.Command {
 	cfg := keggRestoreConfig{}
 	cfg.ruleExisting = "skip"
+	cfg.requestInterval = defaultKEGGRequestInterval
 	commandRestore := &cobra.Command{
 		Use:           "restore SNAPSHOT",
 		Short:         "Restore KEGG PATHWAY files from manifest.lock and refresh manifest",
@@ -390,7 +386,7 @@ func createDefaultPathwayConfig() pathwayConfig {
 	cfg := pathwayConfig{}
 	cfg.retryMax = defaultKEGGRetryMax
 	cfg.retryWait = defaultKEGGRetryWait
-	cfg.requestInterval = 350 * time.Millisecond
+	cfg.requestInterval = defaultKEGGRequestInterval
 	cfg.ruleExisting = "skip"
 	cfg.ruleOrder = ruleOrderAsc
 	return cfg
@@ -557,16 +553,14 @@ func createBriteFetchCommand() *cobra.Command {
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "KEGG asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	flags.StringVar(&cfg.catalogCode, "catalog", "", "Reference BRITE catalog")
-	flags.StringSliceVar(&cfg.organismCodes, "organisms", nil, "KEGG organism codes; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.organismCodes, "organisms")
+	cliopt.BindStringListFlags(flags, &cfg.organismCodes, "organisms", "KEGG organism codes; pass inline values, repeat the flag,")
 	flags.BoolVar(
 		&cfg.shouldDownloadAll,
 		"all-organisms",
 		false,
 		"Fetch BRITE assets for all KEGG organisms",
 	)
-	flags.StringSliceVar(&cfg.briteIDs, "brite-ids", nil, "BRITE IDs; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.briteIDs, "brite-ids")
+	cliopt.BindStringListFlags(flags, &cfg.briteIDs, "brite-ids", "BRITE IDs; pass inline values, repeat the flag,")
 	flags.BoolVar(&cfg.shouldDownloadRootOnly, "root-only", false, "Download only root BRITE hierarchy (*00001) per catalog")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.StringVar(&cfg.ruleOrder, "order", cfg.ruleOrder, "Traversal order for organisms and BRITE IDs: asc|desc|input (input preserves first-seen order)")
@@ -618,6 +612,7 @@ func createBriteLockCommand() *cobra.Command {
 func createBriteRestoreCommand() *cobra.Command {
 	cfg := keggRestoreConfig{}
 	cfg.ruleExisting = "skip"
+	cfg.requestInterval = defaultKEGGRequestInterval
 	commandRestore := &cobra.Command{
 		Use:           "restore SNAPSHOT",
 		Short:         "Restore KEGG BRITE files from manifest.lock and refresh manifest",
@@ -661,7 +656,7 @@ func createDefaultBriteConfig() briteConfig {
 	cfg := briteConfig{}
 	cfg.retryMax = defaultKEGGRetryMax
 	cfg.retryWait = defaultKEGGRetryWait
-	cfg.requestInterval = 350 * time.Millisecond
+	cfg.requestInterval = defaultKEGGRequestInterval
 	cfg.ruleExisting = "skip"
 	cfg.ruleOrder = ruleOrderAsc
 	return cfg
@@ -800,22 +795,11 @@ func resolveOrderedListInputs(
 				continue
 			}
 			if strings.HasPrefix(token, "@") {
-				filePath := strings.TrimSpace(strings.TrimPrefix(token, "@"))
-				if filePath == "" {
-					return nil, fmt.Errorf("%s file path must not be empty", spec.nameOption)
-				}
-				valuesFile, err := readOrderedListInputFile(filePath, spec)
-				if err != nil {
-					return nil, err
-				}
-				for _, value := range valuesFile {
-					if _, ok := setSeen[value]; ok {
-						continue
-					}
-					setSeen[value] = struct{}{}
-					valuesResolved = append(valuesResolved, value)
-				}
-				continue
+				return nil, fmt.Errorf(
+					"@file syntax is not supported for --%s; use --%s-file",
+					spec.nameOption,
+					spec.nameOption,
+				)
 			}
 
 			valueNormalized := spec.fnNormalize(token)
@@ -834,40 +818,6 @@ func resolveOrderedListInputs(
 		return nil, fmt.Errorf("%s must not be empty", spec.nameOption)
 	}
 	return applyTraversalOrder(valuesResolved, ruleOrder), nil
-}
-
-func readOrderedListInputFile(filePath string, spec orderedListInputSpec) ([]string, error) {
-	fileIn, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("open %s file: %w", spec.nameOption, err)
-	}
-	defer fileIn.Close()
-
-	valuesResolved := make([]string, 0)
-	setSeen := make(map[string]struct{})
-	scanner := bufio.NewScanner(fileIn)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		valueNormalized := spec.fnNormalize(line)
-		if !spec.fnValidate(valueNormalized) {
-			return nil, fmt.Errorf("invalid %s in %s: %s", spec.nameValue, filePath, line)
-		}
-		if _, ok := setSeen[valueNormalized]; ok {
-			continue
-		}
-		setSeen[valueNormalized] = struct{}{}
-		valuesResolved = append(valuesResolved, valueNormalized)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read %s file: %w", spec.nameOption, err)
-	}
-	if len(valuesResolved) == 0 {
-		return nil, fmt.Errorf("%s file must not be empty: %s", spec.nameOption, filePath)
-	}
-	return valuesResolved, nil
 }
 
 func applyTraversalOrder(values []string, ruleOrder string) []string {
@@ -893,10 +843,6 @@ func reverseStrings(values []string) {
 
 func parseKEGGOrganismCodes(valuesInput []string) ([]string, error) {
 	return resolveKEGGOrganismInputs(valuesInput, ruleOrderAsc)
-}
-
-func readKEGGOrganismCodesFromFile(filePath string) ([]string, error) {
-	return resolveKEGGOrganismInputs([]string{"@" + filePath}, ruleOrderAsc)
 }
 
 func normalizeKEGGOrganismCode(text string) string {

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/spf13/pflag"
 )
 
 func TestSnapshotVersionToken(t *testing.T) {
@@ -90,6 +92,41 @@ func TestExpandListTokensRejectsAtSyntax(t *testing.T) {
 	_, err := ExpandListTokens([]string{"@missing.txt"}, "", "values")
 	if err == nil {
 		t.Fatal("expected @ syntax rejection")
+	}
+}
+
+func TestBindStringListFlagsPreservesArgumentOrder(t *testing.T) {
+	fileValues := filepath.Join(t.TempDir(), "values.txt")
+	if err := os.WriteFile(fileValues, []byte("from-file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "file before inline",
+			args: []string{"--values-file", fileValues, "--values", "inline"},
+			want: []string{"from-file", "inline"},
+		},
+		{
+			name: "inline before file",
+			args: []string{"--values", "inline", "--values-file", fileValues},
+			want: []string{"inline", "from-file"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var values []string
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			BindStringListFlags(flags, &values, "values", "test values")
+			if err := flags.Parse(test.args); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(values, test.want) {
+				t.Fatalf("values = %#v, want %#v", values, test.want)
+			}
+		})
 	}
 }
 

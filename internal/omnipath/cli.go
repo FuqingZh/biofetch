@@ -96,8 +96,7 @@ func createEnzSubFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
-	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.organisms, "organisms")
+	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
@@ -148,8 +147,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
-	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.organisms, "organisms")
+	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
 	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")

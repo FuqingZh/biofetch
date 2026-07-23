@@ -68,8 +68,7 @@ func createKBFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt release token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "UniProtKB assets: all|sprot|trembl|varsplic|sprot_dat|trembl_dat; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "UniProtKB assets: all|sprot|trembl|varsplic|sprot_dat|trembl_dat; omit or pass all to fetch all supported assets")
 	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow large UniProtKB assets")
 	flags.StringVar(&cfg.baseURLCurrentRelease, "current-release-url", cfg.baseURLCurrentRelease, "UniProt current_release base URL, including mirror URLs")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
@@ -188,8 +187,7 @@ func createUniRefFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt release token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "UniRef FASTA assets: all|uniref90; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "UniRef FASTA assets: all|uniref90; omit or pass all to fetch all supported assets")
 	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow large UniRef FASTA assets")
 	flags.StringVar(&cfg.baseURLCurrentRelease, "current-release-url", cfg.baseURLCurrentRelease, "UniProt current_release base URL, including mirror URLs")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
@@ -309,8 +307,7 @@ func createIDMappingFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "UniProt asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "UniProt release token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "UniProt ID mapping assets: all|selected|dat; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "UniProt ID mapping assets: all|selected|dat; omit or pass all to fetch all supported assets")
 	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow multi-GB UniProt ID mapping assets")
 	flags.StringVar(&cfg.baseURLCurrentRelease, "current-release-url", cfg.baseURLCurrentRelease, "UniProt current_release base URL, including mirror URLs")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")

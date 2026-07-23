@@ -2,6 +2,7 @@ package cliopt
 
 import (
 	"bufio"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -206,8 +207,36 @@ func ExpandListTokens(valuesInput []string, filePath string, optionName string) 
 	return valuesResolved, nil
 }
 
+type listFlagState struct {
+	values *[]string
+	seen   bool
+}
+
+func (state *listFlagState) append(values ...string) {
+	if !state.seen {
+		*state.values = nil
+		state.seen = true
+	}
+	*state.values = append(*state.values, values...)
+}
+
+type stringListValue struct {
+	state *listFlagState
+}
+
+func (value *stringListValue) String() string { return strings.Join(*value.state.values, ",") }
+func (value *stringListValue) Type() string   { return "strings" }
+func (value *stringListValue) Set(input string) error {
+	values, err := csv.NewReader(strings.NewReader(input)).Read()
+	if err != nil {
+		return fmt.Errorf("parse list value: %w", err)
+	}
+	value.state.append(values...)
+	return nil
+}
+
 type listFileValue struct {
-	values     *[]string
+	state      *listFlagState
 	optionName string
 }
 
@@ -218,12 +247,14 @@ func (value *listFileValue) Set(filePath string) error {
 	if err != nil {
 		return err
 	}
-	*value.values = append(*value.values, valuesFile...)
+	value.state.append(valuesFile...)
 	return nil
 }
 
-func BindListFileFlag(flags *pflag.FlagSet, values *[]string, optionName string) {
-	flags.Var(&listFileValue{values: values, optionName: optionName}, optionName+"-file", "Read "+optionName+" from a file")
+func BindStringListFlags(flags *pflag.FlagSet, values *[]string, optionName string, usage string) {
+	state := &listFlagState{values: values}
+	flags.Var(&stringListValue{state: state}, optionName, usage)
+	flags.Var(&listFileValue{state: state, optionName: optionName}, optionName+"-file", "Read "+optionName+" from a file")
 }
 
 func ApplyFlatSnapshot(dirOut *DirOutConfig, version *VersionConfig, snapshot string, expectedAsset string) error {

@@ -58,8 +58,7 @@ func createCOGFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "NCBI COG release token; default COG2024")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "COG assets: all|category_definition|definition|readme; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "COG assets: all|category_definition|definition|readme; omit or pass all to fetch all supported assets")
 	flags.StringVar(&cfg.baseURL, "base-url", cfg.baseURL, "NCBI COG base URL")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
@@ -177,8 +176,7 @@ func createMapperFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "eggNOG asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "eggNOG-mapper database version; default 5.0.2")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "eggNOG-mapper assets: all|db|taxa|diamond; omit or pass all to fetch all supported assets")
-	cliopt.BindListFileFlag(flags, &cfg.assetNames, "assets")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "eggNOG-mapper assets: all|db|taxa|diamond; omit or pass all to fetch all supported assets")
 	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow large eggNOG-mapper assets")
 	flags.StringVar(&cfg.baseURL, "base-url", cfg.baseURL, "eggNOG-mapper download base URL")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")

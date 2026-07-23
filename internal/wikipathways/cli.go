@@ -58,8 +58,7 @@ func createGMTFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "WikiPathways asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "WikiPathways release token; only current/empty is supported in this implementation")
-	flags.StringSliceVar(&cfg.speciesNames, "species", nil, "WikiPathways species labels; repeat the flag,")
-	cliopt.BindListFileFlag(flags, &cfg.speciesNames, "species")
+	cliopt.BindStringListFlags(flags, &cfg.speciesNames, "species", "WikiPathways species labels; repeat the flag,")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch GMT files for all species in the current release")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
 	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)

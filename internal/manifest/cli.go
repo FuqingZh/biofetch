@@ -21,8 +21,7 @@ func NewCommand() *cobra.Command {
 func newBuildCommand() *cobra.Command {
 	var resourceRoot string
 	var dirOut string
-	formatsInput := []string{"toml"}
-	var formatsFile string
+	var formatsInput []string
 	command := &cobra.Command{
 		Use:           "build RESOURCE-ROOT",
 		Short:         "Build a deterministic aggregate manifest from manifest.lock files",
@@ -31,7 +30,10 @@ func newBuildCommand() *cobra.Command {
 		Args:          cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			resourceRoot = args[0]
-			formats, err := cliopt.ExpandListTokens(formatsInput, formatsFile, "formats")
+			if len(formatsInput) == 0 {
+				formatsInput = []string{"toml"}
+			}
+			formats, err := cliopt.ExpandListTokens(formatsInput, "", "formats")
 			if err != nil {
 				return err
 			}
@@ -54,7 +56,6 @@ func newBuildCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVarP(&dirOut, "output", "o", "", "Existing directory for fixed-name manifest output files")
-	flags.StringSliceVar(&formatsInput, "formats", formatsInput, "Output formats: toml|tsv|json; repeat or comma-separate")
-	flags.StringVar(&formatsFile, "formats-file", "", "Read output formats from a file")
+	cliopt.BindStringListFlags(flags, &formatsInput, "formats", "Output formats: toml|tsv|json; repeat or comma-separate")
 	return command
 }
