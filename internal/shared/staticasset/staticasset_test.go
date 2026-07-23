@@ -2,6 +2,7 @@ package staticasset
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 type traceBuffer struct {
@@ -80,6 +83,132 @@ func TestFetchDownloadsAndReusesBySHA256(t *testing.T) {
 	}
 	if !hasEvent(trace.events, "reuse_file") {
 		t.Fatalf("trace events do not include reuse_file: %#v", trace.events)
+	}
+}
+
+func TestFetchVerifiesCompletedPartBeforeRenameAndManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("verified"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	fileOut := filepath.Join(dirOut, "fixed", "v1", "raw", "archive.tar.gz")
+	called := false
+	source := Source{
+		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(path string) error {
+				called = true
+				if path != fileOut+".part" {
+					t.Fatalf("verifier path = %q, want %q", path, fileOut+".part")
+				}
+				if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+					t.Fatalf("final file existed during verification: %v", err)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				if string(data) != "verified" {
+					t.Fatalf("part content = %q", data)
+				}
+				return nil
+			},
+		}},
+	}
+	if err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("verifier was not called")
+	}
+	manifest, ok, err := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
+	if err != nil || !ok || len(manifest.Files) != 1 {
+		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, err)
+	}
+}
+
+func TestFetchVerifierFailureRetainsPartWithoutFinalOrManifestRecord(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("corrupt"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	source := Source{
+		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(string) error { return fmt.Errorf("checksum mismatch") },
+		}},
+	}
+	err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 3, WorkersMax: 1}, nil)
+	if err == nil || !strings.Contains(err.Error(), `asset "archive" failed downloaded-file verification`) {
+		t.Fatalf("Fetch error = %v", err)
+	}
+	fileOut := filepath.Join(dirOut, "fixed", "v1", "raw", "archive.tar.gz")
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("final file exists or stat failed: %v", err)
+	}
+	if data, err := os.ReadFile(fileOut + ".part"); err != nil || string(data) != "corrupt" {
+		t.Fatalf("retained part = %q, err = %v", data, err)
+	}
+	manifest, ok, readErr := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
+	if readErr != nil || (ok && len(manifest.Files) != 0) {
+		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, readErr)
+	}
+}
+
+func TestFetchVerifierChecksResumedPart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Range"); got != "bytes=4-" {
+			t.Fatalf("Range = %q, want bytes=4-", got)
+		}
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write([]byte("ived"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	filePart := filepath.Join(dirOut, "fixed", "v1", "raw", "archive.tar.gz.part")
+	if err := os.MkdirAll(filepath.Dir(filePart), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePart, []byte("arch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	verified := false
+	source := Source{
+		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(path string) error {
+				data, err := os.ReadFile(path)
+				verified = err == nil && string(data) == "archived"
+				return err
+			},
+		}},
+	}
+	if err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	if !verified {
+		t.Fatal("resumed part was not verified")
+	}
+}
+
+func TestAssetVerifierIsNotSerialized(t *testing.T) {
+	data, err := toml.Marshal(Asset{
+		Name: "archive", Path: "raw/archive", URL: "https://example.test/archive",
+		VerifyDownloadedFile: func(string) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if strings.Contains(string(data), "VerifyDownloadedFile") || strings.Contains(string(data), "verify") {
+		t.Fatalf("serialized asset contains verifier: %s", data)
 	}
 }
 

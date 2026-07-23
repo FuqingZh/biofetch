@@ -2,6 +2,7 @@ package interpro
 
 import (
 	"biofetch/internal/shared/cliopt"
+	"fmt"
 	"strings"
 	"time"
 
@@ -16,7 +17,90 @@ func NewCommand() *cobra.Command {
 		SilenceErrors: true,
 	}
 	commandRoot.AddCommand(createMappingCommand())
+	commandRoot.AddCommand(createScanCommand())
 	return commandRoot
+}
+
+func createScanCommand() *cobra.Command {
+	commandScan := &cobra.Command{
+		Use: "scan", Short: "Manage InterProScan distribution archives",
+		SilenceUsage: true, SilenceErrors: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown interpro scan action %q", args[0])
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	commandScan.AddCommand(createScanFetchCommand(), createScanLockCommand(), createScanRestoreCommand())
+	return commandScan
+}
+
+func createScanFetchCommand() *cobra.Command {
+	cfg := createDefaultScanConfig()
+	command := &cobra.Command{
+		Use: "fetch", Short: "Fetch a fixed InterProScan distribution and update manifest.lock",
+		SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error { return runFetchScan(&cfg) },
+	}
+	command.Example = "biofetch interpro scan fetch --output /data/interpro --version 5.77-108.0 --allow-large-downloads"
+	flags := command.Flags()
+	flags.SortFlags = false
+	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "InterPro asset root directory")
+	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "Fixed InterProScan version, for example 5.77-108.0")
+	flags.BoolVar(&cfg.shouldAllowLargeDownloads, "allow-large-downloads", false, "Allow the multi-gigabyte InterProScan archive download")
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
+	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
+	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
+	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
+	return command
+}
+
+func createScanLockCommand() *cobra.Command {
+	cfg := scanLockConfig{}
+	command := &cobra.Command{
+		Use: "lock SNAPSHOT", Short: "Verify MD5 and rebuild an InterProScan manifest.lock",
+		SilenceUsage: true, SilenceErrors: true, Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
+			return runLockScan(&cfg)
+		},
+	}
+	flags := command.Flags()
+	flags.SortFlags = false
+	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
+	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
+	return command
+}
+
+func createScanRestoreCommand() *cobra.Command {
+	cfg := scanRestoreConfig{}
+	cfg.RetryMax = 5
+	cfg.RetryWait = 3 * time.Second
+	cfg.RuleExisting = "skip"
+	cfg.WorkersMax = 1
+	command := &cobra.Command{
+		Use: "restore SNAPSHOT", Short: "Restore InterProScan files from an exact manifest.lock",
+		SilenceUsage: true, SilenceErrors: true, Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error { return runRestoreScan(&cfg, args[0]) },
+	}
+	flags := command.Flags()
+	flags.SortFlags = false
+	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
+	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
+	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
+	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
+	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
+	return command
 }
 
 func createMappingCommand() *cobra.Command {

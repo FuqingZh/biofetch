@@ -22,6 +22,7 @@ type Asset struct {
 	Path                 string
 	URL                  string
 	RecoverDownloadError func(string, error) (bool, error) `toml:"-"`
+	VerifyDownloadedFile func(string) error                `toml:"-"`
 }
 
 type Source struct {
@@ -442,6 +443,7 @@ func planSync(
 	source Source,
 ) ([]FileRecord, []downloadTask, error) {
 	recoverersByPath := buildRecoverersByPath(source.Assets)
+	verifiersByPath := buildVerifiersByPath(source.Assets)
 	recordsReused := make([]FileRecord, 0, len(records))
 	tasksDownload := make([]downloadTask, 0, len(records))
 	for _, record := range records {
@@ -449,6 +451,7 @@ func planSync(
 		if recoverer := recoverersByPath[record.Path]; recoverer != nil {
 			asset.RecoverDownloadError = recoverer
 		}
+		asset.VerifyDownloadedFile = verifiersByPath[record.Path]
 		if err := validateSyncAsset(asset); err != nil {
 			return nil, nil, err
 		}
@@ -461,6 +464,29 @@ func planSync(
 		tasksDownload = append(tasksDownload, downloadTask{asset: asset})
 	}
 	return recordsReused, tasksDownload, nil
+}
+
+func buildVerifiersByPath(assets []Asset) map[string]func(string) error {
+	verifiers := make(map[string]func(string) error, len(assets))
+	for _, asset := range assets {
+		if asset.VerifyDownloadedFile != nil {
+			verifiers[asset.Path] = asset.VerifyDownloadedFile
+		}
+	}
+	return verifiers
+}
+
+func SHA256Verifier(expected string) func(string) error {
+	return func(path string) error {
+		actual, err := calculateSHA256ForFile(path, nil)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return fmt.Errorf("SHA256 mismatch: got %s, want %s", actual, expected)
+		}
+		return nil
+	}
 }
 
 func buildRecoverersByPath(assets []Asset) map[string]func(string, error) (bool, error) {
@@ -553,6 +579,12 @@ func downloadFileWithRetry(
 		limiterRequest.Wait()
 		progress.startFile(asset)
 		if err := httpx.DownloadFileWithResume(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
+			if asset.VerifyDownloadedFile != nil {
+				if err := asset.VerifyDownloadedFile(filePart); err != nil {
+					progress.finishFile(asset, false)
+					return fmt.Errorf("asset %q failed downloaded-file verification: %w", asset.Name, err)
+				}
+			}
 			if err := os.Rename(filePart, fileOut); err != nil {
 				return fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)
 			}

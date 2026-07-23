@@ -12,6 +12,7 @@ var cliAssets = [][]string{
 	{"go", "ontology"},
 	{"go", "slim"},
 	{"interpro", "mapping"},
+	{"interpro", "scan"},
 	{"kegg", "brite"},
 	{"kegg", "catalog"},
 	{"kegg", "mapping"},
@@ -68,6 +69,8 @@ func TestRemovedCommandsAndFlagsAreRejected(t *testing.T) {
 	for _, args := range [][]string{
 		{"string", "sync"},
 		{"string", "network", "sync"},
+		{"interpro", "scan", "sync"},
+		{"interpro", "scan", "fetch", "--should_allow_large_assets"},
 		{"omnipath", "enz_sub"},
 		{"uniprot", "idmapping"},
 		{"manifest", "build", "--dir_in", "/tmp"},

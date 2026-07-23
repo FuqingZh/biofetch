@@ -18,6 +18,10 @@ Read these documents in order:
    for the approved breaking CLI migration, new InterProScan distribution
    asset, delivery slices, verification, and AO completion gates.
 
+The architecture and test contracts above describe the maintained
+InterProScan snapshot, checksum, verifier-failure, and offline-test behavior;
+the implementation plan remains the delivery authority until all slices close.
+
 ## History
 
 Superseded plans, smoke notes, verifications, and closeouts live under

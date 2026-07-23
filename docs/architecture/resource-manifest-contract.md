@@ -37,6 +37,16 @@ STRING uses explicit sibling assets: `string/network/<version_token>` for
 protein network data plus its supporting aliases and protein metadata, and
 `string/catalog/<version_token>` for the upstream species catalog.
 
+InterPro uses explicit sibling assets: `interpro/mapping/<version_token>` for
+release mapping data and `interpro/scan/<version_token>` for the InterProScan
+software distribution. InterProScan accepts only fixed tokens shaped like
+`5.77-108.0`. Its raw snapshot contains the release archive and its upstream
+`.md5`; fetch verifies the completed archive `.part` against that MD5 before
+atomic rename, while the lock continues to record SHA256, bytes, and final
+source URL. A verification failure retains `.part` but publishes neither a
+final archive nor a false archive record. Biofetch does not extract or install
+the distribution.
+
 A published version token is immutable. If upstream content changes, publish a
 new version token, rebuild its lock, and regenerate every aggregate manifest
 that references the resource tree. Do not silently replace files behind a
@@ -58,6 +68,12 @@ same exact snapshot operand as `lock`, reads its identity and source URLs from
 `manifest.lock`, and does not expose output or version selectors. Nested
 snapshots such as OmniPath interactions remain exact rather than being reduced
 to a fixed number of parent directories.
+
+InterProScan lock additionally requires the official archive and `.md5` pair
+and verifies their MD5 relationship before publishing the rebuilt lock.
+InterProScan restore uses only the exact snapshot identity, recorded source
+URLs, and recorded SHA256 values; it performs no mutable latest-release
+lookup.
 
 Locking always computes SHA256 from the current file bytes; size or mtime is
 never accepted as a hash substitute. File hashing uses deterministic ordered
