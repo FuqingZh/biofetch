@@ -108,7 +108,15 @@ func runLockScan(cfg *scanLockConfig) error {
 		return err
 	}
 	archiveName := scanArchiveName(version)
-	expectedMD5, err := readScanMD5(filepath.Join(cfg.DirSnapshot, "raw", archiveName+".md5"), archiveName)
+	archivePath := filepath.Join(cfg.DirSnapshot, "raw", archiveName)
+	archiveInfo, err := os.Stat(archivePath)
+	if err != nil {
+		return fmt.Errorf("InterProScan archive is required at %s: %w", archivePath, err)
+	}
+	if !archiveInfo.Mode().IsRegular() {
+		return fmt.Errorf("InterProScan archive is required to be a regular file: %s", archivePath)
+	}
+	expectedMD5, err := readScanMD5(archivePath+".md5", archiveName)
 	if err != nil {
 		return err
 	}

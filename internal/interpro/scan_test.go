@@ -333,6 +333,38 @@ func TestScanLockVerifiesMD5AndRestoreUsesManifestURLs(t *testing.T) {
 	}
 }
 
+func TestScanLockRequiresArchiveBeforeReplacingManifest(t *testing.T) {
+	archiveName := scanArchiveName(scanTestVersion)
+	snapshot := filepath.Join(t.TempDir(), "scan", scanTestVersion)
+	rawDir := filepath.Join(snapshot, "raw")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rawDir, archiveName+".md5"), []byte(md5Line(nil, archiveName)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(snapshot, "manifest.lock")
+	originalManifest := []byte("existing manifest must remain unchanged\n")
+	if err := os.WriteFile(manifestPath, originalManifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runLockScan(&scanLockConfig{
+		DirSnapshotConfig: cliopt.DirSnapshotConfig{DirSnapshot: snapshot},
+		workersMax:        1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "InterProScan archive is required") {
+		t.Fatalf("runLockScan error = %v", err)
+	}
+	data, readErr := os.ReadFile(manifestPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != string(originalManifest) {
+		t.Fatalf("manifest was replaced: %q", data)
+	}
+}
+
 func TestScanFreshLockPublishesSourceURLsAndRestoresFromManifest(t *testing.T) {
 	archive := []byte("official archive fixture")
 	archiveName := scanArchiveName(scanTestVersion)
