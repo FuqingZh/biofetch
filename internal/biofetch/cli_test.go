@@ -13,13 +13,20 @@ var cliAssets = [][]string{
 	{"go", "slim"},
 	{"interpro", "mapping"},
 	{"interpro", "scan"},
+	{"chebi", "database"},
+	{"chemont", "ontology"},
+	{"hmdb", "database"},
+	{"jaspar", "profiles"},
 	{"kegg", "brite"},
 	{"kegg", "catalog"},
 	{"kegg", "mapping"},
+	{"kegg", "metabolic"},
 	{"kegg", "pathway"},
+	{"lipidmaps", "lmsd"},
 	{"omnipath", "enzyme-substrate"},
 	{"omnipath", "interactions"},
 	{"reactome", "mapping"},
+	{"rhea", "database"},
 	{"string", "network"},
 	{"string", "catalog"},
 	{"uniprot", "id-mapping"},
@@ -135,7 +142,7 @@ func TestNestedOmniPathRestoreRejectsMismatchedAssetAndDataset(t *testing.T) {
 		want     string
 	}{
 		{snapshot: root + "/wrong/kinaseextra/v1", want: "must identify"},
-		{snapshot: root + "/interactions/not-kinaseextra/v1", want: "dataset must be kinaseextra"},
+		{snapshot: root + "/interactions/not-supported/v1", want: "dataset must be one of"},
 	} {
 		err := RunCLI([]string{"omnipath", "interactions", "restore", test.snapshot, "--dry-run"})
 		if err == nil || !strings.Contains(err.Error(), test.want) {

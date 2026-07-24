@@ -99,7 +99,7 @@ func runFetchInteractions(cfg *configInteractions) error {
 	}
 	return runFetchCommon(fetchInput{
 		asset:                   "interactions",
-		dataset:                 "kinaseextra",
+		dataset:                 strings.ToLower(strings.TrimSpace(cfg.dataset)),
 		versionToken:            cfg.versionToken,
 		ruleLicense:             cfg.ruleLicense,
 		taxIDs:                  taxIDs,

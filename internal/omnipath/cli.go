@@ -40,6 +40,12 @@ type configInteractions struct {
 	shouldDryRun            bool
 }
 
+var interactionDatasetsSupported = map[string]struct{}{
+	"collectri":   {},
+	"dorothea":    {},
+	"kinaseextra": {},
+}
+
 func NewCommand() *cobra.Command {
 	commandRoot := &cobra.Command{
 		Use:           "omnipath",
@@ -149,7 +155,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
 	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
-	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
+	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset: collectri|dorothea|kinaseextra")
 	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
@@ -279,8 +285,9 @@ func createInteractionsRestoreCommand() *cobra.Command {
 				return fmt.Errorf("on-existing must be one of: skip, overwrite")
 			}
 			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
-			if strings.TrimSpace(strings.ToLower(cfg.dataset)) != "kinaseextra" {
-				return fmt.Errorf("dataset must be kinaseextra in v1")
+			cfg.dataset = strings.ToLower(strings.TrimSpace(cfg.dataset))
+			if _, ok := interactionDatasetsSupported[cfg.dataset]; !ok {
+				return fmt.Errorf("dataset must be one of: collectri, dorothea, kinaseextra")
 			}
 			return runRestoreInteractions(&cfg)
 		},
@@ -288,7 +295,7 @@ func createInteractionsRestoreCommand() *cobra.Command {
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
+	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset: collectri|dorothea|kinaseextra")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
 	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
@@ -369,8 +376,9 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 	if err := validateRuleLicense(cfg.ruleLicense); err != nil {
 		return err
 	}
-	if strings.TrimSpace(strings.ToLower(cfg.dataset)) != "kinaseextra" {
-		return fmt.Errorf("dataset must be kinaseextra in v1")
+	cfg.dataset = strings.ToLower(strings.TrimSpace(cfg.dataset))
+	if _, ok := interactionDatasetsSupported[cfg.dataset]; !ok {
+		return fmt.Errorf("dataset must be one of: collectri, dorothea, kinaseextra")
 	}
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("max-attempts must be >= 1")

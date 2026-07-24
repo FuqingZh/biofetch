@@ -159,6 +159,40 @@ func TestValidateEnzSubConfigResolvesAtFileOrganisms(t *testing.T) {
 	}
 }
 
+func TestValidateInteractionsConfigSupportsTranscriptionalDatasets(t *testing.T) {
+	for _, dataset := range []string{"collectri", "dorothea", "kinaseextra"} {
+		cfg := configInteractions{
+			dirOut:       "/tmp/omnipath",
+			versionToken: "2025-08-13",
+			organisms:    []string{"9606"},
+			dataset:      dataset,
+			ruleExisting: "skip",
+			retryMax:     1,
+		}
+		if err := validateInteractionsConfig(&cfg); err != nil {
+			t.Fatalf("validateInteractionsConfig(%q) error = %v", dataset, err)
+		}
+		if cfg.dataset != dataset {
+			t.Fatalf("cfg.dataset = %q, want %q", cfg.dataset, dataset)
+		}
+	}
+}
+
+func TestValidateInteractionsConfigRejectsUnknownDataset(t *testing.T) {
+	cfg := configInteractions{
+		dirOut:       "/tmp/omnipath",
+		versionToken: "2025-08-13",
+		organisms:    []string{"9606"},
+		dataset:      "unknown",
+		ruleExisting: "skip",
+		retryMax:     1,
+	}
+	err := validateInteractionsConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "collectri, dorothea, kinaseextra") {
+		t.Fatalf("validateInteractionsConfig error = %v", err)
+	}
+}
+
 func TestParseOrganismsFromQueryMetadata(t *testing.T) {
 	data := []byte("fields datasets interactions organisms 9606;10090;10116 license academic;commercial")
 	values, err := parseOrganismsFromQueryMetadata(data)
