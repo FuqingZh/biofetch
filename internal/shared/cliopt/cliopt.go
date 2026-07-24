@@ -275,7 +275,7 @@ func FlatSnapshotRootVersion(snapshot string, expectedAsset string) (string, str
 	dirSnapshot := filepath.Clean(snapshot)
 	dirAsset := filepath.Dir(dirSnapshot)
 	dirRoot := filepath.Dir(dirAsset)
-	if dirAsset == "." || dirRoot == "." || filepath.Base(dirAsset) == "." {
+	if dirAsset == "." || filepath.Base(dirAsset) == "." {
 		return "", "", fmt.Errorf("snapshot must identify <resource-root>/<asset>/<version>: %s", snapshot)
 	}
 	if filepath.Base(dirAsset) != expectedAsset {

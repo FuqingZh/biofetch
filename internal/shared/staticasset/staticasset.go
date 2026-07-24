@@ -261,6 +261,25 @@ func Sync(source Source, options Options, trace TraceSink) error {
 	}
 	dirVersion := buildVersionDir(options.DirOut, source)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	manifest, ok, err := ReadManifest(fileManifest)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
+	}
+	if manifest.Database != source.Database || manifest.Asset != source.Asset ||
+		manifest.VersionToken != source.VersionToken {
+		return fmt.Errorf(
+			"manifest identity mismatch: got database=%q asset=%q version_token=%q, want database=%q asset=%q version_token=%q",
+			manifest.Database,
+			manifest.Asset,
+			manifest.VersionToken,
+			source.Database,
+			source.Asset,
+			source.VersionToken,
+		)
+	}
 	recordsManifest, err := readRecords(fileManifest)
 	if err != nil {
 		return err

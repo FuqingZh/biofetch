@@ -26,6 +26,16 @@ func TestSnapshotVersionTokenRequiresDirectory(t *testing.T) {
 	}
 }
 
+func TestFlatSnapshotRootVersionAllowsRelativeDatabaseRoot(t *testing.T) {
+	root, version, err := FlatSnapshotRootVersion(filepath.Join("catalog", "2026-04"), "catalog")
+	if err != nil {
+		t.Fatalf("FlatSnapshotRootVersion returned error: %v", err)
+	}
+	if root != "." || version != "2026-04" {
+		t.Fatalf("root, version = %q, %q; want %q, %q", root, version, ".", "2026-04")
+	}
+}
+
 func TestNormalizeLockWorkersMaxAppliesDefault(t *testing.T) {
 	workersMax := 0
 	if err := NormalizeLockWorkersMax(&workersMax); err != nil {
