@@ -14,13 +14,10 @@ Read these documents in order:
    concurrency, and real-resource validation requirements.
 4. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
    for the current measured storage baseline.
-5. [CLI v2, InterProScan, and AO adoption implementation plan](implementation-plan/20260723-v1.0-cli-v2-interpro-scan-ao-adoption-implementation-plan.md)
-   for the approved breaking CLI migration, new InterProScan distribution
-   asset, delivery slices, verification, and AO completion gates.
 
 The architecture and test contracts above describe the maintained
 InterProScan snapshot, checksum, verifier-failure, and offline-test behavior;
-the implementation plan remains the delivery authority until all slices close.
+they are the current authority for the delivered behavior.
 
 ## History
 
@@ -28,3 +25,7 @@ Superseded plans, smoke notes, verifications, and closeouts live under
 [archive/](archive/README.md). They retain decision history but may describe
 commands, ownership boundaries, or layouts that no longer exist. Archived
 documents are never an implementation authority.
+
+The completed CLI v2, InterProScan, and AO adoption work is recorded in its
+[archived implementation plan](archive/20260723-v1.0-cli-v2-interpro-scan-ao-adoption-implementation-plan.md)
+and [closeout](archive/20260724-v1.0-cli-v2-interpro-scan-ao-adoption-closeout.md).
