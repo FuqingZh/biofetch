@@ -88,6 +88,37 @@ and records repository-standard SHA256 and byte counts in `manifest.lock`.
 Verifier failures remove the completed `.part` so the next invocation restarts
 cleanly; they do not create the final archive or a manifest record for it.
 
+Fetch the maintained transcriptomics-metabolomics source snapshots:
+
+```bash
+biofetch chebi database fetch --output /database/bioinfo/resources/chebi
+biofetch rhea database fetch --output /database/bioinfo/resources/rhea
+biofetch jaspar profiles fetch --output /database/bioinfo/resources/jaspar
+biofetch kegg metabolic fetch --output /database/bioinfo/resources/kegg
+biofetch omnipath interactions fetch \
+  --output /database/bioinfo/resources/omnipath \
+  --dataset collectri \
+  --organisms 9606
+```
+
+P1 chemical resources use the same `fetch`, `lock`, and `restore` contract:
+
+```bash
+biofetch chemont ontology fetch --output /database/bioinfo/resources/chemont
+biofetch lipidmaps lmsd fetch --output /database/bioinfo/resources/lipidmaps
+biofetch hmdb database fetch --output /database/bioinfo/resources/hmdb
+```
+
+`--assets` selects a maintained subset or `all`. Defaults avoid optional very
+large files such as the HMDB all-spectra bundle; selecting a declared large
+asset also requires `--allow-large-downloads`. KEGG metabolic entry records are
+acquired in REST batches of at most ten IDs and the default request interval is
+350 ms.
+
+These commands preserve raw upstream files only. Compound crosswalks,
+normalized reaction edges, motif tables, and other Parquet outputs remain
+`bioextract` responsibilities.
+
 Long options use lowercase kebab-case. Fetch output uses `-o` / `--output`;
 durations accept native values such as `350ms`, `3s`, and `1m`. Use
 `biofetch --version` for build information and `biofetch completion <shell>`

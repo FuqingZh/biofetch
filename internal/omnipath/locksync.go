@@ -58,7 +58,7 @@ func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
 	}
 	defer closeRun()
 	manifestExisting, _ := readExistingManifest(fileManifest)
-	records, err := scanOmniPathRecords(dirVersion, asset, manifestExisting, cfg.workersMax)
+	records, err := scanOmniPathRecords(dirVersion, asset, dataset, manifestExisting, cfg.workersMax)
 	if err != nil {
 		return err
 	}
@@ -263,7 +263,7 @@ func runRestoreArchive(cfg *restoreConfig, dirVersion string, manifestExisting m
 	return nil
 }
 
-func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manifestFile, workersMax int) ([]recordFile, error) {
+func scanOmniPathRecords(dirVersion string, asset string, dataset string, manifestExisting manifestFile, workersMax int) ([]recordFile, error) {
 	type taskRecordFile struct {
 		filePath string
 		pathRel  string
@@ -304,7 +304,7 @@ func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manif
 					if strings.HasPrefix(urlArchive, archiveURL) {
 						urlFile = urlArchive
 					} else {
-						urlFile = deriveOmniPathDataURL(asset, taxID)
+						urlFile = deriveOmniPathDataURL(asset, dataset, taxID)
 					}
 				}
 				tasks = append(tasks, taskRecordFile{
@@ -357,17 +357,17 @@ func scanOmniPathRecords(dirVersion string, asset string, manifestExisting manif
 	return records, nil
 }
 
-func deriveOmniPathDataURL(asset string, taxID string) string {
-	params := urlForTaxID(asset, taxID)
+func deriveOmniPathDataURL(asset string, dataset string, taxID string) string {
+	params := urlForTaxID(asset, dataset, taxID)
 	if asset == "interactions" {
 		return baseURL + "/interactions?" + params
 	}
 	return baseURL + "/enzsub?" + params
 }
 
-func urlForTaxID(asset string, taxID string) string {
+func urlForTaxID(asset string, dataset string, taxID string) string {
 	if asset == "interactions" {
-		return "datasets=kinaseextra&format=tsv&organisms=" + taxID
+		return "datasets=" + dataset + "&format=tsv&organisms=" + taxID
 	}
 	return "format=tsv&organisms=" + taxID
 }

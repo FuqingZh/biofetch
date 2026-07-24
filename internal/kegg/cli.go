@@ -93,6 +93,7 @@ func NewCommand() *cobra.Command {
 
 	commandRoot.AddCommand(createCatalogCommand())
 	commandRoot.AddCommand(createMappingCommand())
+	commandRoot.AddCommand(createMetabolicCommand())
 	commandRoot.AddCommand(createPathwayCommand())
 	commandRoot.AddCommand(createBriteCommand())
 	return commandRoot
