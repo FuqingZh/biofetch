@@ -46,7 +46,7 @@ type cogLockConfig struct {
 	workersMax int
 }
 
-type cogSyncConfig struct {
+type cogRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -108,19 +108,19 @@ func runLockCOG(cfg *cogLockConfig) error {
 	return nil
 }
 
-func runSyncCOG(cfg *cogSyncConfig) error {
+func runRestoreCOG(cfg *cogRestoreConfig) error {
 	versionToken, err := normalizeCOGVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
 	source := buildCOGSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch eggnog", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildMapperOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch eggnog", "sync failed: %v", err)
+		logx.Errorf("biofetch eggnog", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -130,7 +130,7 @@ func resolveCOGAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return sortedCOGAssetNames(), nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}

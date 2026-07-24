@@ -45,7 +45,7 @@ type kbLockConfig struct {
 	workersMax int
 }
 
-type kbSyncConfig struct {
+type kbRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -63,7 +63,7 @@ func runFetchKB(cfg *kbConfig) error {
 		return err
 	}
 	if hasLargeKBAsset(assets) && !cfg.shouldAllowLargeAssets {
-		return fmt.Errorf("selected UniProtKB assets include large files; pass --should_allow_large_assets to fetch")
+		return fmt.Errorf("selected UniProtKB assets include large files; pass --allow-large-downloads to fetch")
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
 	versionToken, err := resolveKBFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
@@ -111,19 +111,19 @@ func runLockKB(cfg *kbLockConfig) error {
 	return nil
 }
 
-func runSyncKB(cfg *kbSyncConfig) error {
+func runRestoreKB(cfg *kbRestoreConfig) error {
 	versionToken, err := normalizeKBFixedVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
 	source := buildKBSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch uniprot", "sync failed: %v", err)
+		logx.Errorf("biofetch uniprot", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -133,7 +133,7 @@ func resolveKBAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return sortedKBAssetNames(), nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}

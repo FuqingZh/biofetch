@@ -333,7 +333,7 @@ func resolveOntologyAssets(
 }
 
 func parseOntologyAssetNames(values []string) ([]string, error) {
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func planSyncOntologyTasks(
 			asset:      ontologyAsset{name: record.Asset, url: record.URL},
 			fileOut:    fileOut,
 			pathRel:    record.PathRel,
-			textAction: fmt.Sprintf("sync downloading %s", filepath.Base(fileOut)),
+			textAction: fmt.Sprintf("restore downloading %s", filepath.Base(fileOut)),
 		})
 	}
 

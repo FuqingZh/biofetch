@@ -108,7 +108,7 @@ func TestRunFetchIDMappingRequiresLargeDownloadFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchIDMapping returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_assets") {
+	if !strings.Contains(err.Error(), "allow-large-downloads") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "idmapping")); !os.IsNotExist(statErr) {
@@ -208,14 +208,14 @@ func TestRunLockIDMappingRejectsCurrentVersion(t *testing.T) {
 }
 
 func TestRunSyncIDMappingRejectsCurrentVersion(t *testing.T) {
-	cfg := idMappingSyncConfig{}
+	cfg := idMappingRestoreConfig{}
 	cfg.DirOut = t.TempDir()
 	cfg.VersionToken = "current"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
-	err := runSyncIDMapping(&cfg)
+	err := runRestoreIDMapping(&cfg)
 	if err == nil {
-		t.Fatal("runSyncIDMapping returned nil error")
+		t.Fatal("runRestoreIDMapping returned nil error")
 	}
 }

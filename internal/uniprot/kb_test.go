@@ -78,7 +78,7 @@ func TestRunFetchKBRequiresLargeDownloadFlagForTrEMBL(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchKB returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_assets") {
+	if !strings.Contains(err.Error(), "allow-large-downloads") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "kb")); !os.IsNotExist(statErr) {
@@ -94,7 +94,7 @@ func TestRunFetchKBRequiresLargeDownloadFlagForTrEMBLDAT(t *testing.T) {
 	if err == nil {
 		t.Fatal("runFetchKB returned nil error")
 	}
-	if !strings.Contains(err.Error(), "should_allow_large_assets") {
+	if !strings.Contains(err.Error(), "allow-large-downloads") {
 		t.Fatalf("error = %q", err.Error())
 	}
 	if _, statErr := os.Stat(filepath.Join(cfg.DirOut, "kb")); !os.IsNotExist(statErr) {
@@ -237,14 +237,14 @@ func TestRunLockKBRejectsCurrentVersion(t *testing.T) {
 }
 
 func TestRunSyncKBRejectsCurrentVersion(t *testing.T) {
-	cfg := kbSyncConfig{}
+	cfg := kbRestoreConfig{}
 	cfg.DirOut = t.TempDir()
 	cfg.VersionToken = "current"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
-	err := runSyncKB(&cfg)
+	err := runRestoreKB(&cfg)
 	if err == nil {
-		t.Fatal("runSyncKB returned nil error")
+		t.Fatal("runRestoreKB returned nil error")
 	}
 }

@@ -41,7 +41,7 @@ type unirefLockConfig struct {
 	workersMax int
 }
 
-type unirefSyncConfig struct {
+type unirefRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -59,7 +59,7 @@ func runFetchUniRef(cfg *unirefConfig) error {
 		return err
 	}
 	if !cfg.shouldAllowLargeAssets {
-		return fmt.Errorf("selected UniRef assets are large files; pass --should_allow_large_assets to fetch")
+		return fmt.Errorf("selected UniRef assets are large files; pass --allow-large-downloads to fetch")
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
 	versionToken, err := resolveUniRefFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.baseURLCurrentRelease)
@@ -107,19 +107,19 @@ func runLockUniRef(cfg *unirefLockConfig) error {
 	return nil
 }
 
-func runSyncUniRef(cfg *unirefSyncConfig) error {
+func runRestoreUniRef(cfg *unirefRestoreConfig) error {
 	versionToken, err := normalizeUniRefFixedVersionToken(cfg.VersionToken)
 	if err != nil {
 		return err
 	}
 	source := buildUniRefSource(versionToken, nil)
-	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch uniprot", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildIDMappingOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch uniprot", "sync failed: %v", err)
+		logx.Errorf("biofetch uniprot", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -129,7 +129,7 @@ func resolveUniRefAssets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return sortedUniRefAssetNames(), nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "assets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "assets")
 	if err != nil {
 		return nil, err
 	}

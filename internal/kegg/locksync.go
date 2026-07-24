@@ -21,7 +21,7 @@ type keggLockConfig struct {
 	shouldDryRun    bool
 }
 
-type keggSyncConfig struct {
+type keggRestoreConfig struct {
 	dirOut                  string
 	dirLogs                 string
 	versionToken            string
@@ -75,10 +75,10 @@ func runLockPathway(cfg *keggLockConfig) error {
 	return writeManifest(fileManifest, &cfgManifest, records, time.Now())
 }
 
-func runSyncPathway(cfg *keggSyncConfig) error {
+func runRestorePathway(cfg *keggRestoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "sync", cfg.dirLogs, dirVersion)
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "restore", cfg.dirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -107,12 +107,12 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 		}
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
 		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
+			return fmt.Errorf("create restore dir: %w", err)
 		}
 
 		shouldDownload := cfg.shouldOverwriteExisting
@@ -129,7 +129,7 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 		}
 
 		if shouldDownload {
-			logf("sync downloading %s", filepath.Base(filePath))
+			logf("restore downloading %s", filepath.Base(filePath))
 			if err := clientKegg.downloadFile(record.URL, filePath); err != nil {
 				return err
 			}
@@ -143,7 +143,7 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] sync done (files=%d)", len(manifestExisting.Files))
+		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil
 	}
 
@@ -166,7 +166,7 @@ func runSyncPathway(cfg *keggSyncConfig) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }
@@ -214,10 +214,10 @@ func runLockBrite(cfg *keggLockConfig) error {
 	return writeBriteManifest(fileManifest, &cfgManifest, records, time.Now())
 }
 
-func runSyncBrite(cfg *keggSyncConfig) error {
+func runRestoreBrite(cfg *keggRestoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "brite", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "sync", cfg.dirLogs, dirVersion)
+	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "restore", cfg.dirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -246,12 +246,12 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 		}
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
 		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
+			return fmt.Errorf("create restore dir: %w", err)
 		}
 
 		shouldDownload := cfg.shouldOverwriteExisting
@@ -268,7 +268,7 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 		}
 
 		if shouldDownload {
-			logf("sync downloading %s", filepath.Base(filePath))
+			logf("restore downloading %s", filepath.Base(filePath))
 			if err := clientKegg.downloadFile(record.URL, filePath); err != nil {
 				return err
 			}
@@ -282,7 +282,7 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] sync done (files=%d)", len(manifestExisting.Files))
+		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil
 	}
 
@@ -305,7 +305,7 @@ func runSyncBrite(cfg *keggSyncConfig) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }

@@ -135,14 +135,14 @@ func TestRunLockCOGRejectsCurrentVersion(t *testing.T) {
 }
 
 func TestRunSyncCOGRejectsCurrentVersion(t *testing.T) {
-	cfg := cogSyncConfig{}
+	cfg := cogRestoreConfig{}
 	cfg.DirOut = t.TempDir()
 	cfg.VersionToken = "current"
 	cfg.RuleExisting = "skip"
 	cfg.RetryMax = 1
 	cfg.WorkersMax = 1
-	err := runSyncCOG(&cfg)
+	err := runRestoreCOG(&cfg)
 	if err == nil {
-		t.Fatal("runSyncCOG returned nil error")
+		t.Fatal("runRestoreCOG returned nil error")
 	}
 }

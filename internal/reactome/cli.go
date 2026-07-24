@@ -28,14 +28,12 @@ func createMappingCommand() *cobra.Command {
 	}
 	commandMapping.AddCommand(createMappingFetchCommand())
 	commandMapping.AddCommand(createMappingLockCommand())
-	commandMapping.AddCommand(createMappingSyncCommand())
+	commandMapping.AddCommand(createMappingRestoreCommand())
 	return commandMapping
 }
 
 func createMappingFetchCommand() *cobra.Command {
 	cfg := createDefaultMappingConfig()
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
 	commandFetch := &cobra.Command{
 		Use:           "fetch",
@@ -44,8 +42,6 @@ func createMappingFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
 			if err := validateMappingConfig(&cfg); err != nil {
 				return err
 			}
@@ -53,20 +49,20 @@ func createMappingFetchCommand() *cobra.Command {
 		},
 	}
 	commandFetch.Example = strings.Join([]string{
-		"biofetch reactome mapping fetch --dir_out /data/reactome --assets UniProt2Reactome_All_Levels.txt --should_dry_run",
-		"biofetch reactome mapping fetch --dir_out /data/reactome --assets ReactomePathways.txt",
-		"biofetch reactome mapping fetch --dir_out /data/reactome --should_allow_large_assets",
+		"biofetch reactome mapping fetch --output /data/reactome --assets UniProt2Reactome_All_Levels.txt --dry-run",
+		"biofetch reactome mapping fetch --output /data/reactome --assets ReactomePathways.txt",
+		"biofetch reactome mapping fetch --output /data/reactome --allow-large-downloads",
 	}, "\n")
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "Reactome asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "Reactome snapshot token; omit for current")
-	flags.StringSliceVar(&cfg.assetNames, "assets", nil, "Reactome mapping assets; omit or pass all to fetch all supported assets; repeat the flag, use commas, or use @file")
-	flags.BoolVar(&cfg.shouldAllowLargeAssets, "should_allow_large_assets", false, "Allow Reactome mapping assets larger than the configured safety threshold")
+	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "Reactome mapping assets; omit or pass all to fetch all supported assets; repeat the flag,")
+	flags.BoolVar(&cfg.shouldAllowLargeAssets, "allow-large-downloads", false, "Allow Reactome mapping assets larger than the configured safety threshold")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
@@ -77,42 +73,41 @@ func createMappingFetchCommand() *cobra.Command {
 func createMappingLockCommand() *cobra.Command {
 	cfg := mappingLockConfig{}
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild Reactome mapping manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.DirSnapshot = args[0]
 			return runLockMapping(&cfg)
 		},
 	}
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirSnapshotFlag(flags, &cfg.DirSnapshotConfig)
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not write manifest")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	return commandLock
 }
 
-func createMappingSyncCommand() *cobra.Command {
-	cfg := mappingSyncConfig{}
+func createMappingRestoreCommand() *cobra.Command {
+	cfg := mappingRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.RuleExisting = "skip"
 	cfg.WorkersMax = 1
-	retryWaitSec := 3
-	requestIntervalMs := 0
 
-	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync Reactome mapping files from manifest.lock and refresh manifest",
+	commandRestore := &cobra.Command{
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore Reactome mapping files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.RetryWait = time.Duration(retryWaitSec) * time.Second
-			cfg.RequestInterval = time.Duration(requestIntervalMs) * time.Millisecond
+			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "mapping"); err != nil {
+				return err
+			}
 			if err := cliopt.ValidateDirOutRequired(cfg.DirOut); err != nil {
 				return err
 			}
@@ -128,19 +123,17 @@ func createMappingSyncCommand() *cobra.Command {
 			if err := cliopt.ValidateRuleExisting(&cfg.ExistingRuleConfig); err != nil {
 				return err
 			}
-			return runSyncMapping(&cfg)
+			return runRestoreMapping(&cfg)
 		},
 	}
-	flags := commandSync.Flags()
+	flags := commandRestore.Flags()
 	flags.SortFlags = false
-	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, "Reactome asset root directory")
-	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, "Reactome mapping version token")
 	cliopt.BindRuleExistingFlag(flags, &cfg.ExistingRuleConfig, "Rule for existing files: skip|overwrite")
-	cliopt.BindRetryFlags(flags, &cfg.RetryConfig, &retryWaitSec)
-	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig, &requestIntervalMs)
+	cliopt.BindRetryFlags(flags, &cfg.RetryConfig)
+	cliopt.BindDownloadControlFlags(flags, &cfg.DownloadControlConfig)
 	cliopt.BindInsecureTLSFlag(flags, &cfg.InsecureTLSConfig, "Disable TLS certificate verification")
 	cliopt.BindDryRunFlag(flags, &cfg.DryRunConfig, "Print actions only; do not download")
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
-	return commandSync
+	return commandRestore
 }

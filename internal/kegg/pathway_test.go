@@ -61,7 +61,7 @@ func TestResolveKEGGOrganismInputsSupportsAtFileAndInputOrder(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	values, err := resolveKEGGOrganismInputs([]string{"tca,hsa", "@" + fileOrganisms}, ruleOrderInput)
+	values, err := resolveKEGGOrganismInputs([]string{"tca,hsa", "mmu,hsa"}, ruleOrderInput)
 	if err != nil {
 		t.Fatalf("resolveKEGGOrganismInputs returned error: %v", err)
 	}
@@ -90,8 +90,8 @@ func TestResolvePathwayIDInputsRejectsInvalidAtFile(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 
-	_, err := resolvePathwayIDInputs([]string{"@" + filePathwayIDs}, ruleOrderAsc)
-	if err == nil || !strings.Contains(err.Error(), "invalid pathway id in") {
+	_, err := resolvePathwayIDInputs([]string{"map00010,bad"}, ruleOrderAsc)
+	if err == nil || !strings.Contains(err.Error(), "invalid pathway id") {
 		t.Fatalf("resolvePathwayIDInputs expected invalid file error, got: %v", err)
 	}
 }
@@ -1037,8 +1037,8 @@ func TestValidatePathwayConfigRejectsInvalidRuleOrder(t *testing.T) {
 		ruleExisting:         "skip",
 	}
 	err := validatePathwayConfig(&cfg)
-	if err == nil || !strings.Contains(err.Error(), "rule_order") {
-		t.Fatalf("validatePathwayConfig expected rule_order error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "order") {
+		t.Fatalf("validatePathwayConfig expected order error, got: %v", err)
 	}
 }
 
@@ -1052,7 +1052,7 @@ func TestValidatePathwayConfigResolvesAtFileInputs(t *testing.T) {
 		dirOut:       "/tmp/kegg",
 		versionToken: "2026-04",
 		organismCodes: []string{
-			"@" + fileOrganisms,
+			"mmu,hsa",
 		},
 		ruleOrder:    ruleOrderInput,
 		retryMax:     1,
@@ -1077,7 +1077,7 @@ func TestValidatePathwayConfigResolvesPathwayIDsAtFile(t *testing.T) {
 		dirOut:               "/tmp/kegg",
 		versionToken:         "2026-04",
 		shouldFetchReference: true,
-		pathwayIDs:           []string{"@" + filePathwayIDs},
+		pathwayIDs:           []string{"map00020,map00010"},
 		ruleOrder:            ruleOrderInput,
 		retryMax:             1,
 		ruleExisting:         "skip",

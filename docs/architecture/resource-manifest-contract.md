@@ -1,7 +1,7 @@
 # Biofetch resource and manifest contract
 
-Version: v1.1
-Date: 2026-07-17
+Version: v1.2
+Date: 2026-07-23
 Status: current
 
 ## Ownership boundary
@@ -44,22 +44,24 @@ published lock.
 
 ### Rebuilding a snapshot lock
 
-Every database-specific `lock` command accepts one required
-`--dir_snapshot`, pointing directly at the existing directory that contains
+Every database-specific `lock` command accepts one required snapshot operand
+pointing directly at the existing directory that contains
 `raw/` and `manifest.lock`. The final directory segment is the authoritative
 `version_token`; database-specific token formats are validated after deriving
-the value from the path. `lock` does not accept `--dir_out` or `--version` and
+the value from the path. `lock` does not accept `--output` or `--version` and
 does not discover a latest snapshot.
 
 Existing source metadata may be preserved while rebuilding, but an existing
 lock must never override the directory-derived `version` or `version_token`.
-Fetch and sync retain their root-directory and version selectors because they
-create or restore a snapshot rather than rebuild one already identified by its
-directory.
+Fetch retains `-o` / `--output` and its version selector. `restore` accepts the
+same exact snapshot operand as `lock`, reads its identity and source URLs from
+`manifest.lock`, and does not expose output or version selectors. Nested
+snapshots such as OmniPath interactions remain exact rather than being reduced
+to a fixed number of parent directories.
 
 Locking always computes SHA256 from the current file bytes; size or mtime is
 never accepted as a hash substitute. File hashing uses deterministic ordered
-parallelism controlled by `--workers_max`, with a conservative default of 4.
+parallelism controlled by `--workers`, with a conservative default of 4.
 The option limits concurrent file readers, not directory discovery. Operators
 must benchmark higher values against the actual storage system because shared
 filesystems can lose throughput under excessive concurrency.
@@ -84,7 +86,7 @@ or BRITE entries, may remain in the snapshot lock.
 
 ### Aggregate manifest
 
-`biofetch manifest build` recursively discovers files named exactly
+`biofetch manifest build RESOURCE-ROOT` recursively discovers files named exactly
 `manifest.lock`. It validates only the common envelope, aggregates snapshot and
 file counts, and hashes the lock files themselves. It does not open, stat, or
 rehash the large files referenced by `[[files]]`; their byte totals come from
@@ -99,7 +101,7 @@ TOML is the canonical default. JSON and the flattened TSV view are rendered
 from the same in-memory model. No generation timestamp is stored, so the same
 resource tree and output location produce byte-identical output.
 
-The caller selects an existing output directory with `--dir_out`; generated
+The caller selects an existing output directory with `--output`; generated
 names are fixed as `manifest.toml`, `manifest.json`, and `manifest.tsv`.
 `manifest.lock` is reserved for authoritative snapshot locks and is never used
 for the derived aggregate manifest.
@@ -117,7 +119,7 @@ content and its SHA256.
 
 ## Build and publication flow
 
-1. Fetch or sync all intended snapshots and finish each `manifest.lock`.
+1. Fetch or restore all intended snapshots and finish each `manifest.lock`.
 2. Confirm every lock has the common envelope, raw-only canonical paths,
    valid SHA256 values, and a final snapshot directory matching
    `version_token`.

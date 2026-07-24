@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"biofetch/internal/shared/staticasset"
+	"github.com/spf13/cobra"
 )
 
 func TestResolveMappingAssetNamesDefaultsToAll(t *testing.T) {
@@ -28,6 +29,59 @@ func TestResolveMappingAssetNamesRejectsUnknown(t *testing.T) {
 	_, err := resolveMappingAssetNames([]string{"pathway_class"})
 	if err == nil {
 		t.Fatal("resolveMappingAssetNames returned nil error")
+	}
+}
+
+func TestRestoreCommandsKeepKEGGRequestIntervalDefault(t *testing.T) {
+	for _, command := range []*cobra.Command{
+		createMappingRestoreCommand(),
+		createPathwayRestoreCommand(),
+		createBriteRestoreCommand(),
+	} {
+		flag := command.Flags().Lookup("request-interval")
+		if flag == nil || flag.DefValue != defaultKEGGRequestInterval.String() {
+			t.Fatalf("%s request-interval default = %v", command.Use, flag)
+		}
+	}
+}
+
+func TestKEGGOrderedListInputsRejectImplicitAtFile(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{
+			name: "organisms",
+			run: func() error {
+				_, err := resolveKEGGOrganismInputs([]string{"@organisms.txt"}, ruleOrderInput)
+				return err
+			},
+			want: "--organisms-file",
+		},
+		{
+			name: "pathway ids",
+			run: func() error {
+				_, err := resolvePathwayIDInputs([]string{"@pathway-ids.txt"}, ruleOrderInput)
+				return err
+			},
+			want: "--pathway-ids-file",
+		},
+		{
+			name: "brite ids",
+			run: func() error {
+				_, err := resolveBriteIDInputs([]string{"@brite-ids.txt"}, ruleOrderInput)
+				return err
+			},
+			want: "--brite-ids-file",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -290,9 +344,9 @@ func TestRunLockMappingRejectsMissingVersion(t *testing.T) {
 }
 
 func TestRunSyncMappingRejectsInvalidVersion(t *testing.T) {
-	cfg := mappingSyncConfig{dirOut: t.TempDir(), versionToken: "current", ruleExisting: "skip", retryMax: 1, workersMax: 1}
-	err := runSyncMapping(&cfg)
+	cfg := mappingRestoreConfig{dirOut: t.TempDir(), versionToken: "current", ruleExisting: "skip", retryMax: 1, workersMax: 1}
+	err := runRestoreMapping(&cfg)
 	if err == nil {
-		t.Fatal("runSyncMapping returned nil error")
+		t.Fatal("runRestoreMapping returned nil error")
 	}
 }

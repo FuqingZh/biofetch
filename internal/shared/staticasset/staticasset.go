@@ -213,7 +213,7 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	if strings.TrimSpace(dirVersion) == "" {
-		return fmt.Errorf("dir_snapshot is required")
+		return fmt.Errorf("snapshot is required")
 	}
 	if err := cliopt.NormalizeLockWorkersMax(&options.WorkersMax); err != nil {
 		return err
@@ -247,7 +247,7 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 
 func validateLockOptions(options Options) error {
 	if options.RetryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	return nil
 }
@@ -261,6 +261,25 @@ func Sync(source Source, options Options, trace TraceSink) error {
 	}
 	dirVersion := buildVersionDir(options.DirOut, source)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	manifest, ok, err := ReadManifest(fileManifest)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
+	}
+	if manifest.Database != source.Database || manifest.Asset != source.Asset ||
+		manifest.VersionToken != source.VersionToken {
+		return fmt.Errorf(
+			"manifest identity mismatch: got database=%q asset=%q version_token=%q, want database=%q asset=%q version_token=%q",
+			manifest.Database,
+			manifest.Asset,
+			manifest.VersionToken,
+			source.Database,
+			source.Asset,
+			source.VersionToken,
+		)
+	}
 	recordsManifest, err := readRecords(fileManifest)
 	if err != nil {
 		return err
@@ -372,22 +391,22 @@ func validateSourceIdentity(source Source) error {
 
 func validateOptions(options Options) error {
 	if strings.TrimSpace(options.DirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if options.RetryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if options.RetryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	if options.WorkersMax < 1 {
-		return fmt.Errorf("workers_max must be >= 1")
+		return fmt.Errorf("workers must be >= 1")
 	}
 	if options.RequestInterval < 0 {
-		return fmt.Errorf("request_interval_ms must be >= 0")
+		return fmt.Errorf("request-interval must be >= 0")
 	}
 	if options.RuleExisting != "skip" && options.RuleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	return nil
 }

@@ -49,7 +49,7 @@ type annotationLockConfig struct {
 	workersMax int
 }
 
-type annotationSyncConfig struct {
+type annotationRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -139,7 +139,7 @@ func runLockAnnotation(cfg *annotationLockConfig) error {
 	return nil
 }
 
-func runSyncAnnotation(cfg *annotationSyncConfig) error {
+func runRestoreAnnotation(cfg *annotationRestoreConfig) error {
 	manifestExisting, ok, err := staticasset.ReadManifest(filepath.Join(cfg.DirOut, "annotation", cfg.VersionToken, "manifest.lock"))
 	if err != nil {
 		return err
@@ -160,13 +160,13 @@ func runSyncAnnotation(cfg *annotationSyncConfig) error {
 			source.Scope = deriveAnnotationScopeFromManifest(manifestExisting)
 		}
 	}
-	trace, closeRun, err := logx.StartSourceRun("biofetch go", "sync", cfg.DirLogs, cfg.DirOut, source)
+	trace, closeRun, err := logx.StartSourceRun("biofetch go", "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
 	}
 	defer closeRun()
 	if err := staticasset.Sync(source, buildAnnotationOptions(cfg.DirOut, cfg.ExistingRuleConfig, cfg.RetryConfig, cfg.DownloadControlConfig, cfg.InsecureTLSConfig, cfg.DryRunConfig, cfg.ProgressConfig), trace); err != nil {
-		logx.Errorf("biofetch go", "sync failed: %v", err)
+		logx.Errorf("biofetch go", "restore failed: %v", err)
 		return err
 	}
 	return nil
@@ -224,7 +224,7 @@ func resolveAnnotationDatasets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "datasets")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "datasets")
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func resolveAnnotationDatasets(values []string) ([]string, error) {
 			continue
 		}
 		if !isValidAnnotationDatasetName(dataset) {
-			return nil, fmt.Errorf("invalid GO annotation dataset %q; use a file stem such as goa_human, not a URL or formatted filename", dataset)
+			return nil, fmt.Errorf("invalid GO annotation dataset %q", dataset)
 		}
 		datasets = append(datasets, dataset)
 	}
@@ -272,7 +272,7 @@ func resolveAnnotationFormats(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return []string{"gaf"}, nil
 	}
-	valuesResolved, err := cliopt.ExpandAtFileTokens(values, "formats")
+	valuesResolved, err := cliopt.ExpandListTokens(values, "", "formats")
 	if err != nil {
 		return nil, err
 	}
@@ -552,8 +552,8 @@ func createDefaultAnnotationConfig() annotationConfig {
 	return cfg
 }
 
-func createDefaultAnnotationSyncConfig() annotationSyncConfig {
-	cfg := annotationSyncConfig{}
+func createDefaultAnnotationRestoreConfig() annotationRestoreConfig {
+	cfg := annotationRestoreConfig{}
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.WorkersMax = 1

@@ -46,6 +46,13 @@ func NewCommand() *cobra.Command {
 		Short:         "Manage OmniPath raw assets and manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(command *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("unknown command %q for %q", args[0], command.CommandPath())
+			}
+			return command.Help()
+		},
 	}
 	commandRoot.AddCommand(createEnzSubCommand())
 	commandRoot.AddCommand(createInteractionsCommand())
@@ -54,14 +61,14 @@ func NewCommand() *cobra.Command {
 
 func createEnzSubCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:           "enz_sub",
+		Use:           "enzyme-substrate",
 		Short:         "Manage OmniPath enzyme-PTM relationships",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	command.AddCommand(createEnzSubFetchCommand())
 	command.AddCommand(createEnzSubLockCommand())
-	command.AddCommand(createEnzSubSyncCommand())
+	command.AddCommand(createEnzSubRestoreCommand())
 	return command
 }
 
@@ -70,7 +77,6 @@ func createEnzSubFetchCommand() *cobra.Command {
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
-	retryWaitSec := 3
 
 	command := &cobra.Command{
 		Use:           "fetch",
@@ -79,7 +85,6 @@ func createEnzSubFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
 			if err := validateEnzSubConfig(&cfg); err != nil {
 				return err
 			}
@@ -89,17 +94,17 @@ func createEnzSubFetchCommand() *cobra.Command {
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "OmniPath asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
-	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag, or use @file with one organism per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch all supported organisms")
-	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
+	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
+	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return command
 }
@@ -113,7 +118,7 @@ func createInteractionsCommand() *cobra.Command {
 	}
 	command.AddCommand(createInteractionsFetchCommand())
 	command.AddCommand(createInteractionsLockCommand())
-	command.AddCommand(createInteractionsSyncCommand())
+	command.AddCommand(createInteractionsRestoreCommand())
 	return command
 }
 
@@ -123,7 +128,6 @@ func createInteractionsFetchCommand() *cobra.Command {
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
-	retryWaitSec := 3
 
 	command := &cobra.Command{
 		Use:           "fetch",
@@ -132,7 +136,6 @@ func createInteractionsFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
 			if err := validateInteractionsConfig(&cfg); err != nil {
 				return err
 			}
@@ -142,18 +145,18 @@ func createInteractionsFetchCommand() *cobra.Command {
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "OmniPath asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
-	flags.StringSliceVar(&cfg.organisms, "organisms", nil, "Organism taxids; pass inline values, repeat the flag, or use @file with one organism per line (# comments and blank lines ignored)")
-	flags.BoolVar(&cfg.shouldDownloadAll, "should_download_all_organisms", false, "Fetch all supported organisms")
+	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
+	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
-	flags.StringVar(&cfg.ruleLicense, "rule_license", "", "License mode: academic|commercial")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 
 	return command
 }
@@ -162,64 +165,65 @@ func createEnzSubLockCommand() *cobra.Command {
 	cfg := lockConfig{}
 
 	command := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild OmniPath enz_sub manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			return runLockEnzSub(&cfg)
 		},
 	}
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
-func createEnzSubSyncCommand() *cobra.Command {
-	cfg := syncConfig{}
+func createEnzSubRestoreCommand() *cobra.Command {
+	cfg := restoreConfig{}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
-	retryWaitSec := 3
 
 	command := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync OmniPath enz_sub files from manifest.lock and refresh manifest",
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore OmniPath enz_sub files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			var err error
+			cfg.dirOut, cfg.versionToken, err = cliopt.FlatSnapshotRootVersion(args[0], "enz_sub")
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+				return fmt.Errorf("output is required")
 			}
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+				return fmt.Errorf("on-existing must be one of: skip, overwrite")
 			}
 			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
-			return runSyncEnzSub(&cfg)
+			return runRestoreEnzSub(&cfg)
 		},
 	}
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
@@ -227,78 +231,79 @@ func createInteractionsLockCommand() *cobra.Command {
 	cfg := lockConfig{}
 
 	command := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild OmniPath interactions manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			return runLockInteractions(&cfg)
 		},
 	}
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
-func createInteractionsSyncCommand() *cobra.Command {
-	cfg := syncConfig{}
+func createInteractionsRestoreCommand() *cobra.Command {
+	cfg := restoreConfig{}
 	cfg.dataset = "kinaseextra"
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
-	retryWaitSec := 3
 
 	command := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync OmniPath interactions files from manifest.lock and refresh manifest",
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore OmniPath interactions files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.retryWait = time.Duration(retryWaitSec) * time.Second
+			var err error
+			cfg.dirOut, cfg.dataset, cfg.versionToken, err = cliopt.NestedSnapshotRootDatasetVersion(args[0], "interactions")
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(cfg.dirOut) == "" {
-				return fmt.Errorf("dir_out is required")
+				return fmt.Errorf("output is required")
 			}
 			if strings.TrimSpace(cfg.versionToken) == "" {
 				return fmt.Errorf("version is required")
 			}
 			if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-				return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+				return fmt.Errorf("on-existing must be one of: skip, overwrite")
 			}
 			cfg.shouldOverwriteExisting = cfg.ruleExisting == "overwrite"
 			if strings.TrimSpace(strings.ToLower(cfg.dataset)) != "kinaseextra" {
 				return fmt.Errorf("dataset must be kinaseextra in v1")
 			}
-			return runSyncInteractions(&cfg)
+			return runRestoreInteractions(&cfg)
 		},
 	}
 
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "OmniPath asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "OmniPath version token")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset (v1 supports only kinaseextra)")
-	flags.StringVar(&cfg.ruleExisting, "rule_existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
-	flags.IntVar(&cfg.retryMax, "retry_max", cfg.retryMax, "Max retry attempts on download failures")
-	flags.IntVar(&retryWaitSec, "retry_wait_sec", retryWaitSec, "Wait seconds between retries")
-	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "should_allow_insecure_tls", false, "Disable TLS certificate verification")
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "dir_logs", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
+	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
+	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
+	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
 	return command
 }
 
 func validateEnzSubConfig(cfg *configEnzSub) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	if err := validateOptionalVersionToken(cfg.versionToken); err != nil {
 		return err
@@ -312,7 +317,7 @@ func validateEnzSubConfig(cfg *configEnzSub) error {
 		countSources++
 	}
 	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all_organisms")
+		return fmt.Errorf("choose exactly one source: --organisms | --all-organisms")
 	}
 	if len(cfg.organisms) > 0 {
 		organisms, err := parseOrganisms(cfg.organisms)
@@ -325,20 +330,20 @@ func validateEnzSubConfig(cfg *configEnzSub) error {
 		return err
 	}
 	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	return nil
 }
 
 func validateInteractionsConfig(cfg *configInteractions) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if cfg.ruleExisting != "skip" && cfg.ruleExisting != "overwrite" {
-		return fmt.Errorf("rule_existing must be one of: skip, overwrite")
+		return fmt.Errorf("on-existing must be one of: skip, overwrite")
 	}
 	if err := validateOptionalVersionToken(cfg.versionToken); err != nil {
 		return err
@@ -352,7 +357,7 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 		countSources++
 	}
 	if countSources != 1 {
-		return fmt.Errorf("choose exactly one source: --organisms | --should_download_all_organisms")
+		return fmt.Errorf("choose exactly one source: --organisms | --all-organisms")
 	}
 	if len(cfg.organisms) > 0 {
 		organisms, err := parseOrganisms(cfg.organisms)
@@ -368,16 +373,16 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 		return fmt.Errorf("dataset must be kinaseextra in v1")
 	}
 	if cfg.retryMax < 1 {
-		return fmt.Errorf("retry_max must be >= 1")
+		return fmt.Errorf("max-attempts must be >= 1")
 	}
 	if cfg.retryWait < 0 {
-		return fmt.Errorf("retry_wait_sec must be >= 0")
+		return fmt.Errorf("retry-wait must be >= 0")
 	}
 	return nil
 }
 
 func parseOrganisms(valuesInput []string) ([]string, error) {
-	valuesResolved, err := cliopt.ExpandAtFileTokens(valuesInput, "organisms")
+	valuesResolved, err := cliopt.ExpandListTokens(valuesInput, "", "organisms")
 	if err != nil {
 		return nil, err
 	}

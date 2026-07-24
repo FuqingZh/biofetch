@@ -30,7 +30,7 @@ type catalogLockConfig struct {
 	shouldDryRun bool
 }
 
-type catalogSyncConfig struct {
+type catalogRestoreConfig struct {
 	dirOut                 string
 	versionToken           string
 	shouldAllowInsecureTLS bool
@@ -82,15 +82,15 @@ func createCatalogFetchCommand() *cobra.Command {
 
 	flags := commandFetch.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", cfg.dirOut, "STRING asset root directory")
+	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "STRING asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "STRING release version token")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
+		"insecure",
 		false,
 		"Disable TLS certificate verification",
 	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
 	return commandFetch
 }
 
@@ -98,12 +98,13 @@ func createCatalogLockCommand() *cobra.Command {
 	cfg := catalogLockConfig{}
 
 	commandLock := &cobra.Command{
-		Use:           "lock",
+		Use:           "lock SNAPSHOT",
 		Short:         "Rebuild STRING catalog manifest.lock from the current version directory",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dirSnapshot = args[0]
 			if err := validateCatalogLockConfig(&cfg); err != nil {
 				return err
 			}
@@ -113,40 +114,42 @@ func createCatalogLockCommand() *cobra.Command {
 
 	flags := commandLock.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirSnapshot, "dir_snapshot", "", "Existing snapshot directory containing raw/ and manifest.lock")
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not write manifest")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
 	return commandLock
 }
 
 func createCatalogSyncCommand() *cobra.Command {
-	cfg := catalogSyncConfig{}
+	cfg := catalogRestoreConfig{}
 
 	commandSync := &cobra.Command{
-		Use:           "sync",
-		Short:         "Sync STRING catalog files from manifest.lock and refresh manifest",
+		Use:           "restore SNAPSHOT",
+		Short:         "Restore STRING catalog files from manifest.lock and refresh manifest",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateCatalogSyncConfig(&cfg); err != nil {
+			var err error
+			cfg.dirOut, cfg.versionToken, err = cliopt.FlatSnapshotRootVersion(args[0], "catalog")
+			if err != nil {
 				return err
 			}
-			return runSyncCatalog(&cfg)
+			if err := validateCatalogRestoreConfig(&cfg); err != nil {
+				return err
+			}
+			return runRestoreCatalog(&cfg)
 		},
 	}
 
 	flags := commandSync.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&cfg.dirOut, "dir_out", "", "STRING asset root directory")
-	flags.StringVar(&cfg.versionToken, "version", "", "STRING release version token")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
-		"should_allow_insecure_tls",
+		"insecure",
 		false,
 		"Disable TLS certificate verification",
 	)
-	flags.BoolVar(&cfg.shouldDryRun, "should_dry_run", false, "Print actions only; do not download")
+	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
 	return commandSync
 }
 
@@ -158,7 +161,7 @@ func createDefaultCatalogConfig() catalogConfig {
 
 func validateCatalogFetchConfig(cfg *catalogConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		return fmt.Errorf("version is required")
@@ -171,9 +174,9 @@ func validateCatalogLockConfig(cfg *catalogLockConfig) error {
 	return err
 }
 
-func validateCatalogSyncConfig(cfg *catalogSyncConfig) error {
+func validateCatalogRestoreConfig(cfg *catalogRestoreConfig) error {
 	if strings.TrimSpace(cfg.dirOut) == "" {
-		return fmt.Errorf("dir_out is required")
+		return fmt.Errorf("output is required")
 	}
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		return fmt.Errorf("version is required")
@@ -263,7 +266,7 @@ func runLockCatalog(cfg *catalogLockConfig) error {
 	return nil
 }
 
-func runSyncCatalog(cfg *catalogSyncConfig) error {
+func runRestoreCatalog(cfg *catalogRestoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "catalog", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
@@ -278,9 +281,9 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 	if cfg.shouldDryRun {
 		for _, record := range recordsManifest {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 		}
-		logf("dry-run sync done (files=%d)", len(recordsManifest))
+		logf("dry-run restore done (files=%d)", len(recordsManifest))
 		return nil
 	}
 
@@ -289,7 +292,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 	for _, record := range recordsManifest {
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
+			return fmt.Errorf("create restore dir: %w", err)
 		}
 
 		recordCurrent, ok, err := inspectCatalogFile(filePath, record.PathRel, record.Asset, record.URL)
@@ -297,7 +300,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 			return err
 		}
 		if !ok || recordCurrent.SHA256 != record.SHA256 {
-			logf("sync downloading %s", filepath.Base(filePath))
+			logf("restore downloading %s", filepath.Base(filePath))
 			if err := downloadFile(clientHTTP, record.URL, filePath); err != nil {
 				return err
 			}
@@ -317,7 +320,7 @@ func runSyncCatalog(cfg *catalogSyncConfig) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }

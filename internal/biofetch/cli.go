@@ -15,10 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var Version = "dev"
+
 func RunCLI(args []string) error {
 	commandRoot := &cobra.Command{
 		Use:           "biofetch",
 		Short:         "Fetch bioinformatics raw assets and write manifest.lock",
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

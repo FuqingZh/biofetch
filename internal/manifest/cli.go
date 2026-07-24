@@ -19,21 +19,25 @@ func NewCommand() *cobra.Command {
 }
 
 func newBuildCommand() *cobra.Command {
-	var dirIn string
+	var resourceRoot string
 	var dirOut string
-	formatsInput := []string{"toml"}
+	var formatsInput []string
 	command := &cobra.Command{
-		Use:           "build",
+		Use:           "build RESOURCE-ROOT",
 		Short:         "Build a deterministic aggregate manifest from manifest.lock files",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			formats, err := cliopt.ExpandAtFileTokens(formatsInput, "formats")
+			resourceRoot = args[0]
+			if len(formatsInput) == 0 {
+				formatsInput = []string{"toml"}
+			}
+			formats, err := cliopt.ExpandListTokens(formatsInput, "", "formats")
 			if err != nil {
 				return err
 			}
-			result, err := Build(dirIn, dirOut, formats)
+			result, err := Build(resourceRoot, dirOut, formats)
 			if err != nil {
 				return err
 			}
@@ -51,8 +55,7 @@ func newBuildCommand() *cobra.Command {
 	}
 	flags := command.Flags()
 	flags.SortFlags = false
-	flags.StringVar(&dirIn, "dir_in", "", "Biofetch resource tree containing snapshot manifest.lock files")
-	flags.StringVar(&dirOut, "dir_out", "", "Existing directory for fixed-name manifest output files")
-	flags.StringSliceVar(&formatsInput, "formats", formatsInput, "Output formats: toml|tsv|json; repeat, comma-separate, or use @file")
+	flags.StringVarP(&dirOut, "output", "o", "", "Existing directory for fixed-name manifest output files")
+	cliopt.BindStringListFlags(flags, &formatsInput, "formats", "Output formats: toml|tsv|json; repeat or comma-separate")
 	return command
 }

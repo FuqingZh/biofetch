@@ -20,7 +20,7 @@ type lockConfig struct {
 	shouldDryRun bool
 }
 
-type syncConfig struct {
+type restoreConfig struct {
 	dirOut                  string
 	dirLogs                 string
 	versionToken            string
@@ -88,19 +88,19 @@ func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
 	return writeManifest(fileManifest, manifest)
 }
 
-func runSyncEnzSub(cfg *syncConfig) error {
+func runRestoreEnzSub(cfg *restoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "enz_sub", cfg.versionToken)
-	return runSyncCommon(cfg, dirVersion, "enz_sub")
+	return runRestoreCommon(cfg, dirVersion, "enz_sub")
 }
 
-func runSyncInteractions(cfg *syncConfig) error {
+func runRestoreInteractions(cfg *restoreConfig) error {
 	dirVersion := filepath.Join(cfg.dirOut, "interactions", cfg.dataset, cfg.versionToken)
-	return runSyncCommon(cfg, dirVersion, "interactions")
+	return runRestoreCommon(cfg, dirVersion, "interactions")
 }
 
-func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
+func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "sync", cfg.dirLogs, dirVersion)
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "restore", cfg.dirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
 	}
 	if strings.HasPrefix(strings.TrimSpace(manifestExisting.QueryURL), archiveURL) {
-		return runSyncArchive(cfg, dirVersion, manifestExisting, asset)
+		return runRestoreArchive(cfg, dirVersion, manifestExisting, asset)
 	}
 
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
@@ -121,12 +121,12 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 	for _, record := range manifestExisting.Files {
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(record.Path))
 		if cfg.shouldDryRun {
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return fmt.Errorf("create sync dir: %w", err)
+			return fmt.Errorf("create restore dir: %w", err)
 		}
 
 		shouldDownload := cfg.shouldOverwriteExisting
@@ -143,7 +143,7 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 		}
 
 		if shouldDownload {
-			logf("sync downloading %s", filepath.Base(filePath))
+			logf("restore downloading %s", filepath.Base(filePath))
 			data, err := client.download(record.URL)
 			if err != nil {
 				return err
@@ -161,7 +161,7 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] sync done (files=%d)", len(manifestExisting.Files))
+		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil
 	}
 
@@ -181,12 +181,12 @@ func runSyncCommon(cfg *syncConfig, dirVersion string, asset string) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }
 
-func runSyncArchive(cfg *syncConfig, dirVersion string, manifestExisting manifestFile, asset string) error {
+func runRestoreArchive(cfg *restoreConfig, dirVersion string, manifestExisting manifestFile, asset string) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 	recordsCurrent := make([]recordFile, 0, len(manifestExisting.Files))
 	shouldDownload := cfg.shouldOverwriteExisting
@@ -215,15 +215,15 @@ func runSyncArchive(cfg *syncConfig, dirVersion string, manifestExisting manifes
 			if err := writeManifest(fileManifest, manifestExisting); err != nil {
 				return err
 			}
-			logf("sync done (files=%d)", len(recordsComplete))
+			logf("restore done (files=%d)", len(recordsComplete))
 			logf("manifest written: %s", fileManifest)
 			return nil
 		}
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] sync archive %s -> %s", manifestExisting.QueryURL, dirVersion)
-		logf("[dry-run] sync done (files=%d)", len(manifestExisting.Files))
+		logf("[dry-run] restore archive %s -> %s", manifestExisting.QueryURL, dirVersion)
+		logf("[dry-run] restore done (files=%d)", len(manifestExisting.Files))
 		return nil
 	}
 
@@ -258,7 +258,7 @@ func runSyncArchive(cfg *syncConfig, dirVersion string, manifestExisting manifes
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }

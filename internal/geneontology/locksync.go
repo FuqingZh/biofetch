@@ -20,7 +20,7 @@ type ontologyLockConfig struct {
 	workersMax int
 }
 
-type ontologySyncConfig struct {
+type ontologyRestoreConfig struct {
 	cliopt.DirOutConfig
 	cliopt.VersionConfig
 	cliopt.ExistingRuleConfig
@@ -78,10 +78,10 @@ func runLockOntology(cfg *ontologyLockConfig) error {
 	return nil
 }
 
-func runSyncOntology(cfg *ontologySyncConfig) error {
+func runRestoreOntology(cfg *ontologyRestoreConfig) error {
 	dirVersion := filepath.Join(cfg.DirOut, "ontology", cfg.VersionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch go", "sync", cfg.DirLogs, dirVersion)
+	_, closeRun, err := logx.StartVersionedRun("biofetch go", "restore", cfg.DirLogs, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -107,9 +107,9 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 	if cfg.ShouldDryRun {
 		for _, record := range recordsManifest {
 			filePath := filepath.Join(dirVersion, filepath.FromSlash(record.PathRel))
-			logf("[dry-run] sync %s -> %s", record.URL, filePath)
+			logf("[dry-run] restore %s -> %s", record.URL, filePath)
 		}
-		logf("dry-run sync done (files=%d)", len(recordsManifest))
+		logf("dry-run restore done (files=%d)", len(recordsManifest))
 		return nil
 	}
 
@@ -150,7 +150,7 @@ func runSyncOntology(cfg *ontologySyncConfig) error {
 		return err
 	}
 
-	logf("sync done (files=%d)", len(recordsComplete))
+	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
 }

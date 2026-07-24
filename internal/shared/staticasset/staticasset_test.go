@@ -323,6 +323,26 @@ func TestSyncRehydratesFromManifest(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsManifestIdentityMismatch(t *testing.T) {
+	dirOut := t.TempDir()
+	dirVersion := filepath.Join(dirOut, "fixed", "v1")
+	if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	manifestSource := Source{Database: "otherdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1"}
+	records := []FileRecord{{Asset: "alpha", Path: "raw/alpha.txt", SHA256: "old", Bytes: 5, URL: "https://example.invalid/alpha.txt"}}
+	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), manifestSource, records, time.Now()); err != nil {
+		t.Fatalf("writeManifest returned error: %v", err)
+	}
+
+	source := Source{Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1"}
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	err := Sync(source, options, nil)
+	if err == nil || !strings.Contains(err.Error(), "manifest identity mismatch") {
+		t.Fatalf("Sync error = %v, want manifest identity mismatch", err)
+	}
+}
+
 func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -581,4 +601,14 @@ func eventNames(events []TraceEvent) []string {
 		}
 	}
 	return names
+}
+
+func TestLockRequiresSnapshotWithPublicSpelling(t *testing.T) {
+	err := Lock(Source{Database: "test", Asset: "asset", Version: "v1", VersionToken: "v1"}, "", Options{
+		RetryMax:   1,
+		WorkersMax: 1,
+	}, nil)
+	if err == nil || err.Error() != "snapshot is required" {
+		t.Fatalf("Lock error = %v", err)
+	}
 }
