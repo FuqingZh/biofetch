@@ -700,6 +700,14 @@ func TestLockWritesHashProgress(t *testing.T) {
 	if !strings.Contains(text, "testdb fixed") || !strings.Contains(text, "100%") || !strings.Contains(text, "7 B/7 B") {
 		t.Fatalf("progress = %q", text)
 	}
+	for _, forbidden := range []string{"downloading", "downloaded", "retry"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("lock progress contains download vocabulary %q: %q", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "hashing") || !strings.Contains(text, "hashed") {
+		t.Fatalf("lock progress does not describe hashing: %q", text)
+	}
 }
 
 func TestLockWritesCurrentFileProgressForMultipleFiles(t *testing.T) {
@@ -730,6 +738,40 @@ func TestLockWritesCurrentFileProgressForMultipleFiles(t *testing.T) {
 	text := progress.String()
 	if !strings.Contains(text, "2/2 files") || !strings.Contains(text, "current") || !strings.Contains(text, "5 B/5 B") {
 		t.Fatalf("progress = %q", text)
+	}
+}
+
+func TestProgressFinalRepaintClearsLongerPreviousLine(t *testing.T) {
+	var output bytes.Buffer
+	progress := &progressReporter{
+		writer:      &output,
+		label:       "testdb fixed",
+		timeStarted: time.Now(),
+		totalFiles:  1,
+	}
+	progress.drawLocked("hashing raw/a-very-long-file-name.txt", true)
+	progress.finish(true)
+
+	var visible string
+	for _, character := range output.String() {
+		switch character {
+		case '\r':
+			visible = ""
+		case '\n':
+			goto done
+		default:
+			visible += string(character)
+		}
+	}
+done:
+	if got := strings.TrimRight(visible, " "); !strings.HasSuffix(got, "completed") {
+		t.Fatalf("visible final line = %q", visible)
+	}
+	if strings.Contains(visible, "file-name") {
+		t.Fatalf("visible final line retained repaint residue: %q", visible)
+	}
+	if strings.Contains(output.String(), "\x1b") {
+		t.Fatalf("captured progress contains ANSI escapes: %q", output.String())
 	}
 }
 

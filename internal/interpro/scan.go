@@ -5,6 +5,7 @@ import (
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/staticasset"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ const (
 var patternScanVersion = regexp.MustCompile(`^[0-9]{1,4}\.[0-9]{1,4}-[0-9]{1,4}\.[0-9]{1,4}$`)
 var patternMD5File = regexp.MustCompile(`^([0-9A-Fa-f]{32})[ \t]+\*?([^/\r\n]+)(?:\r?\n)?$`)
 var scanBaseURL = defaultScanBaseURL
+var openScanArchive = os.Open
 
 type scanConfig struct {
 	cliopt.DirOutConfig
@@ -105,10 +107,21 @@ func runLockScan(cfg *scanLockConfig) error {
 	if _, _, err := cliopt.FlatSnapshotRootVersion(cfg.DirSnapshot, "scan"); err != nil {
 		return err
 	}
-	if err := verifyScanSnapshotMD5(cfg.DirSnapshot, version); err != nil {
+	archiveName := scanArchiveName(version)
+	archivePath := filepath.Join(cfg.DirSnapshot, "raw", archiveName)
+	archiveInfo, err := os.Stat(archivePath)
+	if err != nil {
+		return fmt.Errorf("InterProScan archive is required at %s: %w", archivePath, err)
+	}
+	if !archiveInfo.Mode().IsRegular() {
+		return fmt.Errorf("InterProScan archive is required to be a regular file: %s", archivePath)
+	}
+	expectedMD5, err := readScanMD5(archivePath+".md5", archiveName)
+	if err != nil {
 		return err
 	}
 	_, source := buildScanSources(version)
+	source.Assets[0].HashForLock = scanArchiveLockHasher(expectedMD5)
 	if cfg.ShouldDryRun {
 		return staticasset.Lock(source, cfg.DirSnapshot, staticasset.Options{RetryMax: 1, WorkersMax: cfg.workersMax, ShouldDryRun: true}, nil)
 	}
@@ -291,17 +304,49 @@ func md5Verifier(expected string) func(string) error {
 	}
 }
 
-func verifyScanSnapshotMD5(snapshot string, version string) error {
-	archiveName := scanArchiveName(version)
-	rawDir := filepath.Join(snapshot, "raw")
-	expected, err := readScanMD5(filepath.Join(rawDir, archiveName+".md5"), archiveName)
-	if err != nil {
-		return err
+func scanArchiveLockHasher(expectedMD5 string) func(string, staticasset.HashProgressFunc) (string, int64, error) {
+	return func(path string, progress staticasset.HashProgressFunc) (string, int64, error) {
+		file, err := openScanArchive(path)
+		if err != nil {
+			return "", 0, fmt.Errorf("open %s for checksums: %w", path, err)
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return "", 0, fmt.Errorf("stat %s for checksums: %w", path, err)
+		}
+		hashMD5 := md5.New()
+		hashSHA256 := sha256.New()
+		writer := io.MultiWriter(hashMD5, hashSHA256)
+		if progress != nil {
+			progress(0, info.Size())
+			writer = io.MultiWriter(hashMD5, hashSHA256, &scanHashProgressWriter{
+				progress: progress,
+				total:    info.Size(),
+			})
+		}
+		bytesRead, err := io.Copy(writer, file)
+		if err != nil {
+			return "", 0, fmt.Errorf("hash %s: %w", path, err)
+		}
+		actualMD5 := hex.EncodeToString(hashMD5.Sum(nil))
+		if actualMD5 != expectedMD5 {
+			return "", 0, fmt.Errorf("asset %q failed MD5 verification: MD5 mismatch: got %s, want %s", "archive", actualMD5, expectedMD5)
+		}
+		return hex.EncodeToString(hashSHA256.Sum(nil)), bytesRead, nil
 	}
-	if err := md5Verifier(expected)(filepath.Join(rawDir, archiveName)); err != nil {
-		return fmt.Errorf("asset %q failed MD5 verification: %w", "archive", err)
-	}
-	return nil
+}
+
+type scanHashProgressWriter struct {
+	progress staticasset.HashProgressFunc
+	done     int64
+	total    int64
+}
+
+func (writer *scanHashProgressWriter) Write(buffer []byte) (int, error) {
+	writer.done += int64(len(buffer))
+	writer.progress(writer.done, writer.total)
+	return len(buffer), nil
 }
 
 func createDefaultScanConfig() scanConfig {
