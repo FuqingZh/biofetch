@@ -66,7 +66,12 @@ func createScanLockCommand() *cobra.Command {
 	cfg := scanLockConfig{}
 	command := &cobra.Command{
 		Use: "lock SNAPSHOT", Short: "Verify MD5 and rebuild an InterProScan manifest.lock",
+		Long: "Verify the InterProScan archive MD5 and rebuild manifest.lock in SNAPSHOT.\n\n" +
+			"SNAPSHOT is the exact version directory, not the InterPro root. It must have the layout " +
+			"<root>/scan/<version>/raw/ with both the InterProScan archive and its .md5 sidecar.",
+		Example:      "biofetch interpro scan lock /data/interpro/scan/5.77-108.0",
 		SilenceUsage: true, SilenceErrors: true, Args: cobra.ExactArgs(1),
+		ValidArgsFunction: completeSnapshotDirectory,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.DirSnapshot = args[0]
 			return runLockScan(&cfg)
@@ -88,8 +93,13 @@ func createScanRestoreCommand() *cobra.Command {
 	cfg.WorkersMax = 1
 	command := &cobra.Command{
 		Use: "restore SNAPSHOT", Short: "Restore InterProScan files from an exact manifest.lock",
+		Long: "Restore InterProScan files using the manifest in SNAPSHOT.\n\n" +
+			"SNAPSHOT is the exact version directory, not the InterPro root. It must have the layout " +
+			"<root>/scan/<version>/manifest.lock.",
+		Example:      "biofetch interpro scan restore /data/interpro/scan/5.77-108.0",
 		SilenceUsage: true, SilenceErrors: true, Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runRestoreScan(&cfg, args[0]) },
+		ValidArgsFunction: completeSnapshotDirectory,
+		RunE:              func(cmd *cobra.Command, args []string) error { return runRestoreScan(&cfg, args[0]) },
 	}
 	flags := command.Flags()
 	flags.SortFlags = false
@@ -158,11 +168,14 @@ func createMappingFetchCommand() *cobra.Command {
 func createMappingLockCommand() *cobra.Command {
 	cfg := mappingLockConfig{}
 	commandLock := &cobra.Command{
-		Use:           "lock SNAPSHOT",
-		Short:         "Rebuild InterPro mapping manifest.lock from the current version directory",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Args:          cobra.ExactArgs(1),
+		Use:               "lock SNAPSHOT",
+		Short:             "Rebuild InterPro mapping manifest.lock from the current version directory",
+		Long:              "Rebuild manifest.lock in SNAPSHOT. SNAPSHOT is the exact mapping version directory: <root>/mapping/<version>.",
+		Example:           "biofetch interpro mapping lock /data/interpro/mapping/108.0",
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSnapshotDirectory,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.DirSnapshot = args[0]
 			return runLockMapping(&cfg)
@@ -184,11 +197,14 @@ func createMappingRestoreCommand() *cobra.Command {
 	cfg.WorkersMax = 1
 
 	commandRestore := &cobra.Command{
-		Use:           "restore SNAPSHOT",
-		Short:         "Restore InterPro mapping files from manifest.lock and refresh manifest",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Args:          cobra.ExactArgs(1),
+		Use:               "restore SNAPSHOT",
+		Short:             "Restore InterPro mapping files from manifest.lock and refresh manifest",
+		Long:              "Restore files using SNAPSHOT. SNAPSHOT is the exact mapping version directory: <root>/mapping/<version>.",
+		Example:           "biofetch interpro mapping restore /data/interpro/mapping/108.0",
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSnapshotDirectory,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], "mapping"); err != nil {
 				return err
@@ -221,4 +237,8 @@ func createMappingRestoreCommand() *cobra.Command {
 	cliopt.BindLogDirFlag(flags, &cfg.LogConfig, "Directory for run log files; default is <version>/logs/")
 	cliopt.BindProgressFlag(flags, &cfg.ProgressConfig, "Disable download progress display")
 	return commandRestore
+}
+
+func completeSnapshotDirectory(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveFilterDirs
 }
