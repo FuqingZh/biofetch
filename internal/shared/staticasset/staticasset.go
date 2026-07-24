@@ -18,21 +18,24 @@ import (
 )
 
 type Asset struct {
-	Name                 string
-	Path                 string
-	URL                  string
-	RecoverDownloadError func(string, error) (bool, error) `toml:"-"`
+	Name                  string
+	Path                  string
+	URL                   string
+	RecoverDownloadError  func(string, error) (bool, error) `toml:"-"`
+	VerifyDownloadedFile  func(string) error                `toml:"-"`
+	ReuseVerifiedExisting bool                              `toml:"-"`
 }
 
 type Source struct {
-	Database     string
-	Asset        string
-	Source       string
-	DirName      string
-	Version      string
-	VersionToken string
-	Scope        Scope
-	Assets       []Asset
+	Database               string
+	Asset                  string
+	Source                 string
+	DirName                string
+	Version                string
+	VersionToken           string
+	Scope                  Scope
+	Assets                 []Asset
+	LockOnlyDeclaredAssets bool
 }
 
 type Scope struct {
@@ -103,6 +106,7 @@ type downloadTask struct {
 type scanTask struct {
 	filePath string
 	pathRel  string
+	asset    string
 	url      string
 	bytes    int64
 }
@@ -222,12 +226,12 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	urlsExisting, err := buildExistingURLMap(fileManifest)
+	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets)
 	if err != nil {
 		return err
 	}
 	progress := newProgressReporter(source, options, 0, 0)
-	records, err := scanRecords(dirVersion, urlsExisting, progress, options.WorkersMax)
+	records, err := scanRecords(dirVersion, assetsByPath, source.LockOnlyDeclaredAssets, progress, options.WorkersMax)
 	if err != nil {
 		progress.finish(false)
 		return err
@@ -424,7 +428,13 @@ func planFetch(
 	for _, asset := range assets {
 		recordExisting, ok := recordsExistingByPath[asset.Path]
 		filePath := filepath.Join(dirVersion, filepath.FromSlash(asset.Path))
-		if !overwrite && ok && shouldReuseRecord(filePath, recordExisting) {
+		reusable := ok && shouldReuseRecord(filePath, recordExisting)
+		if reusable && asset.VerifyDownloadedFile != nil {
+			if err := asset.VerifyDownloadedFile(filePath); err != nil {
+				reusable = false
+			}
+		}
+		if reusable && (!overwrite || asset.ReuseVerifiedExisting) {
 			recordsReused = append(recordsReused, recordExisting)
 			emit(trace, source, TraceEvent{Event: "reuse_file", Asset: recordExisting.Asset, Path: recordExisting.Path, URL: recordExisting.URL, Bytes: recordExisting.Bytes, SHA256: recordExisting.SHA256, Status: "sha256_match"})
 			continue
@@ -442,6 +452,7 @@ func planSync(
 	source Source,
 ) ([]FileRecord, []downloadTask, error) {
 	recoverersByPath := buildRecoverersByPath(source.Assets)
+	verifiersByPath := buildVerifiersByPath(source.Assets)
 	recordsReused := make([]FileRecord, 0, len(records))
 	tasksDownload := make([]downloadTask, 0, len(records))
 	for _, record := range records {
@@ -449,6 +460,7 @@ func planSync(
 		if recoverer := recoverersByPath[record.Path]; recoverer != nil {
 			asset.RecoverDownloadError = recoverer
 		}
+		asset.VerifyDownloadedFile = verifiersByPath[record.Path]
 		if err := validateSyncAsset(asset); err != nil {
 			return nil, nil, err
 		}
@@ -461,6 +473,29 @@ func planSync(
 		tasksDownload = append(tasksDownload, downloadTask{asset: asset})
 	}
 	return recordsReused, tasksDownload, nil
+}
+
+func buildVerifiersByPath(assets []Asset) map[string]func(string) error {
+	verifiers := make(map[string]func(string) error, len(assets))
+	for _, asset := range assets {
+		if asset.VerifyDownloadedFile != nil {
+			verifiers[asset.Path] = asset.VerifyDownloadedFile
+		}
+	}
+	return verifiers
+}
+
+func SHA256Verifier(expected string) func(string) error {
+	return func(path string) error {
+		actual, err := calculateSHA256ForFile(path, nil)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return fmt.Errorf("SHA256 mismatch: got %s, want %s", actual, expected)
+		}
+		return nil
+	}
 }
 
 func buildRecoverersByPath(assets []Asset) map[string]func(string, error) (bool, error) {
@@ -553,6 +588,16 @@ func downloadFileWithRetry(
 		limiterRequest.Wait()
 		progress.startFile(asset)
 		if err := httpx.DownloadFileWithResume(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
+			if asset.VerifyDownloadedFile != nil {
+				if err := asset.VerifyDownloadedFile(filePart); err != nil {
+					if errRemove := os.Remove(filePart); errRemove != nil && !os.IsNotExist(errRemove) {
+						progress.finishFile(asset, false)
+						return fmt.Errorf("asset %q failed downloaded-file verification (%v) and remove failed part: %w", asset.Name, err, errRemove)
+					}
+					progress.finishFile(asset, false)
+					return fmt.Errorf("asset %q failed downloaded-file verification: %w", asset.Name, err)
+				}
+			}
 			if err := os.Rename(filePart, fileOut); err != nil {
 				return fmt.Errorf("rename %s -> %s: %w", filePart, fileOut, err)
 			}
@@ -603,14 +648,18 @@ func buildRecordWithProgress(filePath string, asset Asset, progress *progressRep
 	}, nil
 }
 
-func scanRecords(dirVersion string, urlsExisting map[string]string, progress *progressReporter, workersMax int) ([]FileRecord, error) {
-	tasks, err := planScanRecords(dirVersion, urlsExisting)
+func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool, progress *progressReporter, workersMax int) ([]FileRecord, error) {
+	tasks, err := planScanRecords(dirVersion, assetsByPath, onlyDeclared)
 	if err != nil {
 		return nil, err
 	}
 	progress.planScan(tasks)
 	records, err := parallel.MapOrderedWithWorkers(tasks, workersMax, func(task scanTask) (FileRecord, error) {
-		asset := Asset{Name: filepath.Base(task.filePath), Path: task.pathRel, URL: task.url}
+		assetName := task.asset
+		if assetName == "" {
+			assetName = filepath.Base(task.filePath)
+		}
+		asset := Asset{Name: assetName, Path: task.pathRel, URL: task.url}
 		progress.startScanFile(asset)
 		record, err := buildRecordWithProgress(task.filePath, asset, progress)
 		if err != nil {
@@ -626,7 +675,7 @@ func scanRecords(dirVersion string, urlsExisting map[string]string, progress *pr
 	return records, nil
 }
 
-func planScanRecords(dirVersion string, urlsExisting map[string]string) ([]scanTask, error) {
+func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool) ([]scanTask, error) {
 	tasks := make([]scanTask, 0)
 	dirScan := filepath.Join(dirVersion, "raw")
 	if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
@@ -648,10 +697,15 @@ func planScanRecords(dirVersion string, urlsExisting map[string]string) ([]scanT
 			return err
 		}
 		pathRel = filepath.ToSlash(pathRel)
+		asset, declared := assetsByPath[pathRel]
+		if onlyDeclared && !declared {
+			return nil
+		}
 		tasks = append(tasks, scanTask{
 			filePath: path,
 			pathRel:  pathRel,
-			url:      urlsExisting[pathRel],
+			asset:    asset.Name,
+			url:      asset.URL,
 			bytes:    infoFile.Size(),
 		})
 		return nil
@@ -826,18 +880,23 @@ func readRecords(fileManifest string) ([]FileRecord, error) {
 	return records, nil
 }
 
-func buildExistingURLMap(fileManifest string) (map[string]string, error) {
+func buildLockAssetMap(fileManifest string, sourceAssets []Asset) (map[string]Asset, error) {
 	records, err := readRecords(fileManifest)
 	if err != nil {
 		return nil, err
 	}
-	urls := make(map[string]string, len(records))
+	assets := make(map[string]Asset, len(records)+len(sourceAssets))
 	for _, record := range records {
-		if record.Path != "" && record.URL != "" {
-			urls[record.Path] = record.URL
+		if record.Path != "" {
+			assets[record.Path] = Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
 		}
 	}
-	return urls, nil
+	for _, asset := range sourceAssets {
+		if asset.Path != "" {
+			assets[asset.Path] = asset
+		}
+	}
+	return assets, nil
 }
 
 func writeManifest(fileManifest string, source Source, records []FileRecord, timeDownloaded time.Time) error {

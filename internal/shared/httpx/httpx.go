@@ -318,7 +318,14 @@ func downloadFileChunked(clientHTTP *http.Client, urlFile string, fileOut string
 	if err := writeChunkState(filepath.Join(dirParts, "state.json"), state); err != nil {
 		return err
 	}
-	return mergeChunks(dirParts, fileOut, state.Chunks)
+	if err := mergeChunks(dirParts, fileOut, state.Chunks); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dirParts); err != nil {
+		_ = os.Remove(fileOut)
+		return fmt.Errorf("remove completed chunk workspace %s: %w", dirParts, err)
+	}
+	return nil
 }
 
 func loadOrCreateChunkState(fileState string, urlFile string, contentLength int64, chunkSize int64) (chunkState, error) {

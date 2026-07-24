@@ -1,7 +1,9 @@
 package staticasset
 
 import (
+	"biofetch/internal/shared/filehash"
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 type traceBuffer struct {
@@ -80,6 +84,155 @@ func TestFetchDownloadsAndReusesBySHA256(t *testing.T) {
 	}
 	if !hasEvent(trace.events, "reuse_file") {
 		t.Fatalf("trace events do not include reuse_file: %#v", trace.events)
+	}
+}
+
+func TestFetchVerifiesCompletedPartBeforeRenameAndManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("verified"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	fileOut := filepath.Join(dirOut, "fixed", "v1", "raw", "archive.tar.gz")
+	called := false
+	source := Source{
+		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(path string) error {
+				called = true
+				if path != fileOut+".part" {
+					t.Fatalf("verifier path = %q, want %q", path, fileOut+".part")
+				}
+				if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+					t.Fatalf("final file existed during verification: %v", err)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				if string(data) != "verified" {
+					t.Fatalf("part content = %q", data)
+				}
+				return nil
+			},
+		}},
+	}
+	if err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("verifier was not called")
+	}
+	manifest, ok, err := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
+	if err != nil || !ok || len(manifest.Files) != 1 {
+		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, err)
+	}
+}
+
+func TestFetchVerifierFailureRemovesPartAndNextInvocationRedownloads(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet {
+			requests++
+			if got := request.Header.Get("Range"); got != "" {
+				t.Fatalf("Range = %q, want clean download", got)
+			}
+		}
+		_, _ = writer.Write([]byte("corrupt"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	verifications := 0
+	source := Source{
+		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(string) error {
+				verifications++
+				if verifications == 1 {
+					return fmt.Errorf("checksum mismatch")
+				}
+				return nil
+			},
+		}},
+	}
+	err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 3, WorkersMax: 1}, nil)
+	if err == nil || !strings.Contains(err.Error(), `asset "archive" failed downloaded-file verification`) {
+		t.Fatalf("Fetch error = %v", err)
+	}
+	fileOut := filepath.Join(dirOut, "fixed", "v1", "raw", "archive.tar.gz")
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("final file exists or stat failed: %v", err)
+	}
+	if _, err := os.Stat(fileOut + ".part"); !os.IsNotExist(err) {
+		t.Fatalf("failed part exists or stat failed: %v", err)
+	}
+	manifest, ok, readErr := ReadManifest(filepath.Join(dirOut, "fixed", "v1", "manifest.lock"))
+	if readErr != nil || (ok && len(manifest.Files) != 0) {
+		t.Fatalf("manifest = %#v, ok = %v, err = %v", manifest, ok, readErr)
+	}
+	if err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil); err != nil {
+		t.Fatalf("second Fetch returned error: %v", err)
+	}
+	if requests != 2 || verifications != 2 {
+		t.Fatalf("requests = %d, verifications = %d, want 2 each", requests, verifications)
+	}
+	if data, err := os.ReadFile(fileOut); err != nil || string(data) != "corrupt" {
+		t.Fatalf("final file = %q, err = %v", data, err)
+	}
+}
+
+func TestFetchVerifierChecksResumedPart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Range"); got != "bytes=4-" {
+			t.Fatalf("Range = %q, want bytes=4-", got)
+		}
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write([]byte("ived"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	filePart := filepath.Join(dirOut, "fixed", "v1", "raw", "archive.tar.gz.part")
+	if err := os.MkdirAll(filepath.Dir(filePart), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePart, []byte("arch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	verified := false
+	source := Source{
+		Database: "testdb", Asset: "fixed", Version: "v1", VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive", Path: "raw/archive.tar.gz", URL: server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(path string) error {
+				data, err := os.ReadFile(path)
+				verified = err == nil && string(data) == "archived"
+				return err
+			},
+		}},
+	}
+	if err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	if !verified {
+		t.Fatal("resumed part was not verified")
+	}
+}
+
+func TestAssetVerifierIsNotSerialized(t *testing.T) {
+	data, err := toml.Marshal(Asset{
+		Name: "archive", Path: "raw/archive", URL: "https://example.test/archive",
+		VerifyDownloadedFile: func(string) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if strings.Contains(string(data), "VerifyDownloadedFile") || strings.Contains(string(data), "verify") {
+		t.Fatalf("serialized asset contains verifier: %s", data)
 	}
 }
 
@@ -340,6 +493,74 @@ func TestSyncRejectsManifestIdentityMismatch(t *testing.T) {
 	err := Sync(source, options, nil)
 	if err == nil || !strings.Contains(err.Error(), "manifest identity mismatch") {
 		t.Fatalf("Sync error = %v, want manifest identity mismatch", err)
+	}
+}
+
+func TestFetchKeepsVerifierRejectedFileWhenReplacementFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Source:       "fixture",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive",
+			Path: "raw/archive.tar.gz",
+			URL:  server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(string) error {
+				return fmt.Errorf("sidecar checksum mismatch")
+			},
+		}},
+	}
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	dirVersion := DeriveVersionDir(dirOut, source)
+	filePath := filepath.Join(dirVersion, "raw", "archive.tar.gz")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	content := []byte("old archive")
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("os.Open returned error: %v", err)
+	}
+	hash, err := filehash.SHA256(file)
+	if closeErr := file.Close(); closeErr != nil {
+		t.Fatalf("file.Close returned error: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("filehash.SHA256 returned error: %v", err)
+	}
+	records := []FileRecord{{Asset: "archive", Path: "raw/archive.tar.gz", SHA256: hash, Bytes: int64(len(content)), URL: source.Assets[0].URL}}
+	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, records, time.Now()); err != nil {
+		t.Fatalf("writeManifest returned error: %v", err)
+	}
+
+	err = Fetch(source, options, nil)
+	if err == nil {
+		t.Fatal("Fetch returned nil error")
+	}
+	got, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile returned error: %v", readErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("file content = %q, want %q", got, content)
+	}
+	manifest, ok, readErr := ReadManifest(filepath.Join(dirVersion, "manifest.lock"))
+	if readErr != nil || !ok {
+		t.Fatalf("ReadManifest = ok %v, err %v", ok, readErr)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].SHA256 != hash {
+		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
 }
 

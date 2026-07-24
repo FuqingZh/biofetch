@@ -12,6 +12,7 @@ var cliAssets = [][]string{
 	{"go", "ontology"},
 	{"go", "slim"},
 	{"interpro", "mapping"},
+	{"interpro", "scan"},
 	{"kegg", "brite"},
 	{"kegg", "catalog"},
 	{"kegg", "mapping"},
@@ -49,6 +50,12 @@ func TestRootVersionAndCompletion(t *testing.T) {
 	}
 }
 
+func TestInterProScanParentShowsHelpWithoutArgs(t *testing.T) {
+	if err := RunCLI([]string{"interpro", "scan"}); err != nil {
+		t.Fatalf("RunCLI(interpro scan) error = %v", err)
+	}
+}
+
 func TestLockAndRestoreRequireOneSnapshotOperand(t *testing.T) {
 	for _, asset := range cliAssets {
 		for _, action := range []string{"lock", "restore"} {
@@ -68,6 +75,8 @@ func TestRemovedCommandsAndFlagsAreRejected(t *testing.T) {
 	for _, args := range [][]string{
 		{"string", "sync"},
 		{"string", "network", "sync"},
+		{"interpro", "scan", "sync"},
+		{"interpro", "scan", "fetch", "--should_allow_large_assets"},
 		{"omnipath", "enz_sub"},
 		{"uniprot", "idmapping"},
 		{"manifest", "build", "--dir_in", "/tmp"},
