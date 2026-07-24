@@ -1,6 +1,7 @@
 package staticasset
 
 import (
+	"biofetch/internal/shared/filehash"
 	"bytes"
 	"fmt"
 	"net/http"
@@ -492,6 +493,74 @@ func TestSyncRejectsManifestIdentityMismatch(t *testing.T) {
 	err := Sync(source, options, nil)
 	if err == nil || !strings.Contains(err.Error(), "manifest identity mismatch") {
 		t.Fatalf("Sync error = %v, want manifest identity mismatch", err)
+	}
+}
+
+func TestFetchKeepsVerifierRejectedFileWhenReplacementFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Source:       "fixture",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "archive",
+			Path: "raw/archive.tar.gz",
+			URL:  server.URL + "/archive.tar.gz",
+			VerifyDownloadedFile: func(string) error {
+				return fmt.Errorf("sidecar checksum mismatch")
+			},
+		}},
+	}
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	dirVersion := DeriveVersionDir(dirOut, source)
+	filePath := filepath.Join(dirVersion, "raw", "archive.tar.gz")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	content := []byte("old archive")
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		t.Fatalf("os.WriteFile returned error: %v", err)
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		t.Fatalf("os.Open returned error: %v", err)
+	}
+	hash, err := filehash.SHA256(file)
+	if closeErr := file.Close(); closeErr != nil {
+		t.Fatalf("file.Close returned error: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("filehash.SHA256 returned error: %v", err)
+	}
+	records := []FileRecord{{Asset: "archive", Path: "raw/archive.tar.gz", SHA256: hash, Bytes: int64(len(content)), URL: source.Assets[0].URL}}
+	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, records, time.Now()); err != nil {
+		t.Fatalf("writeManifest returned error: %v", err)
+	}
+
+	err = Fetch(source, options, nil)
+	if err == nil {
+		t.Fatal("Fetch returned nil error")
+	}
+	got, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile returned error: %v", readErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("file content = %q, want %q", got, content)
+	}
+	manifest, ok, readErr := ReadManifest(filepath.Join(dirVersion, "manifest.lock"))
+	if readErr != nil || !ok {
+		t.Fatalf("ReadManifest = ok %v, err %v", ok, readErr)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].SHA256 != hash {
+		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
 }
 

@@ -431,7 +431,6 @@ func planFetch(
 		reusable := ok && shouldReuseRecord(filePath, recordExisting)
 		if reusable && asset.VerifyDownloadedFile != nil {
 			if err := asset.VerifyDownloadedFile(filePath); err != nil {
-				_ = os.Remove(filePath)
 				reusable = false
 			}
 		}
