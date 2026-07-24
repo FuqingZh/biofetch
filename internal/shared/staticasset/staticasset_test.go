@@ -476,6 +476,54 @@ func TestSyncRehydratesFromManifest(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsMovingURLContentThatDoesNotMatchManifest(t *testing.T) {
+	contentLocked := []byte("locked")
+	contentCurrent := []byte("changed")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write(contentCurrent)
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	dirVersion := filepath.Join(dirOut, "fixed", "v1")
+	if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	hashLocked, err := filehash.SHA256(bytes.NewReader(contentLocked))
+	if err != nil {
+		t.Fatalf("filehash.SHA256 returned error: %v", err)
+	}
+	source := Source{Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1"}
+	recordLocked := FileRecord{
+		Asset: "moving", Path: "raw/moving.txt", SHA256: hashLocked,
+		Bytes: int64(len(contentLocked)), URL: server.URL + "/moving.txt",
+	}
+	fileManifest := filepath.Join(dirVersion, "manifest.lock")
+	if err := writeManifest(fileManifest, source, []FileRecord{recordLocked}, time.Now()); err != nil {
+		t.Fatalf("writeManifest returned error: %v", err)
+	}
+
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	err = Sync(source, options, nil)
+	if err == nil || !strings.Contains(err.Error(), "SHA256 mismatch") {
+		t.Fatalf("Sync error = %v, want SHA256 mismatch", err)
+	}
+	fileOut := filepath.Join(dirVersion, "raw", "moving.txt")
+	if _, statErr := os.Stat(fileOut); !os.IsNotExist(statErr) {
+		t.Fatalf("restored file exists or stat failed: %v", statErr)
+	}
+	if _, statErr := os.Stat(fileOut + ".part"); !os.IsNotExist(statErr) {
+		t.Fatalf("failed part exists or stat failed: %v", statErr)
+	}
+	manifest, ok, readErr := ReadManifest(fileManifest)
+	if readErr != nil || !ok {
+		t.Fatalf("ReadManifest = ok %v, err %v", ok, readErr)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].SHA256 != hashLocked {
+		t.Fatalf("manifest files = %#v, want original locked record", manifest.Files)
+	}
+}
+
 func TestSyncRejectsManifestIdentityMismatch(t *testing.T) {
 	dirOut := t.TempDir()
 	dirVersion := filepath.Join(dirOut, "fixed", "v1")
@@ -583,8 +631,12 @@ func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
 		t.Fatalf("os.MkdirAll returned error: %v", err)
 	}
 	source := Source{Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1"}
+	hashAlpha, err := filehash.SHA256(strings.NewReader("alpha"))
+	if err != nil {
+		t.Fatalf("filehash.SHA256 returned error: %v", err)
+	}
 	records := []FileRecord{
-		{Asset: "alpha", Path: "raw/alpha.txt", SHA256: "old", Bytes: 5, URL: server.URL + "/alpha.txt"},
+		{Asset: "alpha", Path: "raw/alpha.txt", SHA256: hashAlpha, Bytes: 5, URL: server.URL + "/alpha.txt"},
 		{Asset: "bravo", Path: "raw/bravo.txt", SHA256: "old", Bytes: 5, URL: server.URL + "/bravo.txt"},
 	}
 	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, records, time.Now()); err != nil {
@@ -592,7 +644,7 @@ func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
 	}
 
 	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
-	err := Sync(source, options, nil)
+	err = Sync(source, options, nil)
 	if err == nil {
 		t.Fatal("Sync returned nil error")
 	}
@@ -603,7 +655,7 @@ func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest was not written")
 	}
-	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[0].SHA256 == "old" {
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[0].SHA256 != hashAlpha {
 		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
 }

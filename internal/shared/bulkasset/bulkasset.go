@@ -167,6 +167,7 @@ func createRestoreCommand(spec Spec) *cobra.Command {
 	cfg.RetryMax = 5
 	cfg.RetryWait = 3 * time.Second
 	cfg.WorkersMax = 1
+	cfg.RequestInterval = spec.DefaultRequestWait
 	command := &cobra.Command{
 		Use:           "restore SNAPSHOT",
 		Short:         fmt.Sprintf("Restore %s %s files from SNAPSHOT manifest.lock", spec.Database, spec.Asset),

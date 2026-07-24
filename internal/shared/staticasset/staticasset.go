@@ -465,7 +465,10 @@ func planSync(
 		if recoverer := recoverersByPath[record.Path]; recoverer != nil {
 			asset.RecoverDownloadError = recoverer
 		}
-		asset.VerifyDownloadedFile = verifiersByPath[record.Path]
+		asset.VerifyDownloadedFile = composeVerifiers(
+			verifiersByPath[record.Path],
+			SHA256Verifier(record.SHA256),
+		)
 		if err := validateSyncAsset(asset); err != nil {
 			return nil, nil, err
 		}
@@ -488,6 +491,20 @@ func buildVerifiersByPath(assets []Asset) map[string]func(string) error {
 		}
 	}
 	return verifiers
+}
+
+func composeVerifiers(verifiers ...func(string) error) func(string) error {
+	return func(path string) error {
+		for _, verify := range verifiers {
+			if verify == nil {
+				continue
+			}
+			if err := verify(path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 func SHA256Verifier(expected string) func(string) error {

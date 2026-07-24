@@ -15,7 +15,7 @@ import (
 
 const metabolicBaseURL = "https://rest.kegg.jp"
 
-var patternMetabolicLastUpdate = regexp.MustCompile(`(?m)^\s*Last update\s+([0-9]{4})/([0-9]{2})/[0-9]{2}\s*$`)
+var patternMetabolicLastUpdate = regexp.MustCompile(`Last update\s+([0-9]{4})/([0-9]{2})/[0-9]{2}`)
 
 func createMetabolicCommand() *cobra.Command {
 	return bulkasset.NewAssetCommand(bulkasset.Spec{

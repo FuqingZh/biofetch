@@ -34,7 +34,7 @@ func NewCommand() *cobra.Command {
 			{Name: "rhea2uniprot-trembl", Path: "rhea2uniprot_trembl.tsv.gz", URL: baseURL + "/tsv/rhea2uniprot_trembl.tsv.gz", Default: true},
 			{Name: "rhea2xrefs", Path: "rhea2xrefs.tsv", URL: baseURL + "/tsv/rhea2xrefs.tsv", Default: true},
 			{Name: "participants-sdf", Path: "rhea.sdf.gz", URL: baseURL + "/ctfiles/rhea.sdf.gz", Default: true},
-			{Name: "rdf", Path: "rhea.rdf.gz", URL: baseURL + "/rdf/rhea.rdf.gz"},
+			{Name: "rdf", Path: "rhea.rdf.gz", URL: baseURL + "/rdf/rhea.rdf.gz", Default: true},
 			{Name: "biopax", Path: "rhea-biopax.owl.gz", URL: baseURL + "/biopax/rhea-biopax.owl.gz"},
 			{Name: "license", Path: "LICENSE.txt", URL: baseURL + "/LICENSE.txt", Default: true},
 		},

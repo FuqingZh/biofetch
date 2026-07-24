@@ -7,12 +7,24 @@ import (
 )
 
 func TestParseMetabolicVersion(t *testing.T) {
-	version, err := parseMetabolicVersion([]byte("pathway\tKEGG pathway maps\n\tLast update 2026/07/23\n"))
+	version, err := parseMetabolicVersion([]byte("pathway          KEGG Pathway Database\npathway          Release 116.0+/07-23, Jul 26\n                 Last update 2026/07/23\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if version != "2026-07" {
 		t.Fatalf("version = %q, want 2026-07", version)
+	}
+}
+
+func TestMetabolicRestoreKeepsKEGGRequestIntervalDefault(t *testing.T) {
+	command := createMetabolicCommand()
+	restore, _, err := command.Find([]string{"restore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag := restore.Flags().Lookup("request-interval")
+	if flag == nil || flag.DefValue != defaultKEGGRequestInterval.String() {
+		t.Fatalf("restore request-interval default = %v", flag)
 	}
 }
 
