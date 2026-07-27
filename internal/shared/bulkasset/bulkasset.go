@@ -29,19 +29,20 @@ type AssetSpec struct {
 }
 
 type Spec struct {
-	Database             string
-	Asset                string
-	Source               string
-	DatabaseDescription  string
-	AssetDescription     string
-	VersionDescription   string
-	Assets               []AssetSpec
-	ResolveCurrent       func(*http.Client) (string, error)
-	ExpandAssets         func(*http.Client, []AssetSpec) ([]AssetSpec, error)
-	SupportsFixedVersion bool
-	DefaultWorkers       int
-	DefaultRequestWait   time.Duration
-	LockOnlyDeclaredAssets bool
+	Database                   string
+	Asset                      string
+	Source                     string
+	DatabaseDescription        string
+	AssetDescription           string
+	VersionDescription         string
+	Assets                     []AssetSpec
+	ResolveCurrent             func(*http.Client) (string, error)
+	ExpandAssets               func(*http.Client, []AssetSpec) ([]AssetSpec, error)
+	SupportsFixedVersion       bool
+	DefaultWorkers             int
+	DefaultRequestWait         time.Duration
+	LockOnlyDeclaredAssets     bool
+	RequireDefaultAssetsOnLock bool
 }
 
 type config struct {
@@ -338,6 +339,7 @@ func resolveAssets(available []AssetSpec, requested []string) ([]AssetSpec, erro
 
 func buildSource(spec Spec, version string, assets []AssetSpec) staticasset.Source {
 	result := make([]staticasset.Asset, 0, len(assets))
+	required := make([]string, 0)
 	for _, asset := range assets {
 		url := strings.ReplaceAll(asset.URL, "{version}", version)
 		path := strings.ReplaceAll(asset.Path, "{version}", version)
@@ -349,14 +351,22 @@ func buildSource(spec Spec, version string, assets []AssetSpec) staticasset.Sour
 			VerifyDownloadedFile: asset.VerifyDownloadedFile,
 		})
 	}
+	if spec.RequireDefaultAssetsOnLock {
+		for _, asset := range spec.Assets {
+			if asset.Default {
+				required = append(required, asset.Name)
+			}
+		}
+	}
 	return staticasset.Source{
-		Database:     spec.Database,
-		Asset:        spec.Asset,
-		Source:       spec.Source,
-		Version:      version,
-		VersionToken: version,
-		Assets:       result,
+		Database:               spec.Database,
+		Asset:                  spec.Asset,
+		Source:                 spec.Source,
+		Version:                version,
+		VersionToken:           version,
+		Assets:                 result,
 		LockOnlyDeclaredAssets: spec.LockOnlyDeclaredAssets,
+		RequiredAssets:         required,
 	}
 }
 

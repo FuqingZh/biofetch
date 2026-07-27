@@ -17,13 +17,14 @@ const baseURL = "https://hmdb.ca/system/downloads/current"
 
 func NewCommand() *cobra.Command {
 	return bulkasset.NewCommand(bulkasset.Spec{
-		Database:            "hmdb",
-		Asset:               "database",
-		Source:              "hmdb-download",
-		DatabaseDescription: "Manage HMDB raw assets and manifest.lock",
-		AssetDescription:    "Manage HMDB metabolite, protein, and spectra exports",
-		VersionDescription:  "HMDB release version; omit for current",
-		LockOnlyDeclaredAssets: true,
+		Database:                   "hmdb",
+		Asset:                      "database",
+		Source:                     "hmdb-download",
+		DatabaseDescription:        "Manage HMDB raw assets and manifest.lock",
+		AssetDescription:           "Manage HMDB metabolite, protein, and spectra exports",
+		VersionDescription:         "HMDB release version; omit for current",
+		LockOnlyDeclaredAssets:     true,
+		RequireDefaultAssetsOnLock: true,
 		ResolveCurrent: func(*http.Client) (string, error) {
 			return "5.0", nil
 		},
@@ -31,9 +32,9 @@ func NewCommand() *cobra.Command {
 			hmdbAsset("metabolites", "hmdb_metabolites.zip", "hmdb_metabolites.xml"),
 			hmdbAsset("proteins", "hmdb_proteins.zip", "hmdb_proteins.xml"),
 			hmdbAsset("structures", "structures.zip", "structures.sdf"),
-			{Name: "protein-fasta", Path: "fasta_proteins.zip", URL: baseURL + "/fasta_proteins.zip"},
-			{Name: "gene-fasta", Path: "fasta_genes.zip", URL: baseURL + "/fasta_genes.zip"},
-			{Name: "all-spectra-xml", Path: "all_spectra.zip", URL: baseURL + "/all_spectra.zip", Large: true},
+			{Name: "protein-fasta", Path: "fasta_proteins.zip", URL: baseURL + "/fasta_proteins.zip", RecoverDownloadError: recoverAuthorizationFailure},
+			{Name: "gene-fasta", Path: "fasta_genes.zip", URL: baseURL + "/fasta_genes.zip", RecoverDownloadError: recoverAuthorizationFailure},
+			{Name: "all-spectra-xml", Path: "all_spectra.zip", URL: baseURL + "/all_spectra.zip", Large: true, RecoverDownloadError: recoverAuthorizationFailure},
 		},
 	})
 }

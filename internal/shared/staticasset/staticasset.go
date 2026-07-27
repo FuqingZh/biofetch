@@ -39,6 +39,7 @@ type Source struct {
 	Scope                  Scope
 	Assets                 []Asset
 	LockOnlyDeclaredAssets bool
+	RequiredAssets         []string
 }
 
 type Scope struct {
@@ -235,6 +236,23 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets)
 	if err != nil {
 		return err
+	}
+	for _, required := range source.RequiredAssets {
+		found := false
+		for _, asset := range source.Assets {
+			if asset.Name == required {
+				_, err := os.Stat(filepath.Join(dirVersion, asset.Path))
+				if err == nil {
+					found = true
+				} else if !os.IsNotExist(err) {
+					return fmt.Errorf("stat required asset %q: %w", required, err)
+				}
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("required asset %q is missing from snapshot", required)
+		}
 	}
 	progress := newProgressReporter(source, options, 0, 0)
 	records, err := scanRecords(dirVersion, assetsByPath, source.LockOnlyDeclaredAssets, progress, options.WorkersMax)

@@ -133,7 +133,10 @@ func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut str
 	if existingFileSize(fileOut) > 0 {
 		return downloadFileSingleResume(clientHTTP, urlFile, fileOut, progress)
 	}
-	metadata, ok := probeDownloadMetadata(clientHTTP, urlFile)
+	metadata, ok, err := probeDownloadMetadata(clientHTTP, urlFile)
+	if err != nil {
+		return err
+	}
 	if ok && metadata.SupportsRange && metadata.ContentLength >= chunkedDownloadMinBytes {
 		return downloadFileChunked(clientHTTP, urlFile, fileOut, metadata.ContentLength, progress)
 	}
@@ -209,46 +212,59 @@ type downloadMetadata struct {
 	SupportsRange bool
 }
 
-func probeDownloadMetadata(clientHTTP *http.Client, urlFile string) (downloadMetadata, bool) {
+func probeDownloadMetadata(clientHTTP *http.Client, urlFile string) (downloadMetadata, bool, error) {
 	request, err := http.NewRequest(http.MethodHead, urlFile, nil)
 	if err != nil {
-		return downloadMetadata{}, false
+		return downloadMetadata{}, false, nil
 	}
 	response, err := clientHTTP.Do(request)
 	if err != nil {
-		return downloadMetadata{}, false
+		return downloadMetadata{}, false, nil
 	}
 	_ = response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 || response.ContentLength <= 0 {
-		return downloadMetadata{}, false
+	if response.StatusCode == http.StatusMethodNotAllowed {
+		return downloadMetadata{}, false, nil
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || strings.EqualFold(strings.TrimSpace(response.Header.Get("Cf-Mitigated")), "challenge") {
+			return downloadMetadata{}, false, unexpectedStatus(response, urlFile)
+		}
+		return downloadMetadata{}, false, nil
+	}
+	if response.ContentLength <= 0 {
+		return downloadMetadata{}, false, nil
 	}
 	metadata := downloadMetadata{
 		ContentLength: response.ContentLength,
 		SupportsRange: strings.EqualFold(strings.TrimSpace(response.Header.Get("Accept-Ranges")), "bytes"),
 	}
 	if metadata.SupportsRange {
-		return metadata, true
+		return metadata, true, nil
 	}
 	if metadata.ContentLength < chunkedDownloadMinBytes {
-		return metadata, true
+		return metadata, true, nil
 	}
-	metadata.SupportsRange = probeRangeSupport(clientHTTP, urlFile)
-	return metadata, true
+	var probeErr error
+	metadata.SupportsRange, probeErr = probeRangeSupport(clientHTTP, urlFile)
+	return metadata, true, probeErr
 }
 
-func probeRangeSupport(clientHTTP *http.Client, urlFile string) bool {
+func probeRangeSupport(clientHTTP *http.Client, urlFile string) (bool, error) {
 	request, err := http.NewRequest(http.MethodGet, urlFile, nil)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	request.Header.Set("Range", "bytes=0-0")
 	response, err := clientHTTP.Do(request)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
-	return response.StatusCode == http.StatusPartialContent
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || strings.EqualFold(strings.TrimSpace(response.Header.Get("Cf-Mitigated")), "challenge") {
+		return false, unexpectedStatus(response, urlFile)
+	}
+	return response.StatusCode == http.StatusPartialContent, nil
 }
 
 type chunkState struct {
