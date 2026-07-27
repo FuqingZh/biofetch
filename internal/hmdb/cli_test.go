@@ -55,9 +55,10 @@ func TestLockRequiresHMDBCoreAssets(t *testing.T) {
 	if len(manifest.Files) != 3 {
 		t.Fatalf("files = %#v", manifest.Files)
 	}
-	want := map[string]string{"raw/hmdb_metabolites.zip": baseURL + "/hmdb_metabolites.zip", "raw/hmdb_proteins.zip": baseURL + "/hmdb_proteins.zip", "raw/structures.zip": baseURL + "/structures.zip"}
+	want := map[string]struct{ asset, url string }{"raw/hmdb_metabolites.zip": {"metabolites", baseURL + "/hmdb_metabolites.zip"}, "raw/hmdb_proteins.zip": {"proteins", baseURL + "/hmdb_proteins.zip"}, "raw/structures.zip": {"structures", baseURL + "/structures.zip"}}
 	for _, file := range manifest.Files {
-		if want[file.Path] != file.URL || file.Bytes <= 0 || file.SHA256 == "" {
+		expect, ok := want[file.Path]
+		if !ok || file.Asset != expect.asset || file.URL != expect.url || file.Bytes <= 0 || file.SHA256 == "" {
 			t.Fatalf("file = %#v", file)
 		}
 	}
