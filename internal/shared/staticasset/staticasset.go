@@ -233,7 +233,7 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets)
+	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets, source.LockOnlyDeclaredAssets)
 	if err != nil {
 		return err
 	}
@@ -943,14 +943,18 @@ func readRecords(fileManifest string) ([]FileRecord, error) {
 	return records, nil
 }
 
-func buildLockAssetMap(fileManifest string, sourceAssets []Asset) (map[string]Asset, error) {
+func buildLockAssetMap(fileManifest string, sourceAssets []Asset, onlyDeclared bool) (map[string]Asset, error) {
 	records, err := readRecords(fileManifest)
 	if err != nil {
 		return nil, err
 	}
+	declared := make(map[string]struct{}, len(sourceAssets))
+	for _, asset := range sourceAssets {
+		declared[asset.Path] = struct{}{}
+	}
 	assets := make(map[string]Asset, len(records)+len(sourceAssets))
 	for _, record := range records {
-		if record.Path != "" {
+		if record.Path != "" && (!onlyDeclared || hasPath(declared, record.Path)) {
 			assets[record.Path] = Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
 		}
 	}
@@ -961,6 +965,8 @@ func buildLockAssetMap(fileManifest string, sourceAssets []Asset) (map[string]As
 	}
 	return assets, nil
 }
+
+func hasPath(paths map[string]struct{}, path string) bool { _, ok := paths[path]; return ok }
 
 func writeManifest(fileManifest string, source Source, records []FileRecord, timeDownloaded time.Time) error {
 	files := make([]ManifestFileRecord, 0, len(records))
