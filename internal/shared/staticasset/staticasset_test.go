@@ -692,6 +692,59 @@ func TestLockScansRawRecursivelyAndIgnoresPartFiles(t *testing.T) {
 	}
 }
 
+func TestLockOnlyDeclaredAssetsDropsUndeclaredRecordsFromExistingManifest(t *testing.T) {
+	dirOut := t.TempDir()
+	dirVersion := filepath.Join(dirOut, "fixed", "v1")
+	dirRaw := filepath.Join(dirVersion, "raw")
+	if err := os.MkdirAll(dirRaw, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+	for name, content := range map[string]string{
+		"core.txt":  "core",
+		"notes.txt": "notes",
+	} {
+		if err := os.WriteFile(filepath.Join(dirRaw, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(%q) returned error: %v", name, err)
+		}
+	}
+
+	source := Source{
+		Database:     "testdb",
+		Asset:        "fixed",
+		Source:       "fixture",
+		Version:      "v1",
+		VersionToken: "v1",
+		Assets: []Asset{{
+			Name: "core",
+			Path: "raw/core.txt",
+			URL:  "https://example.test/core.txt",
+		}},
+		LockOnlyDeclaredAssets: true,
+	}
+	records := []FileRecord{
+		{Asset: "core", Path: "raw/core.txt", URL: "https://example.test/core.txt"},
+		{Asset: "notes", Path: "raw/notes.txt", URL: "https://example.test/notes.txt"},
+	}
+	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, records, time.Now()); err != nil {
+		t.Fatalf("writeManifest returned error: %v", err)
+	}
+
+	options := Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}
+	if err := Lock(source, dirVersion, options, nil); err != nil {
+		t.Fatalf("Lock returned error: %v", err)
+	}
+	manifest, ok, err := ReadManifest(filepath.Join(dirVersion, "manifest.lock"))
+	if err != nil {
+		t.Fatalf("ReadManifest returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest was not written")
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Asset != "core" || manifest.Files[0].Path != "raw/core.txt" {
+		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
 func TestLockIgnoresFilesOutsideRaw(t *testing.T) {
 	dirOut := t.TempDir()
 	dirTidy := filepath.Join(dirOut, "fixed", "v1", "tidy")
