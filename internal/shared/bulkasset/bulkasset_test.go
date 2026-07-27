@@ -72,6 +72,17 @@ func TestResolveAssetsRejectsUnknownAndSupportsAll(t *testing.T) {
 	}
 }
 
+func TestRequiredDefaultAssetsOnLockIsOptIn(t *testing.T) {
+	source := buildSource(Spec{Database: "db", Asset: "asset", Assets: []AssetSpec{{Name: "core", Default: true}}}, "v1", nil)
+	if len(source.RequiredAssets) != 0 {
+		t.Fatalf("RequiredAssets = %#v, want empty", source.RequiredAssets)
+	}
+	source = buildSource(Spec{Database: "db", Asset: "asset", RequireDefaultAssetsOnLock: true, Assets: []AssetSpec{{Name: "core", Default: true}}}, "v1", nil)
+	if len(source.RequiredAssets) != 1 || source.RequiredAssets[0] != "core" {
+		t.Fatalf("RequiredAssets = %#v", source.RequiredAssets)
+	}
+}
+
 func TestFixedVersionIsRejectedForCurrentOnlySource(t *testing.T) {
 	_, err := resolveVersion(Spec{Database: "db", Asset: "asset"}, http.DefaultClient, "2026-01-01")
 	if err == nil || !strings.Contains(err.Error(), "supports only current") {
