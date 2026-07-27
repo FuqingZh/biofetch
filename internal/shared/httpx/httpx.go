@@ -21,9 +21,21 @@ var chunkSizeBytes int64 = 256 << 20
 var chunkWorkersMax = 4
 
 type UnexpectedStatusError struct {
-	URL    string
-	Status string
-	Code   int
+	URL         string
+	Status      string
+	Code        int
+	Server      string
+	CFMitigated string
+}
+
+func unexpectedStatus(response *http.Response, urlFile string) UnexpectedStatusError {
+	return UnexpectedStatusError{
+		URL:         urlFile,
+		Status:      response.Status,
+		Code:        response.StatusCode,
+		Server:      response.Header.Get("Server"),
+		CFMitigated: response.Header.Get("Cf-Mitigated"),
+	}
 }
 
 func (err UnexpectedStatusError) Error() string {
@@ -89,7 +101,7 @@ func DownloadFileWithProgress(clientHTTP *http.Client, urlFile string, fileOut s
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+		return unexpectedStatus(response, urlFile)
 	}
 
 	fileHandle, err := os.Create(fileOut)
@@ -157,7 +169,7 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		shouldAppend = false
 	default:
-		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+		return unexpectedStatus(response, urlFile)
 	}
 
 	flagFile := os.O_CREATE | os.O_WRONLY
@@ -392,7 +404,7 @@ func downloadChunk(clientHTTP *http.Client, urlFile string, dirParts string, chu
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusPartialContent {
-		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+		return unexpectedStatus(response, urlFile)
 	}
 	fileHandle, err := os.OpenFile(fileChunk, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {

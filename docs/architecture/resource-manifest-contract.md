@@ -18,6 +18,12 @@ construction are downstream build concerns, not `biofetch` commands.
 
 ## Version directories
 
+Database second-level commands use the upstream resource or product's own
+stable name. A local family name is invented only when upstream provides no
+stable name. This keeps CLI families and snapshot paths aligned with upstream
+terminology; for example, JASPAR publishes “JASPAR data”, so its maintained
+family and path are `jaspar data` and `jaspar/data/<release>/`.
+
 A snapshot is the directory containing one exact `manifest.lock`. The common
 layout is:
 

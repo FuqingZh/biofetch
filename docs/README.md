@@ -13,9 +13,12 @@ Read these documents in order:
 3. [Dual-omics resource acquisition design](architecture/20260724-v1.0-dual-omics-resource-acquisition-design.md)
    for prioritized database additions, licensing gates, and the boundary
    between raw acquisition and normalized derived data.
-4. [Test contract](testing/20260717-v1.0-test-contract.md) for local, CLI,
+4. [HMDB browser acquisition and lock implementation plan](implementation-plan/20260727-v1.0-hmdb-browser-acquisition-lock-implementation-plan.md)
+   for the active fix to browser-authorized acquisition, first-time lock
+   metadata, archive validation, and authentication-failure behavior.
+5. [Test contract](testing/20260717-v1.0-test-contract.md) for local, CLI,
    concurrency, and real-resource validation requirements.
-5. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
+6. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
    for the current measured storage baseline.
 
 The architecture and test contracts above describe the maintained

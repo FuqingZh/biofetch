@@ -113,6 +113,7 @@ type scanTask struct {
 	url         string
 	bytes       int64
 	hashForLock func(string, HashProgressFunc) (string, int64, error)
+	verifyFile  func(string) error
 }
 
 const manifestFlushInterval = 5 * time.Second
@@ -696,6 +697,12 @@ func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared 
 		}
 		asset := Asset{Name: assetName, Path: task.pathRel, URL: task.url, HashForLock: task.hashForLock}
 		progress.startScanFile(asset)
+		if task.verifyFile != nil {
+			if err := task.verifyFile(task.filePath); err != nil {
+				progress.finishScanFile(asset, false)
+				return FileRecord{}, fmt.Errorf("asset %q failed lock-file verification: %w", asset.Name, err)
+			}
+		}
 		record, err := buildRecordWithProgress(task.filePath, asset, progress)
 		if err != nil {
 			progress.finishScanFile(asset, false)
@@ -744,6 +751,7 @@ func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDecla
 			url:         asset.URL,
 			bytes:       infoFile.Size(),
 			hashForLock: asset.HashForLock,
+			verifyFile:  asset.VerifyDownloadedFile,
 		})
 		return nil
 	}); err != nil {
