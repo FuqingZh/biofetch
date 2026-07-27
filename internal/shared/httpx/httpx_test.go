@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +88,54 @@ func TestDownloadFileWithResumeAppendsPartialContent(t *testing.T) {
 	}
 	if len(gotProgress) == 0 || gotProgress[0] != 5 {
 		t.Fatalf("progress = %#v, want first value 5", gotProgress)
+	}
+}
+
+func TestDownloadFileWithResumeProbeAuthFailsOnce(t *testing.T) {
+	for _, challenge := range []string{"", "challenge"} {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if challenge != "" {
+				w.Header().Set("Cf-Mitigated", challenge)
+			}
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		file := filepath.Join(t.TempDir(), "asset")
+		err := DownloadFileWithResume(server.Client(), server.URL, file, nil)
+		server.Close()
+		if err == nil {
+			t.Fatal("expected authorization error")
+		}
+		if calls != 1 {
+			t.Fatalf("calls = %d, want 1", calls)
+		}
+		var status UnexpectedStatusError
+		if !errors.As(err, &status) || status.Code != http.StatusForbidden {
+			t.Fatalf("error = %v", err)
+		}
+	}
+}
+
+func TestDownloadFileWithResumeProbeFallbacks(t *testing.T) {
+	for _, headStatus := range []int{http.StatusMethodNotAllowed, http.StatusInternalServerError} {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if r.Method == http.MethodHead {
+				w.WriteHeader(headStatus)
+				return
+			}
+			_, _ = w.Write([]byte("ok"))
+		}))
+		file := filepath.Join(t.TempDir(), "asset")
+		if err := DownloadFileWithResume(server.Client(), server.URL, file, nil); err != nil {
+			t.Fatalf("HEAD %d: %v", headStatus, err)
+		}
+		server.Close()
+		if calls != 2 {
+			t.Fatalf("HEAD %d calls = %d, want 2", headStatus, calls)
+		}
 	}
 }
 

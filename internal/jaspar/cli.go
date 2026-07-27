@@ -2,6 +2,7 @@ package jaspar
 
 import (
 	"biofetch/internal/shared/bulkasset"
+	"fmt"
 	"regexp"
 
 	"github.com/spf13/cobra"
@@ -10,9 +11,9 @@ import (
 var patternRelease = regexp.MustCompile(`/download/data/([0-9]{4})/`)
 
 func NewCommand() *cobra.Command {
-	return bulkasset.NewCommand(bulkasset.Spec{
+	command := bulkasset.NewCommand(bulkasset.Spec{
 		Database:             "jaspar",
-		Asset:                "profiles",
+		Asset:                "data",
 		Source:               "jaspar-download",
 		DatabaseDescription:  "Manage JASPAR raw assets and manifest.lock",
 		AssetDescription:     "Manage JASPAR motif profiles and metadata",
@@ -44,4 +45,16 @@ func NewCommand() *cobra.Command {
 			{Name: "bed", Path: "bed.tar.gz", URL: "https://jaspar.elixir.no/download/data/{version}/bed.tar.gz"},
 		},
 	})
+	// Keep the removed name explicitly rejected so Cobra cannot treat it as a
+	// parent command that merely prints help. JASPAR's upstream product name is
+	// "data"; there is intentionally no compatibility alias for "profiles".
+	command.AddCommand(&cobra.Command{
+		Use:    "profiles",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("unknown command %q for jaspar; use %q", "profiles", "data")
+		},
+	})
+	return command
 }

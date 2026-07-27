@@ -93,7 +93,7 @@ Fetch the maintained transcriptomics-metabolomics source snapshots:
 ```bash
 biofetch chebi database fetch --output /database/bioinfo/resources/chebi
 biofetch rhea database fetch --output /database/bioinfo/resources/rhea
-biofetch jaspar profiles fetch --output /database/bioinfo/resources/jaspar
+biofetch jaspar data fetch --output /database/bioinfo/resources/jaspar
 biofetch kegg metabolic fetch --output /database/bioinfo/resources/kegg
 biofetch omnipath interactions fetch \
   --output /database/bioinfo/resources/omnipath \

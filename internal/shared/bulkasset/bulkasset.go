@@ -19,26 +19,30 @@ import (
 )
 
 type AssetSpec struct {
-	Name    string
-	Path    string
-	URL     string
-	Default bool
-	Large   bool
+	Name                 string
+	Path                 string
+	URL                  string
+	Default              bool
+	Large                bool
+	RecoverDownloadError func(string, error) (bool, error)
+	VerifyDownloadedFile func(string) error
 }
 
 type Spec struct {
-	Database             string
-	Asset                string
-	Source               string
-	DatabaseDescription  string
-	AssetDescription     string
-	VersionDescription   string
-	Assets               []AssetSpec
-	ResolveCurrent       func(*http.Client) (string, error)
-	ExpandAssets         func(*http.Client, []AssetSpec) ([]AssetSpec, error)
-	SupportsFixedVersion bool
-	DefaultWorkers       int
-	DefaultRequestWait   time.Duration
+	Database                   string
+	Asset                      string
+	Source                     string
+	DatabaseDescription        string
+	AssetDescription           string
+	VersionDescription         string
+	Assets                     []AssetSpec
+	ResolveCurrent             func(*http.Client) (string, error)
+	ExpandAssets               func(*http.Client, []AssetSpec) ([]AssetSpec, error)
+	SupportsFixedVersion       bool
+	DefaultWorkers             int
+	DefaultRequestWait         time.Duration
+	LockOnlyDeclaredAssets     bool
+	RequireDefaultAssetsOnLock bool
 }
 
 type config struct {
@@ -240,7 +244,7 @@ func runLock(spec Spec, cfg *lockConfig) error {
 	if err != nil {
 		return err
 	}
-	source := buildSource(spec, version, nil)
+	source := buildSource(spec, version, spec.Assets)
 	_, closeRun, err := logx.StartVersionedRun("biofetch "+spec.Database, "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
 		return err
@@ -335,22 +339,34 @@ func resolveAssets(available []AssetSpec, requested []string) ([]AssetSpec, erro
 
 func buildSource(spec Spec, version string, assets []AssetSpec) staticasset.Source {
 	result := make([]staticasset.Asset, 0, len(assets))
+	required := make([]string, 0)
 	for _, asset := range assets {
 		url := strings.ReplaceAll(asset.URL, "{version}", version)
 		path := strings.ReplaceAll(asset.Path, "{version}", version)
 		result = append(result, staticasset.Asset{
-			Name: asset.Name,
-			Path: filepath.ToSlash(filepath.Join("raw", path)),
-			URL:  url,
+			Name:                 asset.Name,
+			Path:                 filepath.ToSlash(filepath.Join("raw", path)),
+			URL:                  url,
+			RecoverDownloadError: asset.RecoverDownloadError,
+			VerifyDownloadedFile: asset.VerifyDownloadedFile,
 		})
 	}
+	if spec.RequireDefaultAssetsOnLock {
+		for _, asset := range spec.Assets {
+			if asset.Default {
+				required = append(required, asset.Name)
+			}
+		}
+	}
 	return staticasset.Source{
-		Database:     spec.Database,
-		Asset:        spec.Asset,
-		Source:       spec.Source,
-		Version:      version,
-		VersionToken: version,
-		Assets:       result,
+		Database:               spec.Database,
+		Asset:                  spec.Asset,
+		Source:                 spec.Source,
+		Version:                version,
+		VersionToken:           version,
+		Assets:                 result,
+		LockOnlyDeclaredAssets: spec.LockOnlyDeclaredAssets,
+		RequiredAssets:         required,
 	}
 }
 

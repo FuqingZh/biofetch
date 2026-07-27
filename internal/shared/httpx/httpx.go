@@ -21,9 +21,21 @@ var chunkSizeBytes int64 = 256 << 20
 var chunkWorkersMax = 4
 
 type UnexpectedStatusError struct {
-	URL    string
-	Status string
-	Code   int
+	URL         string
+	Status      string
+	Code        int
+	Server      string
+	CFMitigated string
+}
+
+func unexpectedStatus(response *http.Response, urlFile string) UnexpectedStatusError {
+	return UnexpectedStatusError{
+		URL:         urlFile,
+		Status:      response.Status,
+		Code:        response.StatusCode,
+		Server:      response.Header.Get("Server"),
+		CFMitigated: response.Header.Get("Cf-Mitigated"),
+	}
 }
 
 func (err UnexpectedStatusError) Error() string {
@@ -89,7 +101,7 @@ func DownloadFileWithProgress(clientHTTP *http.Client, urlFile string, fileOut s
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+		return unexpectedStatus(response, urlFile)
 	}
 
 	fileHandle, err := os.Create(fileOut)
@@ -121,7 +133,10 @@ func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut str
 	if existingFileSize(fileOut) > 0 {
 		return downloadFileSingleResume(clientHTTP, urlFile, fileOut, progress)
 	}
-	metadata, ok := probeDownloadMetadata(clientHTTP, urlFile)
+	metadata, ok, err := probeDownloadMetadata(clientHTTP, urlFile)
+	if err != nil {
+		return err
+	}
 	if ok && metadata.SupportsRange && metadata.ContentLength >= chunkedDownloadMinBytes {
 		return downloadFileChunked(clientHTTP, urlFile, fileOut, metadata.ContentLength, progress)
 	}
@@ -157,7 +172,7 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		shouldAppend = false
 	default:
-		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+		return unexpectedStatus(response, urlFile)
 	}
 
 	flagFile := os.O_CREATE | os.O_WRONLY
@@ -197,46 +212,59 @@ type downloadMetadata struct {
 	SupportsRange bool
 }
 
-func probeDownloadMetadata(clientHTTP *http.Client, urlFile string) (downloadMetadata, bool) {
+func probeDownloadMetadata(clientHTTP *http.Client, urlFile string) (downloadMetadata, bool, error) {
 	request, err := http.NewRequest(http.MethodHead, urlFile, nil)
 	if err != nil {
-		return downloadMetadata{}, false
+		return downloadMetadata{}, false, nil
 	}
 	response, err := clientHTTP.Do(request)
 	if err != nil {
-		return downloadMetadata{}, false
+		return downloadMetadata{}, false, nil
 	}
 	_ = response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 || response.ContentLength <= 0 {
-		return downloadMetadata{}, false
+	if response.StatusCode == http.StatusMethodNotAllowed {
+		return downloadMetadata{}, false, nil
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || strings.EqualFold(strings.TrimSpace(response.Header.Get("Cf-Mitigated")), "challenge") {
+			return downloadMetadata{}, false, unexpectedStatus(response, urlFile)
+		}
+		return downloadMetadata{}, false, nil
+	}
+	if response.ContentLength <= 0 {
+		return downloadMetadata{}, false, nil
 	}
 	metadata := downloadMetadata{
 		ContentLength: response.ContentLength,
 		SupportsRange: strings.EqualFold(strings.TrimSpace(response.Header.Get("Accept-Ranges")), "bytes"),
 	}
 	if metadata.SupportsRange {
-		return metadata, true
+		return metadata, true, nil
 	}
 	if metadata.ContentLength < chunkedDownloadMinBytes {
-		return metadata, true
+		return metadata, true, nil
 	}
-	metadata.SupportsRange = probeRangeSupport(clientHTTP, urlFile)
-	return metadata, true
+	var probeErr error
+	metadata.SupportsRange, probeErr = probeRangeSupport(clientHTTP, urlFile)
+	return metadata, true, probeErr
 }
 
-func probeRangeSupport(clientHTTP *http.Client, urlFile string) bool {
+func probeRangeSupport(clientHTTP *http.Client, urlFile string) (bool, error) {
 	request, err := http.NewRequest(http.MethodGet, urlFile, nil)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	request.Header.Set("Range", "bytes=0-0")
 	response, err := clientHTTP.Do(request)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
-	return response.StatusCode == http.StatusPartialContent
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || strings.EqualFold(strings.TrimSpace(response.Header.Get("Cf-Mitigated")), "challenge") {
+		return false, unexpectedStatus(response, urlFile)
+	}
+	return response.StatusCode == http.StatusPartialContent, nil
 }
 
 type chunkState struct {
@@ -392,7 +420,7 @@ func downloadChunk(clientHTTP *http.Client, urlFile string, dirParts string, chu
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusPartialContent {
-		return UnexpectedStatusError{URL: urlFile, Status: response.Status, Code: response.StatusCode}
+		return unexpectedStatus(response, urlFile)
 	}
 	fileHandle, err := os.OpenFile(fileChunk, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {

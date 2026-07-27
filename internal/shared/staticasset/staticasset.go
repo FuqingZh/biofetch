@@ -39,6 +39,7 @@ type Source struct {
 	Scope                  Scope
 	Assets                 []Asset
 	LockOnlyDeclaredAssets bool
+	RequiredAssets         []string
 }
 
 type Scope struct {
@@ -113,6 +114,7 @@ type scanTask struct {
 	url         string
 	bytes       int64
 	hashForLock func(string, HashProgressFunc) (string, int64, error)
+	verifyFile  func(string) error
 }
 
 const manifestFlushInterval = 5 * time.Second
@@ -231,9 +233,26 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		return err
 	}
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets)
+	assetsByPath, err := buildLockAssetMap(fileManifest, source.Assets, source.LockOnlyDeclaredAssets)
 	if err != nil {
 		return err
+	}
+	for _, required := range source.RequiredAssets {
+		found := false
+		for _, asset := range source.Assets {
+			if asset.Name == required {
+				_, err := os.Stat(filepath.Join(dirVersion, asset.Path))
+				if err == nil {
+					found = true
+				} else if !os.IsNotExist(err) {
+					return fmt.Errorf("stat required asset %q: %w", required, err)
+				}
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("required asset %q is missing from snapshot", required)
+		}
 	}
 	progress := newProgressReporter(source, options, 0, 0)
 	records, err := scanRecords(dirVersion, assetsByPath, source.LockOnlyDeclaredAssets, progress, options.WorkersMax)
@@ -696,6 +715,12 @@ func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared 
 		}
 		asset := Asset{Name: assetName, Path: task.pathRel, URL: task.url, HashForLock: task.hashForLock}
 		progress.startScanFile(asset)
+		if task.verifyFile != nil {
+			if err := task.verifyFile(task.filePath); err != nil {
+				progress.finishScanFile(asset, false)
+				return FileRecord{}, fmt.Errorf("asset %q failed lock-file verification: %w", asset.Name, err)
+			}
+		}
 		record, err := buildRecordWithProgress(task.filePath, asset, progress)
 		if err != nil {
 			progress.finishScanFile(asset, false)
@@ -744,6 +769,7 @@ func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDecla
 			url:         asset.URL,
 			bytes:       infoFile.Size(),
 			hashForLock: asset.HashForLock,
+			verifyFile:  asset.VerifyDownloadedFile,
 		})
 		return nil
 	}); err != nil {
@@ -917,14 +943,18 @@ func readRecords(fileManifest string) ([]FileRecord, error) {
 	return records, nil
 }
 
-func buildLockAssetMap(fileManifest string, sourceAssets []Asset) (map[string]Asset, error) {
+func buildLockAssetMap(fileManifest string, sourceAssets []Asset, onlyDeclared bool) (map[string]Asset, error) {
 	records, err := readRecords(fileManifest)
 	if err != nil {
 		return nil, err
 	}
+	declared := make(map[string]struct{}, len(sourceAssets))
+	for _, asset := range sourceAssets {
+		declared[asset.Path] = struct{}{}
+	}
 	assets := make(map[string]Asset, len(records)+len(sourceAssets))
 	for _, record := range records {
-		if record.Path != "" {
+		if record.Path != "" && (!onlyDeclared || hasPath(declared, record.Path)) {
 			assets[record.Path] = Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
 		}
 	}
@@ -935,6 +965,8 @@ func buildLockAssetMap(fileManifest string, sourceAssets []Asset) (map[string]As
 	}
 	return assets, nil
 }
+
+func hasPath(paths map[string]struct{}, path string) bool { _, ok := paths[path]; return ok }
 
 func writeManifest(fileManifest string, source Source, records []FileRecord, timeDownloaded time.Time) error {
 	files := make([]ManifestFileRecord, 0, len(records))
