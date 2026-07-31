@@ -87,13 +87,18 @@ query response. It records the explicit license, dataset, organisms, supported
 query-field tokens, distinct fixed output header, DoRothEA levels, start/end
 inventory digests, transport, and actual leaf plan. The typed `[query]`
 manifest section cross-checks that sidecar. Lock never reconstructs these
-values from filenames or guessed URLs; old non-JSON query metadata is
-`legacy-basic`, while malformed or unknown JSON is rejected.
+values from filenames or guessed URLs. Full-evidence JSON must be the exact
+canonical serialization that restore can reproduce; unknown fields or merely
+equivalent non-canonical bytes are rejected. The old two-column capability TSV
+is `legacy-basic`; arbitrary text, malformed JSON, and unknown JSON are
+rejected.
 
 Full-evidence restore replays locked leaf URLs into staging and validates
 headers, target partitions, JSON evidence fields, confidence levels, byte
 counts, and every original SHA256 before replacing an invalid destination.
-Upstream drift leaves the lock and existing valid files unchanged. Published
+All manifest record paths are confined below `raw/` and existing symlink
+components are rejected before restore. Upstream drift leaves the lock and
+existing valid files unchanged. Published
 snapshots contain only `raw/query_meta.json`, one
 `raw/<taxid>/interactions.tsv` per organism, and `manifest.lock`.
 

@@ -19,7 +19,6 @@ import (
 const mappingDefaultVersionToken = "current"
 const mappingLargeDownloadThresholdBytes = 100 * 1024 * 1024
 
-var mappingCurrentBaseURL = "https://reactome.org/download/current/"
 var mappingCurrentVersionURL = "https://reactome.org/ContentService/data/database/version"
 var mappingReleaseBaseURL = "https://download.reactome.org/%s/"
 var reactomeSleep = time.Sleep
@@ -275,9 +274,14 @@ func normalizeMappingFixedVersionToken(value string) (string, error) {
 }
 
 func resolveMappingCurrentVersionToken(clientHTTP *http.Client, maxAttempts int, retryWait time.Duration) (string, error) {
+	if maxAttempts < 1 {
+		return "", fmt.Errorf("resolve Reactome current release version endpoint=%s: max attempts must be >= 1", mappingCurrentVersionURL)
+	}
 	var lastErr error
-	status := "transport-error"
+	status := ""
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		status = "transport-error"
+		wait := retryWait
 		request, err := http.NewRequest(http.MethodGet, mappingCurrentVersionURL, nil)
 		if err != nil {
 			return "", fmt.Errorf("build Reactome current version request: %w", err)
@@ -308,11 +312,11 @@ func resolveMappingCurrentVersionToken(clientHTTP *http.Client, maxAttempts int,
 					mappingCurrentVersionURL, status, attempt, lastErr)
 			}
 			if strings.TrimSpace(response.Header.Get("Retry-After")) != "" {
-				retryWait = reactomeRetryAfter(response.Header.Get("Retry-After"), retryWait)
+				wait = reactomeRetryAfter(response.Header.Get("Retry-After"), retryWait)
 			}
 		}
 		if attempt < maxAttempts {
-			reactomeSleep(retryWait)
+			reactomeSleep(wait)
 		}
 	}
 	return "", fmt.Errorf("resolve Reactome current release version endpoint=%s status=%s attempts=%d: %w",
@@ -321,13 +325,19 @@ func resolveMappingCurrentVersionToken(clientHTTP *http.Client, maxAttempts int,
 
 func reactomeRetryAfter(value string, fallback time.Duration) time.Duration {
 	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
-		return time.Duration(seconds) * time.Second
+		wait := time.Duration(seconds) * time.Second
+		if wait > fallback {
+			return wait
+		}
+		return fallback
 	}
 	if when, err := http.ParseTime(value); err == nil {
 		if wait := when.Sub(reactomeNow()); wait > 0 {
-			return wait
+			if wait > fallback {
+				return wait
+			}
 		}
-		return 0
+		return fallback
 	}
 	return fallback
 }

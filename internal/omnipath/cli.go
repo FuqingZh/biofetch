@@ -82,6 +82,7 @@ func createEnzSubCommand() *cobra.Command {
 
 func createEnzSubFetchCommand() *cobra.Command {
 	cfg := configEnzSub{}
+	cfg.ruleLicense = "academic"
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
@@ -104,9 +105,9 @@ func createEnzSubFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
-	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
+	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values or repeat the flag")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
-	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
+	flags.StringVar(&cfg.ruleLicense, "license", cfg.ruleLicense, "License mode: academic|commercial")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
 	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
@@ -133,6 +134,7 @@ func createInteractionsCommand() *cobra.Command {
 func createInteractionsFetchCommand() *cobra.Command {
 	cfg := configInteractions{}
 	cfg.dataset = "kinaseextra"
+	cfg.ruleLicense = "academic"
 	cfg.dorotheaLevels = []string{"A", "B", "C", "D"}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
@@ -145,7 +147,8 @@ func createInteractionsFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.dorotheaLevelsSet = cmd.Flags().Changed("dorothea-levels")
+			cfg.dorotheaLevelsSet = cmd.Flags().Changed("dorothea-levels") ||
+				cmd.Flags().Changed("dorothea-levels-file")
 			if err := validateInteractionsConfig(&cfg); err != nil {
 				return err
 			}
@@ -157,17 +160,17 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.SortFlags = false
 	flags.StringVarP(&cfg.dirOut, "output", "o", cfg.dirOut, "OmniPath asset root directory")
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "OmniPath archive version date in YYYY-MM-DD; omit to fetch the latest data")
-	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values, repeat the flag,")
+	cliopt.BindStringListFlags(flags, &cfg.organisms, "organisms", "Organism taxids; pass inline values or repeat the flag")
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset: collectri|dorothea|kinaseextra")
-	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
-	cliopt.BindStringListFlags(flags, &cfg.dorotheaLevels, "dorothea-levels", "DoRothEA confidence levels: A,B,C,D; valid only with --dataset dorothea; repeat the flag,")
+	flags.StringVar(&cfg.ruleLicense, "license", cfg.ruleLicense, "License mode: academic|commercial")
+	cliopt.BindStringListFlags(flags, &cfg.dorotheaLevels, "dorothea-levels", "DoRothEA confidence levels: A,B,C,D; valid only with --dataset dorothea; pass inline values or repeat the flag")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
 	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run logs; live default is <output>/logs/omnipath/interactions/<dataset>/")
 
 	return command
 }
@@ -257,7 +260,7 @@ func createInteractionsLockCommand() *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindLockWorkersFlag(flags, &cfg.workersMax)
 	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not write manifest")
-	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run logs; default is <resource-root>/logs/omnipath/interactions/<dataset>/")
 	return command
 }
 
@@ -270,7 +273,7 @@ func createInteractionsRestoreCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:           "restore SNAPSHOT",
-		Short:         "Restore OmniPath interactions files from manifest.lock and refresh manifest",
+		Short:         "Restore OmniPath interactions files from manifest.lock",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
@@ -306,7 +309,7 @@ func createInteractionsRestoreCommand() *cobra.Command {
 	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
 	flags.BoolVar(&cfg.shouldAllowInsecureTLS, "insecure", false, "Disable TLS certificate verification")
 	flags.BoolVar(&cfg.shouldDryRun, "dry-run", false, "Print actions only; do not download")
-	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run log files; default is <version>/logs/")
+	flags.StringVar(&cfg.dirLogs, "log-dir", cfg.dirLogs, "Directory for run logs; full-evidence default is <resource-root>/logs/omnipath/interactions/<dataset>/")
 	return command
 }
 
@@ -441,7 +444,7 @@ func validateRuleLicense(ruleLicense string) error {
 	if value == "academic" || value == "commercial" {
 		return nil
 	}
-	return fmt.Errorf("rule_license must be one of: academic, commercial")
+	return fmt.Errorf("license must be one of: academic, commercial")
 }
 
 func normalizeLicense(value string) string {

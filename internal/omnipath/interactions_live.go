@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -93,19 +94,254 @@ type stagedInteractionLeaf struct {
 	path string
 }
 
+func interactionQueryFingerprint(query interactionQuery) (string, error) {
+	canonical, err := json.Marshal(query)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(canonical)), nil
+}
+
+func validateFullEvidenceQuery(query interactionQuery, dataset string) error {
+	if query.Schema != fullEvidenceSchema || query.Dataset != dataset {
+		return fmt.Errorf("full-evidence query schema/dataset mismatch")
+	}
+	if _, ok := interactionDatasetsSupported[dataset]; !ok {
+		return fmt.Errorf("full-evidence query has unsupported dataset %q", dataset)
+	}
+	if query.License != "academic" && query.License != "commercial" {
+		return fmt.Errorf("full-evidence query has unsupported license %q", query.License)
+	}
+	if !slicesEqual(query.Fields, fullEvidenceQueryFields) ||
+		!slicesEqual(query.OutputFields, fullEvidenceFields) {
+		return fmt.Errorf("full-evidence query fixed field profile mismatch")
+	}
+	if len(query.Organisms) == 0 {
+		return fmt.Errorf("full-evidence query organisms must not be empty")
+	}
+	organismsSorted := append([]string(nil), query.Organisms...)
+	sort.Strings(organismsSorted)
+	if !slicesEqual(query.Organisms, organismsSorted) {
+		return fmt.Errorf("full-evidence query organisms are not in canonical order")
+	}
+	for index, organism := range query.Organisms {
+		normalized, err := normalizeOrganism(organism)
+		if err != nil || normalized != organism {
+			return fmt.Errorf("full-evidence query has invalid organism %q", organism)
+		}
+		if index > 0 && query.Organisms[index-1] == organism {
+			return fmt.Errorf("full-evidence query has duplicate organism %q", organism)
+		}
+	}
+	if dataset == "dorothea" {
+		levels, err := normalizeDorotheaLevels(query.Levels)
+		if err != nil || !slicesEqual(levels, query.Levels) {
+			return fmt.Errorf("full-evidence query DoRothEA levels are not canonical A-D")
+		}
+	} else if len(query.Levels) != 0 {
+		return fmt.Errorf("full-evidence query DoRothEA levels do not match dataset")
+	}
+	return nil
+}
+
+func validateInteractionLeafPlan(query interactionQuery, leaves []interactionLeaf, inventoryEdges int) error {
+	if inventoryEdges < 0 {
+		return fmt.Errorf("inventory edge count must not be negative")
+	}
+	organismOrder := make(map[string]int, len(query.Organisms))
+	for index, organism := range query.Organisms {
+		organismOrder[organism] = index
+	}
+	seenTargets := make(map[string]map[string]struct{}, len(query.Organisms))
+	previousOrganism := -1
+	totalEdges := 0
+	for _, leaf := range leaves {
+		order, ok := organismOrder[leaf.Organism]
+		if !ok {
+			return fmt.Errorf("leaf organism %q is outside the query", leaf.Organism)
+		}
+		if order < previousOrganism {
+			return fmt.Errorf("leaf organisms are not in canonical order")
+		}
+		previousOrganism = order
+		if len(leaf.Targets) == 0 || len(leaf.Targets) > maxBatchTargets {
+			return fmt.Errorf("leaf target count %d is outside 1-%d", len(leaf.Targets), maxBatchTargets)
+		}
+		if leaf.ExpectedEdges < 1 || leaf.ExpectedEdges > maxBatchEdges {
+			return fmt.Errorf("leaf expected edge count %d is outside 1-%d", leaf.ExpectedEdges, maxBatchEdges)
+		}
+		targetsSorted := append([]string(nil), leaf.Targets...)
+		sort.Strings(targetsSorted)
+		if !slicesEqual(targetsSorted, leaf.Targets) {
+			return fmt.Errorf("leaf targets are not in canonical order")
+		}
+		if seenTargets[leaf.Organism] == nil {
+			seenTargets[leaf.Organism] = map[string]struct{}{}
+		}
+		for _, target := range leaf.Targets {
+			if strings.TrimSpace(target) == "" {
+				return fmt.Errorf("leaf contains an empty target")
+			}
+			if _, duplicate := seenTargets[leaf.Organism][target]; duplicate {
+				return fmt.Errorf("target %q appears in multiple leaves for organism %s", target, leaf.Organism)
+			}
+			seenTargets[leaf.Organism][target] = struct{}{}
+		}
+		expectedURL := interactionURL(query, leaf.Organism, query.Fields, leaf.Targets)
+		if leaf.URL != expectedURL {
+			return fmt.Errorf("leaf URL does not match the canonical query")
+		}
+		if len(leaf.URL) > maxBatchEncodedURL {
+			return fmt.Errorf("leaf encoded URL is above %d bytes", maxBatchEncodedURL)
+		}
+		totalEdges += leaf.ExpectedEdges
+	}
+	if totalEdges != inventoryEdges {
+		return fmt.Errorf("leaf expected edges=%d inventory=%d", totalEdges, inventoryEdges)
+	}
+	return nil
+}
+
+func validSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validateFullEvidenceRecordSet(records []recordFile, query interactionQuery) error {
+	expected := map[string]string{"raw/query_meta.json": "query_meta"}
+	for _, organism := range query.Organisms {
+		expected[filepath.ToSlash(filepath.Join("raw", organism, "interactions.tsv"))] = "interactions"
+	}
+	if len(records) != len(expected) {
+		return fmt.Errorf("full-evidence snapshot has %d records, want %d", len(records), len(expected))
+	}
+	seen := map[string]struct{}{}
+	for _, record := range records {
+		asset, ok := expected[record.Path]
+		if !ok || record.Asset != asset {
+			return fmt.Errorf("unexpected full-evidence snapshot record %q", record.Path)
+		}
+		if _, duplicate := seen[record.Path]; duplicate {
+			return fmt.Errorf("duplicate full-evidence snapshot record %q", record.Path)
+		}
+		seen[record.Path] = struct{}{}
+		if record.Bytes < 1 || !validSHA256(record.SHA256) {
+			return fmt.Errorf("invalid identity for full-evidence snapshot record %q", record.Path)
+		}
+		if strings.TrimSpace(record.URL) != "" {
+			return fmt.Errorf("full-evidence final-file record %q must not claim a replay URL", record.Path)
+		}
+	}
+	return nil
+}
+
+func validateFullEvidenceSnapshot(dirVersion string, meta interactionQueryMeta, records []recordFile) error {
+	if err := validateFullEvidenceRecordSet(records, meta.Query); err != nil {
+		return err
+	}
+	leavesByOrganism := make(map[string][]interactionLeaf, len(meta.Query.Organisms))
+	for _, leaf := range meta.LeafBatches {
+		leavesByOrganism[leaf.Organism] = append(leavesByOrganism[leaf.Organism], leaf)
+	}
+	keys := make([]string, 0, meta.Start.Edges)
+	for _, organism := range meta.Query.Organisms {
+		path := filepath.Join(dirVersion, "raw", organism, "interactions.tsv")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read full-evidence interactions for organism %s: %w", organism, err)
+		}
+		table, err := parseTSV(data, fullEvidenceFields)
+		if err != nil {
+			return fmt.Errorf("validate full-evidence interactions for organism %s: %w", organism, err)
+		}
+		targets := make([]string, 0)
+		for _, leaf := range leavesByOrganism[organism] {
+			targets = append(targets, leaf.Targets...)
+		}
+		if err := validateLeafRows(table, targets, meta.Query.Levels); err != nil {
+			return fmt.Errorf("validate full-evidence interactions for organism %s: %w", organism, err)
+		}
+		targetCounts := map[string]int{}
+		seenEdges := map[string]struct{}{}
+		for _, row := range table.rows {
+			targetCounts[row[table.index["target"]]]++
+			key := edgeKey(table, row)
+			if _, duplicate := seenEdges[key]; duplicate {
+				return fmt.Errorf("duplicate full-evidence edge for organism %s", organism)
+			}
+			seenEdges[key] = struct{}{}
+			keys = append(keys, organism+"\x1f"+key)
+		}
+		for _, leaf := range leavesByOrganism[organism] {
+			actual := 0
+			for _, target := range leaf.Targets {
+				actual += targetCounts[target]
+			}
+			if actual != leaf.ExpectedEdges {
+				return fmt.Errorf("leaf edge count mismatch for organism %s: got %d want %d", organism, actual, leaf.ExpectedEdges)
+			}
+		}
+	}
+	sort.Strings(keys)
+	sum := sha256.Sum256([]byte(strings.Join(keys, "\n")))
+	digest := fmt.Sprintf("%x", sum)
+	if len(keys) != meta.Start.Edges || digest != meta.Start.SHA256 {
+		return fmt.Errorf("full-evidence edge inventory mismatch: edges=%d/%d sha256=%s/%s",
+			len(keys), meta.Start.Edges, digest, meta.Start.SHA256)
+	}
+	return nil
+}
+
+func validateInteractionQueryMeta(meta interactionQueryMeta, dataset, versionToken string) error {
+	if meta.Schema != fullEvidenceSchema || meta.Transport != interactionTransport {
+		return fmt.Errorf("query sidecar schema/transport mismatch")
+	}
+	if err := validateFullEvidenceQuery(meta.Query, dataset); err != nil {
+		return err
+	}
+	fingerprint, err := interactionQueryFingerprint(meta.Query)
+	if err != nil {
+		return err
+	}
+	if !validSHA256(meta.Fingerprint) || meta.Fingerprint != fingerprint {
+		return fmt.Errorf("query sidecar fingerprint mismatch: got %s want %s", meta.Fingerprint, fingerprint)
+	}
+	acquiredAt, err := time.Parse(time.RFC3339Nano, meta.AcquiredAtUTC)
+	if err != nil || !strings.HasSuffix(meta.AcquiredAtUTC, "Z") {
+		return fmt.Errorf("query sidecar acquisition time is not canonical UTC")
+	}
+	expectedToken := acquiredAt.UTC().Format("20060102T150405.000000000Z") + "-" + fingerprint[:12]
+	if versionToken != expectedToken {
+		return fmt.Errorf("query identity does not match snapshot version token")
+	}
+	if meta.Start != meta.End || meta.Start.Edges < 0 || !validSHA256(meta.Start.SHA256) {
+		return fmt.Errorf("query sidecar start/end inventory identity mismatch")
+	}
+	if err := validateInteractionLeafPlan(meta.Query, meta.LeafBatches, meta.Start.Edges); err != nil {
+		return fmt.Errorf("query sidecar leaf plan: %w", err)
+	}
+	return nil
+}
+
 func runFetchInteractionsLive(client *omnipathClient, cfg *configInteractions, taxIDs []string, scopeType, scopeValue string) error {
-	acquired := time.Now().UTC()
+	acquired := interactionNow().UTC()
 	query := interactionQuery{
 		Schema: fullEvidenceSchema, Dataset: cfg.dataset, License: normalizeLicense(cfg.ruleLicense),
 		Organisms: append([]string(nil), taxIDs...), Fields: append([]string(nil), fullEvidenceQueryFields...),
 		OutputFields: append([]string(nil), fullEvidenceFields...),
 		Levels:       append([]string(nil), cfg.dorotheaLevels...),
 	}
+	fingerprint, err := interactionQueryFingerprint(query)
+	if err != nil {
+		return err
+	}
 	canonical, err := json.Marshal(query)
 	if err != nil {
 		return err
 	}
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256(canonical))
 	versionToken := acquired.Format("20060102T150405.000000000Z") + "-" + fingerprint[:12]
 	dirVersion := filepath.Join(cfg.dirOut, "interactions", cfg.dataset, versionToken)
 	if cfg.shouldDryRun {
@@ -114,6 +350,11 @@ func runFetchInteractionsLive(client *omnipathClient, cfg *configInteractions, t
 		return nil
 	}
 	dirWork := dirVersion + ".part"
+	if _, err := os.Lstat(dirWork); err == nil {
+		return fmt.Errorf("staging directory already exists; inspect and remove it before retrying: %s", dirWork)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect staging directory %s: %w", dirWork, err)
+	}
 	if err := os.MkdirAll(filepath.Join(dirWork, "raw"), 0o755); err != nil {
 		return fmt.Errorf("create raw dir: %w", err)
 	}
@@ -207,6 +448,12 @@ func runFetchInteractionsLive(client *omnipathClient, cfg *configInteractions, t
 	}
 	records = append(records, metaRecord)
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	if err := validateInteractionQueryMeta(meta, cfg.dataset, versionToken); err != nil {
+		return err
+	}
+	if err := validateFullEvidenceSnapshot(dirWork, meta, records); err != nil {
+		return err
+	}
 	manifestLeaves := make([]manifestLeaf, len(leaves))
 	for i, leaf := range leaves {
 		manifestLeaves[i] = manifestLeaf(leaf)
@@ -226,13 +473,75 @@ func runFetchInteractionsLive(client *omnipathClient, cfg *configInteractions, t
 	manifest.Query.StartSHA, manifest.Query.StartEdges = meta.Start.SHA256, meta.Start.Edges
 	manifest.Query.EndSHA, manifest.Query.EndEdges = meta.End.SHA256, meta.End.Edges
 	manifest.Query.LeafBatches = manifestLeaves
+	if err := validateLockedQuery(manifest); err != nil {
+		return err
+	}
 	if err := writeManifest(filepath.Join(dirWork, "manifest.lock"), manifest); err != nil {
+		return err
+	}
+	if err := validateFullEvidenceLayout(dirWork, query.Organisms, true); err != nil {
 		return err
 	}
 	if err := os.Rename(dirWork, dirVersion); err != nil {
 		return fmt.Errorf("publish snapshot: %w", err)
 	}
 	logf("done (files=%d, leaf_batches=%d)", len(records), len(leaves))
+	return nil
+}
+
+func validateFullEvidenceLayout(dirVersion string, organisms []string, requireManifest bool) error {
+	expectedFiles := map[string]struct{}{
+		"raw/query_meta.json": {},
+	}
+	optionalFiles := map[string]struct{}{}
+	if requireManifest {
+		expectedFiles["manifest.lock"] = struct{}{}
+	} else {
+		optionalFiles["manifest.lock"] = struct{}{}
+	}
+	expectedDirs := map[string]struct{}{
+		".":   {},
+		"raw": {},
+	}
+	for _, organism := range organisms {
+		expectedDirs[filepath.ToSlash(filepath.Join("raw", organism))] = struct{}{}
+		expectedFiles[filepath.ToSlash(filepath.Join("raw", organism, "interactions.tsv"))] = struct{}{}
+	}
+	seenFiles := map[string]struct{}{}
+	err := filepath.WalkDir(dirVersion, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(dirVersion, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("full-evidence snapshot must not contain symlink %q", relative)
+		}
+		if entry.IsDir() {
+			if _, ok := expectedDirs[relative]; !ok {
+				return fmt.Errorf("unexpected full-evidence snapshot directory %q", relative)
+			}
+			return nil
+		}
+		if _, ok := expectedFiles[relative]; !ok {
+			if _, optional := optionalFiles[relative]; !optional {
+				return fmt.Errorf("unexpected full-evidence snapshot file %q", relative)
+			}
+		}
+		seenFiles[relative] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for expected := range expectedFiles {
+		if _, ok := seenFiles[expected]; !ok {
+			return fmt.Errorf("full-evidence snapshot is missing %q", expected)
+		}
+	}
 	return nil
 }
 
@@ -464,6 +773,11 @@ func parseTSV(data []byte, expected []string) (tsvTable, error) {
 	if strings.Join(rows[0], "\x00") != strings.Join(expected, "\x00") {
 		return tsvTable{}, fmt.Errorf("unexpected TSV header: got %q want %q", rows[0], expected)
 	}
+	for indexRow, row := range rows[1:] {
+		if len(row) != len(expected) {
+			return tsvTable{}, fmt.Errorf("TSV row %d has %d fields, want %d", indexRow+2, len(row), len(expected))
+		}
+	}
 	index := make(map[string]int, len(expected))
 	for i, name := range expected {
 		index[name] = i
@@ -572,7 +886,10 @@ func writeJSONAtomic(path string, value any) error {
 func (client *omnipathClient) downloadBatch(urlFile string) ([]byte, int, error) {
 	var last error
 	var status int
+	attempts := 0
 	for attempt := 1; attempt <= client.retryMax; attempt++ {
+		attempts = attempt
+		status = 0
 		response, err := client.clientHTTP.Get(urlFile)
 		if err != nil {
 			last = err
@@ -595,14 +912,7 @@ func (client *omnipathClient) downloadBatch(urlFile string) ([]byte, int, error)
 			if attempt < client.retryMax {
 				wait := client.retryWait
 				if status == http.StatusTooManyRequests {
-					if seconds, err := strconv.Atoi(strings.TrimSpace(response.Header.Get("Retry-After"))); err == nil && seconds >= 0 {
-						wait = time.Duration(seconds) * time.Second
-					} else if when, err := http.ParseTime(strings.TrimSpace(response.Header.Get("Retry-After"))); err == nil {
-						wait = when.Sub(interactionNow())
-						if wait < 0 {
-							wait = 0
-						}
-					}
+					wait = interactionRetryAfter(response.Header.Get("Retry-After"), client.retryWait)
 				}
 				interactionSleep(wait)
 				continue
@@ -612,19 +922,40 @@ func (client *omnipathClient) downloadBatch(urlFile string) ([]byte, int, error)
 			interactionSleep(client.retryWait)
 		}
 	}
-	return nil, status, fmt.Errorf("request %s failed after %d attempts: %w", urlFile, client.retryMax, last)
+	return nil, status, fmt.Errorf("request %s failed after %d attempts: %w", urlFile, attempts, last)
+}
+
+func interactionRetryAfter(value string, fallback time.Duration) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
+		wait := time.Duration(seconds) * time.Second
+		if wait > fallback {
+			return wait
+		}
+		return fallback
+	}
+	if when, err := http.ParseTime(strings.TrimSpace(value)); err == nil {
+		wait := when.Sub(interactionNow())
+		if wait > fallback {
+			return wait
+		}
+	}
+	return fallback
 }
 
 func runRestoreFullEvidence(cfg *restoreConfig, dirVersion string, manifest manifestFile) error {
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
+	return restoreFullEvidenceWithClient(client, cfg, dirVersion, manifest)
+}
+
+func restoreFullEvidenceWithClient(client *omnipathClient, cfg *restoreConfig, dirVersion string, manifest manifestFile) error {
+	if err := validateLockedQuery(manifest); err != nil {
+		return err
+	}
 	if cfg.shouldDryRun {
 		for _, leaf := range manifest.Query.LeafBatches {
 			logf("[dry-run] restore leaf %s", leaf.URL)
 		}
 		return nil
-	}
-	if err := validateLockedQuery(manifest); err != nil {
-		return err
 	}
 	meta := interactionQueryMeta{
 		Schema: manifest.Query.Schema, AcquiredAtUTC: manifest.Query.AcquiredAt,
@@ -751,60 +1082,40 @@ func findManifestRecord(records []recordFile, path string) (recordFile, bool) {
 
 func validateLockedQuery(manifest manifestFile) error {
 	query := manifest.Query
-	if query.Schema != fullEvidenceSchema || query.Transport != interactionTransport ||
-		len(query.Fingerprint) < 12 ||
-		query.License != normalizeLicense(query.License) ||
-		!slicesEqual(query.Fields, fullEvidenceQueryFields) ||
-		!slicesEqual(query.OutputFields, fullEvidenceFields) ||
-		query.StartSHA != query.EndSHA || query.StartEdges != query.EndEdges {
-		return fmt.Errorf("locked full-evidence query is inconsistent")
+	if manifest.Database != "omnipath" || manifest.Asset != "interactions" {
+		return fmt.Errorf("locked full-evidence manifest identity is inconsistent")
 	}
-	if query.SidecarPath != "raw/query_meta.json" || recordSHA(manifest.Files, query.SidecarPath) != query.SidecarSHA ||
-		!strings.HasSuffix(manifest.VersionToken, "-"+query.Fingerprint[:12]) {
-		return fmt.Errorf("locked query does not match snapshot identity")
-	}
-	if (manifest.Dataset == "dorothea") != (len(query.Levels) > 0) {
-		return fmt.Errorf("locked DoRothEA levels do not match dataset")
-	}
-	canonical, err := json.Marshal(interactionQuery{
+	typedQuery := interactionQuery{
 		Schema: query.Schema, Dataset: manifest.Dataset, License: query.License,
 		Organisms: query.Organisms, Fields: query.Fields, OutputFields: query.OutputFields, Levels: query.Levels,
-	})
-	if err != nil {
-		return err
 	}
-	if fmt.Sprintf("%x", sha256.Sum256(canonical)) != query.Fingerprint {
-		return fmt.Errorf("locked query fingerprint mismatch")
+	leaves := make([]interactionLeaf, len(query.LeafBatches))
+	for index, leaf := range query.LeafBatches {
+		leaves[index] = interactionLeaf(leaf)
 	}
-	seen := map[string]map[string]struct{}{}
-	edges := 0
-	for _, leaf := range query.LeafBatches {
-		if !containsString(query.Organisms, leaf.Organism) {
-			return fmt.Errorf("locked leaf organism is outside query")
-		}
-		parsed, err := url.Parse(leaf.URL)
-		if err != nil {
-			return err
-		}
-		values := parsed.Query()
-		if values.Get("datasets") != manifest.Dataset || values.Get("license") != query.License ||
-			values.Get("organisms") != leaf.Organism || values.Get("fields") != strings.Join(query.Fields, ",") ||
-			values.Get("targets") != strings.Join(leaf.Targets, ",") {
-			return fmt.Errorf("locked leaf URL does not match query")
-		}
-		if seen[leaf.Organism] == nil {
-			seen[leaf.Organism] = map[string]struct{}{}
-		}
-		for _, target := range leaf.Targets {
-			if _, duplicate := seen[leaf.Organism][target]; duplicate {
-				return fmt.Errorf("locked target appears in multiple leaves")
-			}
-			seen[leaf.Organism][target] = struct{}{}
-		}
-		edges += leaf.ExpectedEdges
+	meta := interactionQueryMeta{
+		Schema:        query.Schema,
+		AcquiredAtUTC: query.AcquiredAt,
+		Fingerprint:   query.Fingerprint,
+		Query:         typedQuery,
+		Transport:     query.Transport,
+		Start:         interactionInventory{SHA256: query.StartSHA, Edges: query.StartEdges},
+		End:           interactionInventory{SHA256: query.EndSHA, Edges: query.EndEdges},
+		LeafBatches:   leaves,
 	}
-	if edges != query.StartEdges {
-		return fmt.Errorf("locked leaf edge total does not match inventory")
+	if err := validateInteractionQueryMeta(meta, manifest.Dataset, manifest.VersionToken); err != nil {
+		return fmt.Errorf("locked full-evidence query is inconsistent: %w", err)
+	}
+	if manifest.Version != query.AcquiredAt || manifest.QueryURL != queryInteractionsURL ||
+		strings.TrimSpace(manifest.RequestURL) != "" {
+		return fmt.Errorf("locked full-evidence manifest provenance is inconsistent")
+	}
+	if query.SidecarPath != "raw/query_meta.json" || !validSHA256(query.SidecarSHA) ||
+		recordSHA(manifest.Files, query.SidecarPath) != query.SidecarSHA {
+		return fmt.Errorf("locked query does not match sidecar identity")
+	}
+	if err := validateFullEvidenceRecordSet(manifest.Files, typedQuery); err != nil {
+		return fmt.Errorf("locked full-evidence records are inconsistent: %w", err)
 	}
 	return nil
 }

@@ -33,3 +33,39 @@ func TestScanOmniPathRecords(t *testing.T) {
 		t.Fatalf("records = %#v", records)
 	}
 }
+
+func TestValidateRestoreRecordPathsRejectsEscapeDuplicateAndSymlink(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{
+		"",
+		"/tmp/escape.tsv",
+		"../escape.tsv",
+		"raw/../escape.tsv",
+		"raw//9606/interactions.tsv",
+		"other/9606/interactions.tsv",
+	} {
+		if err := validateRestoreRecordPaths(root, []recordFile{{Path: path}}); err == nil {
+			t.Fatalf("accepted unsafe restore path %q", path)
+		}
+	}
+	if err := validateRestoreRecordPaths(root, []recordFile{
+		{Path: "raw/9606/interactions.tsv"},
+		{Path: "raw/9606/interactions.tsv"},
+	}); err == nil {
+		t.Fatal("accepted duplicate restore paths")
+	}
+	if err := validateRestoreRecordPaths(root, []recordFile{{Path: "raw/9606/interactions.tsv"}}); err != nil {
+		t.Fatalf("rejected safe missing restore path: %v", err)
+	}
+
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "raw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "raw", "9606")); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRestoreRecordPaths(root, []recordFile{{Path: "raw/9606/interactions.tsv"}}); err == nil {
+		t.Fatal("accepted restore path through symlink")
+	}
+}
