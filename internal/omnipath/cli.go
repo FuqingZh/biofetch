@@ -32,6 +32,8 @@ type configInteractions struct {
 	shouldDownloadAll       bool
 	dataset                 string
 	ruleLicense             string
+	dorotheaLevels          []string
+	dorotheaLevelsSet       bool
 	ruleExisting            string
 	shouldOverwriteExisting bool
 	retryMax                int
@@ -131,6 +133,7 @@ func createInteractionsCommand() *cobra.Command {
 func createInteractionsFetchCommand() *cobra.Command {
 	cfg := configInteractions{}
 	cfg.dataset = "kinaseextra"
+	cfg.dorotheaLevels = []string{"A", "B", "C", "D"}
 	cfg.retryMax = 5
 	cfg.retryWait = 3 * time.Second
 	cfg.ruleExisting = "skip"
@@ -142,6 +145,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.dorotheaLevelsSet = cmd.Flags().Changed("dorothea-levels")
 			if err := validateInteractionsConfig(&cfg); err != nil {
 				return err
 			}
@@ -157,6 +161,7 @@ func createInteractionsFetchCommand() *cobra.Command {
 	flags.BoolVar(&cfg.shouldDownloadAll, "all-organisms", false, "Fetch all supported organisms")
 	flags.StringVar(&cfg.dataset, "dataset", cfg.dataset, "Interactions dataset: collectri|dorothea|kinaseextra")
 	flags.StringVar(&cfg.ruleLicense, "license", "", "License mode: academic|commercial")
+	cliopt.BindStringListFlags(flags, &cfg.dorotheaLevels, "dorothea-levels", "DoRothEA confidence levels: A,B,C,D; valid only with --dataset dorothea; repeat the flag,")
 	flags.StringVar(&cfg.ruleExisting, "on-existing", cfg.ruleExisting, "Rule for existing files: skip|overwrite")
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
 	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
@@ -336,6 +341,7 @@ func validateEnzSubConfig(cfg *configEnzSub) error {
 	if err := validateRuleLicense(cfg.ruleLicense); err != nil {
 		return err
 	}
+	cfg.ruleLicense = normalizeLicense(cfg.ruleLicense)
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("max-attempts must be >= 1")
 	}
@@ -376,9 +382,22 @@ func validateInteractionsConfig(cfg *configInteractions) error {
 	if err := validateRuleLicense(cfg.ruleLicense); err != nil {
 		return err
 	}
+	cfg.ruleLicense = normalizeLicense(cfg.ruleLicense)
 	cfg.dataset = strings.ToLower(strings.TrimSpace(cfg.dataset))
 	if _, ok := interactionDatasetsSupported[cfg.dataset]; !ok {
 		return fmt.Errorf("dataset must be one of: collectri, dorothea, kinaseextra")
+	}
+	levels, err := normalizeDorotheaLevels(cfg.dorotheaLevels)
+	if err != nil {
+		return err
+	}
+	if cfg.dataset != "dorothea" {
+		if cfg.dorotheaLevelsSet {
+			return fmt.Errorf("dorothea-levels is valid only with --dataset dorothea")
+		}
+		cfg.dorotheaLevels = nil
+	} else {
+		cfg.dorotheaLevels = levels
 	}
 	if cfg.retryMax < 1 {
 		return fmt.Errorf("max-attempts must be >= 1")
@@ -423,6 +442,43 @@ func validateRuleLicense(ruleLicense string) error {
 		return nil
 	}
 	return fmt.Errorf("rule_license must be one of: academic, commercial")
+}
+
+func normalizeLicense(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "academic"
+	}
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeDorotheaLevels(values []string) ([]string, error) {
+	if len(values) == 0 {
+		values = []string{"A", "B", "C", "D"}
+	}
+	resolved, err := cliopt.ExpandListTokens(values, "", "dorothea-levels")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for _, raw := range resolved {
+		for _, item := range strings.Split(raw, ",") {
+			level := strings.ToUpper(strings.TrimSpace(item))
+			if level < "A" || level > "D" || len(level) != 1 {
+				return nil, fmt.Errorf("dorothea-levels must contain only: A, B, C, D")
+			}
+			seen[level] = struct{}{}
+		}
+	}
+	levels := make([]string, 0, len(seen))
+	for _, level := range []string{"A", "B", "C", "D"} {
+		if _, ok := seen[level]; ok {
+			levels = append(levels, level)
+		}
+	}
+	if len(levels) == 0 {
+		return nil, fmt.Errorf("dorothea-levels must not be empty")
+	}
+	return levels, nil
 }
 
 func normalizeOrganism(value string) (string, error) {

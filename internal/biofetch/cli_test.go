@@ -122,6 +122,17 @@ func TestNestedOmniPathRestoreUsesExactSnapshot(t *testing.T) {
 	}
 }
 
+func TestOmniPathInteractionsDorotheaLevelsAreDatasetScoped(t *testing.T) {
+	err := RunCLI([]string{
+		"omnipath", "interactions", "fetch", "--output", t.TempDir(),
+		"--organisms", "9606", "--dataset", "kinaseextra", "--dorothea-levels", "A,B",
+		"--dry-run",
+	})
+	if err == nil || !strings.Contains(err.Error(), "valid only with --dataset dorothea") {
+		t.Fatalf("dataset-scoped dorothea levels error = %v", err)
+	}
+}
+
 func TestFlatRestoresRejectMismatchedAssetPath(t *testing.T) {
 	for _, asset := range cliAssets {
 		if asset[0] == "omnipath" && asset[1] == "interactions" {

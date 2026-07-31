@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +21,9 @@ const mappingLargeDownloadThresholdBytes = 100 * 1024 * 1024
 
 var mappingCurrentBaseURL = "https://reactome.org/download/current/"
 var mappingCurrentVersionURL = "https://reactome.org/ContentService/data/database/version"
+var mappingReleaseBaseURL = "https://download.reactome.org/%s/"
+var reactomeSleep = time.Sleep
+var reactomeNow = time.Now
 var patternMappingVersion = regexp.MustCompile(`(?i)^v?([0-9]+)$`)
 
 var mappingAssetsSupported = []string{
@@ -81,11 +85,12 @@ func runFetchMapping(cfg *mappingConfig) error {
 		return err
 	}
 	clientHTTP := httpx.NewClient(cfg.ShouldAllowInsecureTLS)
-	versionToken, err := resolveMappingFetchVersionToken(clientHTTP, cfg.VersionToken)
+	versionToken, err := resolveMappingFetchVersionToken(clientHTTP, cfg.VersionToken, cfg.RetryMax, cfg.RetryWait)
 	if err != nil {
 		return err
 	}
-	assetsStatic := buildMappingStaticAssets(mappingCurrentBaseURL, assets)
+	releaseNumber := strings.TrimPrefix(versionToken, "v")
+	assetsStatic := buildMappingStaticAssets(fmt.Sprintf(mappingReleaseBaseURL, releaseNumber), assets)
 	if !cfg.ShouldDryRun && !cfg.shouldAllowLargeAssets {
 		if err := validateMappingDownloadSizes(clientHTTP, assetsStatic, mappingLargeDownloadThresholdBytes); err != nil {
 			return err
@@ -246,13 +251,13 @@ func buildMappingSource(versionToken string, assets []staticasset.Asset) statica
 	}
 }
 
-func resolveMappingFetchVersionToken(clientHTTP *http.Client, value string) (string, error) {
+func resolveMappingFetchVersionToken(clientHTTP *http.Client, value string, maxAttempts int, wait time.Duration) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		value = mappingDefaultVersionToken
 	}
 	if strings.EqualFold(value, mappingDefaultVersionToken) {
-		return resolveMappingCurrentVersionToken(clientHTTP)
+		return resolveMappingCurrentVersionToken(clientHTTP, maxAttempts, wait)
 	}
 	return normalizeMappingFixedVersionToken(value)
 }
@@ -269,29 +274,62 @@ func normalizeMappingFixedVersionToken(value string) (string, error) {
 	return "v" + matches[1], nil
 }
 
-func resolveMappingCurrentVersionToken(clientHTTP *http.Client) (string, error) {
-	request, err := http.NewRequest(http.MethodGet, mappingCurrentVersionURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("build Reactome current version request: %w", err)
+func resolveMappingCurrentVersionToken(clientHTTP *http.Client, maxAttempts int, retryWait time.Duration) (string, error) {
+	var lastErr error
+	status := "transport-error"
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		request, err := http.NewRequest(http.MethodGet, mappingCurrentVersionURL, nil)
+		if err != nil {
+			return "", fmt.Errorf("build Reactome current version request: %w", err)
+		}
+		request.Header.Set("Accept", "text/plain")
+		response, err := clientHTTP.Do(request)
+		if err != nil {
+			lastErr = err
+		} else {
+			status = response.Status
+			data, errRead := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if errRead == nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+				versionToken, err := normalizeMappingFixedVersionToken(string(data))
+				if err != nil {
+					return "", fmt.Errorf("parse Reactome current release version %q: %w", strings.TrimSpace(string(data)), err)
+				}
+				return versionToken, nil
+			}
+			if errRead != nil {
+				lastErr = errRead
+			} else {
+				lastErr = fmt.Errorf("unexpected status %s", response.Status)
+			}
+			retryable := response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
+			if !retryable {
+				return "", fmt.Errorf("resolve Reactome current release version endpoint=%s status=%s attempts=%d: %w",
+					mappingCurrentVersionURL, status, attempt, lastErr)
+			}
+			if strings.TrimSpace(response.Header.Get("Retry-After")) != "" {
+				retryWait = reactomeRetryAfter(response.Header.Get("Retry-After"), retryWait)
+			}
+		}
+		if attempt < maxAttempts {
+			reactomeSleep(retryWait)
+		}
 	}
-	request.Header.Set("Accept", "text/plain")
-	response, err := clientHTTP.Do(request)
-	if err != nil {
-		return "", fmt.Errorf("resolve Reactome current release version: %w", err)
+	return "", fmt.Errorf("resolve Reactome current release version endpoint=%s status=%s attempts=%d: %w",
+		mappingCurrentVersionURL, status, maxAttempts, lastErr)
+}
+
+func reactomeRetryAfter(value string, fallback time.Duration) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
 	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("resolve Reactome current release version: unexpected status %s", response.Status)
+	if when, err := http.ParseTime(value); err == nil {
+		if wait := when.Sub(reactomeNow()); wait > 0 {
+			return wait
+		}
+		return 0
 	}
-	data, err := io.ReadAll(response.Body)
-	if err != nil {
-		return "", fmt.Errorf("read Reactome current release version: %w", err)
-	}
-	versionToken, err := normalizeMappingFixedVersionToken(string(data))
-	if err != nil {
-		return "", fmt.Errorf("parse Reactome current release version %q: %w", strings.TrimSpace(string(data)), err)
-	}
-	return versionToken, nil
+	return fallback
 }
 
 func createDefaultMappingConfig() mappingConfig {

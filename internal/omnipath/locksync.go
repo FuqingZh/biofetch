@@ -5,9 +5,13 @@ import (
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -78,6 +82,17 @@ func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
 		QueryURL:   deriveOmniPathQueryURL(records, ""),
 		Files:      records,
 	}
+	if asset == "interactions" {
+		query, err := lockInteractionQuery(filepath.Join(dirVersion, "raw", "query_meta.json"), records, dataset, versionToken)
+		if err != nil {
+			return err
+		}
+		manifest.Query = query
+		if query.Schema == fullEvidenceSchema {
+			manifest.Version = query.AcquiredAt
+			manifest.DownloadedAt = query.AcquiredAt
+		}
+	}
 
 	if cfg.shouldDryRun {
 		logf("[dry-run] lock version dir: %s", dirVersion)
@@ -114,6 +129,9 @@ func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error
 	}
 	if strings.HasPrefix(strings.TrimSpace(manifestExisting.QueryURL), archiveURL) {
 		return runRestoreArchive(cfg, dirVersion, manifestExisting, asset)
+	}
+	if asset == "interactions" && manifestExisting.Query.Schema == fullEvidenceSchema {
+		return runRestoreFullEvidence(cfg, dirVersion, manifestExisting)
 	}
 
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
@@ -184,6 +202,135 @@ func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error
 	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
+}
+
+func lockInteractionQuery(path string, records []recordFile, dataset, versionToken string) (manifestQuery, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return manifestQuery{}, fmt.Errorf("read query sidecar: %w", err)
+	}
+	var meta interactionQueryMeta
+	if !json.Valid(data) {
+		if strings.HasPrefix(strings.TrimSpace(string(data)), "{") || strings.HasPrefix(strings.TrimSpace(string(data)), "[") {
+			return manifestQuery{}, fmt.Errorf("query sidecar contains malformed JSON")
+		}
+		return manifestQuery{Schema: "legacy-basic", SidecarPath: "raw/query_meta.json",
+			SidecarSHA: recordSHA(records, "raw/query_meta.json")}, nil
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return manifestQuery{}, err
+	}
+	if meta.Schema != fullEvidenceSchema {
+		var archive struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.Unmarshal(data, &archive); err == nil && archive.Mode == "archive" {
+			return manifestQuery{Schema: "legacy-basic", SidecarPath: "raw/query_meta.json",
+				SidecarSHA: recordSHA(records, "raw/query_meta.json")}, nil
+		}
+		return manifestQuery{}, fmt.Errorf("unsupported JSON query sidecar schema %q", meta.Schema)
+	}
+	if meta.Query.Schema != fullEvidenceSchema || meta.Transport != interactionTransport {
+		return manifestQuery{}, fmt.Errorf("query sidecar schema/transport mismatch")
+	}
+	if meta.Query.Dataset != dataset || meta.Query.License != normalizeLicense(meta.Query.License) {
+		return manifestQuery{}, fmt.Errorf("query sidecar dataset/license mismatch")
+	}
+	if !reflect.DeepEqual(meta.Query.Fields, fullEvidenceQueryFields) ||
+		!reflect.DeepEqual(meta.Query.OutputFields, fullEvidenceFields) {
+		return manifestQuery{}, fmt.Errorf("query sidecar fixed field profile mismatch")
+	}
+	if !reflect.DeepEqual(meta.Query.Organisms, deriveOmniPathTaxIDsFromRecords(records)) {
+		return manifestQuery{}, fmt.Errorf("query sidecar organisms do not match snapshot files")
+	}
+	if len(meta.Query.Levels) > 0 {
+		levels, err := normalizeDorotheaLevels(meta.Query.Levels)
+		if err != nil || !reflect.DeepEqual(levels, meta.Query.Levels) {
+			return manifestQuery{}, fmt.Errorf("query sidecar DoRothEA levels are not canonical A-D")
+		}
+	}
+	if (dataset == "dorothea") != (len(meta.Query.Levels) > 0) {
+		return manifestQuery{}, fmt.Errorf("query sidecar DoRothEA levels do not match dataset")
+	}
+	canonical, err := json.Marshal(meta.Query)
+	if err != nil {
+		return manifestQuery{}, err
+	}
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256(canonical))
+	if fingerprint != meta.Fingerprint {
+		return manifestQuery{}, fmt.Errorf("query sidecar fingerprint mismatch: got %s want %s", meta.Fingerprint, fingerprint)
+	}
+	if !strings.HasSuffix(versionToken, "-"+fingerprint[:12]) {
+		return manifestQuery{}, fmt.Errorf("query fingerprint does not match snapshot version token")
+	}
+	acquiredAt, err := time.Parse(time.RFC3339Nano, meta.AcquiredAtUTC)
+	if err != nil || !strings.HasPrefix(versionToken, acquiredAt.UTC().Format("20060102T150405.000000000Z")+"-") {
+		return manifestQuery{}, fmt.Errorf("query acquisition timestamp does not match snapshot version token")
+	}
+	if meta.Start != meta.End {
+		return manifestQuery{}, fmt.Errorf("query sidecar inventory drift: start and end differ")
+	}
+	seenTargets := map[string]map[string]struct{}{}
+	edges := 0
+	for _, leaf := range meta.LeafBatches {
+		if !containsString(meta.Query.Organisms, leaf.Organism) || len(leaf.Targets) == 0 || leaf.ExpectedEdges < 0 {
+			return manifestQuery{}, fmt.Errorf("query sidecar contains invalid leaf identity")
+		}
+		values, err := url.Parse(leaf.URL)
+		if err != nil {
+			return manifestQuery{}, fmt.Errorf("query sidecar contains invalid leaf URL: %w", err)
+		}
+		params := values.Query()
+		if params.Get("datasets") != dataset || params.Get("license") != meta.Query.License ||
+			params.Get("organisms") != leaf.Organism ||
+			params.Get("fields") != strings.Join(meta.Query.Fields, ",") ||
+			params.Get("targets") != strings.Join(leaf.Targets, ",") {
+			return manifestQuery{}, fmt.Errorf("query sidecar leaf URL does not match canonical query")
+		}
+		if seenTargets[leaf.Organism] == nil {
+			seenTargets[leaf.Organism] = map[string]struct{}{}
+		}
+		for _, target := range leaf.Targets {
+			if _, duplicate := seenTargets[leaf.Organism][target]; duplicate {
+				return manifestQuery{}, fmt.Errorf("query sidecar target %q is duplicated", target)
+			}
+			seenTargets[leaf.Organism][target] = struct{}{}
+		}
+		edges += leaf.ExpectedEdges
+	}
+	if edges != meta.Start.Edges {
+		return manifestQuery{}, fmt.Errorf("query sidecar leaf expected edges=%d inventory=%d", edges, meta.Start.Edges)
+	}
+	leaves := make([]manifestLeaf, len(meta.LeafBatches))
+	for i, leaf := range meta.LeafBatches {
+		leaves[i] = manifestLeaf(leaf)
+	}
+	return manifestQuery{
+		Schema: meta.Schema, Fingerprint: meta.Fingerprint, License: meta.Query.License,
+		Fields: meta.Query.Fields, OutputFields: meta.Query.OutputFields, Levels: meta.Query.Levels, SidecarPath: "raw/query_meta.json",
+		SidecarSHA: recordSHA(records, "raw/query_meta.json"), AcquiredAt: meta.AcquiredAtUTC,
+		Transport: meta.Transport, Organisms: meta.Query.Organisms,
+		StartSHA: meta.Start.SHA256, StartEdges: meta.Start.Edges,
+		EndSHA: meta.End.SHA256, EndEdges: meta.End.Edges, LeafBatches: leaves,
+	}, nil
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func recordSHA(records []recordFile, path string) string {
+	for _, record := range records {
+		if record.Path == path {
+			return record.SHA256
+		}
+	}
+	return ""
 }
 
 func runRestoreArchive(cfg *restoreConfig, dirVersion string, manifestExisting manifestFile, asset string) error {
@@ -272,6 +419,14 @@ func scanOmniPathRecords(dirVersion string, asset string, dataset string, manife
 	}
 
 	dirRaw := filepath.Join(dirVersion, "raw")
+	fullEvidenceSidecar := false
+	if asset == "interactions" {
+		var meta interactionQueryMeta
+		if data, err := os.ReadFile(filepath.Join(dirRaw, "query_meta.json")); err == nil &&
+			json.Unmarshal(data, &meta) == nil && meta.Schema == fullEvidenceSchema {
+			fullEvidenceSidecar = true
+		}
+	}
 	urlsExisting := buildOmniPathExistingURLMap(manifestExisting)
 	urlArchive := firstNonEmpty(
 		strings.TrimSpace(manifestExisting.QueryURL),
@@ -297,10 +452,13 @@ func scanOmniPathRecords(dirVersion string, asset string, dataset string, manife
 					continue
 				}
 				fileName := entryFile.Name()
+				if fileName != asset+".tsv" {
+					return nil, fmt.Errorf("unexpected OmniPath raw file: %s", filepath.Join(taxID, fileName))
+				}
 				filePath := filepath.Join(dirTaxID, fileName)
 				pathRel := filepath.ToSlash(filepath.Join("raw", taxID, fileName))
 				urlFile := urlsExisting[pathRel]
-				if urlFile == "" {
+				if urlFile == "" && !fullEvidenceSidecar {
 					if strings.HasPrefix(urlArchive, archiveURL) {
 						urlFile = urlArchive
 					} else {
