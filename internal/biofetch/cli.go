@@ -3,6 +3,7 @@ package biofetch
 import (
 	"biofetch/internal/chebi"
 	"biofetch/internal/chemont"
+	"biofetch/internal/dbcan"
 	"biofetch/internal/eggnog"
 	"biofetch/internal/geneontology"
 	"biofetch/internal/hmdb"
@@ -35,6 +36,7 @@ func RunCLI(args []string) error {
 	commandRoot.AddCommand(eggnog.NewCommand())
 	commandRoot.AddCommand(chebi.NewCommand())
 	commandRoot.AddCommand(chemont.NewCommand())
+	commandRoot.AddCommand(dbcan.NewCommand())
 	commandRoot.AddCommand(geneontology.NewCommand())
 	commandRoot.AddCommand(hmdb.NewCommand())
 	commandRoot.AddCommand(interpro.NewCommand())
