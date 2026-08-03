@@ -118,6 +118,7 @@ type scanTask struct {
 }
 
 const manifestFlushInterval = 5 * time.Second
+const retryAfterMax = 5 * time.Minute
 
 type progressReporter struct {
 	writer        io.Writer
@@ -626,9 +627,8 @@ func downloadFileWithRetry(
 	filePart := fileOut + ".part"
 	var errLast error
 	for attempt := 1; attempt <= retryMax; attempt++ {
-		limiterRequest.Wait()
 		progress.startFile(asset)
-		if err := httpx.DownloadFileWithResume(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset)); err == nil {
+		if err := httpx.DownloadFileWithResumeOptions(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset), httpx.DownloadOptions{Limiter: limiterRequest}); err == nil {
 			if asset.VerifyDownloadedFile != nil {
 				if err := asset.VerifyDownloadedFile(filePart); err != nil {
 					if errRemove := os.Remove(filePart); errRemove != nil && !os.IsNotExist(errRemove) {
@@ -660,11 +660,25 @@ func downloadFileWithRetry(
 			}
 			progress.finishFile(asset, false)
 		}
-		if attempt < retryMax && retryWait > 0 {
-			time.Sleep(retryWait)
+		if attempt < retryMax {
+			wait := retryWaitForError(errLast, retryWait)
+			if wait > 0 {
+				time.Sleep(wait)
+			}
 		}
 	}
 	return fmt.Errorf("download failed after %d attempts for %s: %w", retryMax, asset.URL, errLast)
+}
+
+func retryWaitForError(err error, fallback time.Duration) time.Duration {
+	wait := fallback
+	if (httpx.IsUnexpectedStatus(err, http.StatusTooManyRequests) || httpx.IsUnexpectedStatus(err, http.StatusServiceUnavailable)) && httpx.RetryAfter(err) > wait {
+		wait = httpx.RetryAfter(err)
+	}
+	if wait > retryAfterMax {
+		return retryAfterMax
+	}
+	return wait
 }
 
 func buildRecord(filePath string, asset Asset) (FileRecord, error) {

@@ -2,6 +2,7 @@ package staticasset
 
 import (
 	"biofetch/internal/shared/filehash"
+	"biofetch/internal/shared/httpx"
 	"bytes"
 	"fmt"
 	"net/http"
@@ -187,9 +188,14 @@ func TestFetchVerifierFailureRemovesPartAndNextInvocationRedownloads(t *testing.
 
 func TestFetchVerifierChecksResumedPart(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodHead {
+			writer.Header().Set("Content-Length", "8")
+			return
+		}
 		if got := request.Header.Get("Range"); got != "bytes=4-" {
 			t.Fatalf("Range = %q, want bytes=4-", got)
 		}
+		writer.Header().Set("Content-Range", "bytes 4-7/8")
 		writer.WriteHeader(http.StatusPartialContent)
 		_, _ = writer.Write([]byte("ived"))
 	}))
@@ -220,6 +226,24 @@ func TestFetchVerifierChecksResumedPart(t *testing.T) {
 	}
 	if !verified {
 		t.Fatal("resumed part was not verified")
+	}
+}
+
+func TestRetryWaitForErrorHonorsAndBoundsRetryAfter(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want time.Duration
+	}{
+		{name: "429", err: httpx.UnexpectedStatusError{Code: http.StatusTooManyRequests, RetryAfter: 7 * time.Second}, want: 7 * time.Second},
+		{name: "503 bounded", err: httpx.UnexpectedStatusError{Code: http.StatusServiceUnavailable, RetryAfter: time.Hour}, want: retryAfterMax},
+		{name: "other status", err: httpx.UnexpectedStatusError{Code: http.StatusBadGateway, RetryAfter: 7 * time.Second}, want: time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := retryWaitForError(test.err, time.Second); got != test.want {
+				t.Fatalf("retryWaitForError = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 
