@@ -117,6 +117,25 @@ InterProScan restore uses only the exact snapshot identity, recorded source
 URLs, and recorded SHA256 values; it performs no mutable latest-release
 lookup.
 
+dbCAN uses the upstream `database` product name and the fixed snapshot
+`dbcan/database/db_v5-2-9_5-5-2026`. Its raw layout contains exactly
+`CAZy.dmnd`, `dbCAN.hmm`, `dbCAN-sub.hmm`, and
+`fam-substrate-mapping.tsv`; the local `dbCAN-sub.hmm` record preserves the
+exact remote `dbCAN_sub.hmm` S3 URL. All four files are required, total
+7,439,565,906 bytes, and every fetch requires `--allow-large-downloads`.
+Neither a subset nor moving `current`, `latest`, or `db_current` identity is a
+valid snapshot.
+
+dbCAN fetch publishes `manifest.lock` only after the complete declared set has
+passed expected-byte and local SHA256 checks. Lock rejects missing and
+undeclared raw files, including pressed-HMM sidecars. Restore validates the
+complete identity, `source = "run-dbcan-s3"`, associated run_dbCAN software
+`version = "5.2.9"`, exact URLs, byte counts, canonical paths, and SHA256
+records before network or raw-file mutation. It never rewrites the authoritative
+lock and fails if the pinned URL serves different bytes. The upstream core set
+has no SHA/MD5 sidecar; multipart S3 ETags are remote-generation validators,
+not content hashes.
+
 Locking always computes SHA256 from the current file bytes; size or mtime is
 never accepted as a hash substitute. File hashing uses deterministic ordered
 parallelism controlled by `--workers`, with a conservative default of 4.

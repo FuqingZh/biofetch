@@ -122,11 +122,25 @@ biofetch lipidmaps lmsd fetch --output /database/bioinfo/resources/lipidmaps
 biofetch hmdb database fetch --output /database/bioinfo/resources/hmdb
 ```
 
+Fetch the pinned dbCAN CAZyme database collection:
+
+```bash
+biofetch dbcan database fetch \
+  --output /database/bioinfo/resources/dbcan \
+  --allow-large-downloads
+```
+
+dbCAN always uses `db_v5-2-9_5-5-2026`, downloads all four required files
+(about 6.93 GiB) from the pinned S3 release, and defaults to one outer download
+worker. It does not expose asset subsets or CGC flags. Lock and restore require
+the exact `dbcan/database/db_v5-2-9_5-5-2026` snapshot.
+
 `--assets` selects a maintained subset or `all`. Defaults avoid optional very
 large files such as the HMDB all-spectra bundle; selecting a declared large
 asset also requires `--allow-large-downloads`. KEGG metabolic entry records are
 acquired in REST batches of at most ten IDs and the default request interval is
-350 ms.
+350 ms. The atomic dbCAN collection is the documented exception: it has no
+`--assets` option and always requires the large-download opt-in.
 
 These commands preserve raw upstream files only. Compound crosswalks,
 normalized reaction edges, motif tables, and other Parquet outputs remain
