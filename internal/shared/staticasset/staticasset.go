@@ -6,6 +6,7 @@ import (
 	"biofetch/internal/shared/httpx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ type Asset struct {
 	VerifyDownloadedFile  func(string) error                                    `toml:"-"`
 	HashForLock           func(string, HashProgressFunc) (string, int64, error) `toml:"-"`
 	ReuseVerifiedExisting bool                                                  `toml:"-"`
+	ExpectedBytes         int64                                                 `toml:"-"`
 }
 
 type HashProgressFunc = httpx.DownloadProgressFunc
@@ -40,6 +42,8 @@ type Source struct {
 	Assets                 []Asset
 	LockOnlyDeclaredAssets bool
 	RequiredAssets         []string
+	RequireCompleteAssets  bool
+	RejectUndeclaredAssets bool
 }
 
 type Scope struct {
@@ -108,13 +112,14 @@ type downloadTask struct {
 }
 
 type scanTask struct {
-	filePath    string
-	pathRel     string
-	asset       string
-	url         string
-	bytes       int64
-	hashForLock func(string, HashProgressFunc) (string, int64, error)
-	verifyFile  func(string) error
+	filePath      string
+	pathRel       string
+	asset         string
+	url           string
+	bytes         int64
+	hashForLock   func(string, HashProgressFunc) (string, int64, error)
+	verifyFile    func(string) error
+	expectedBytes int64
 }
 
 const manifestFlushInterval = 5 * time.Second
@@ -186,10 +191,13 @@ func Fetch(source Source, options Options, trace TraceSink) error {
 	limiterRequest := httpx.NewRequestLimiter(options.RequestInterval)
 	progress := newProgressReporter(source, options, len(source.Assets), len(recordsReused))
 	progress.plan(len(recordsReused), len(tasksDownload))
-	writerManifest, err := newIncrementalManifestWriter(fileManifest, source, dirVersion)
-	if err != nil {
-		progress.finish(false)
-		return err
+	var writerManifest *incrementalManifestWriter
+	if !source.RequireCompleteAssets {
+		writerManifest, err = newIncrementalManifestWriter(fileManifest, source, dirVersion)
+		if err != nil {
+			progress.finish(false)
+			return err
+		}
 	}
 	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress, writerManifest)
 	if err != nil {
@@ -197,17 +205,28 @@ func Fetch(source Source, options Options, trace TraceSink) error {
 		progress.finish(false)
 		return err
 	}
-	if err := writerManifest.flush(); err != nil {
-		progress.finish(false)
-		return err
+	if writerManifest != nil {
+		if err := writerManifest.flush(); err != nil {
+			progress.finish(false)
+			return err
+		}
 	}
 	progress.finish(true)
 
 	records := append([]FileRecord{}, recordsReused...)
 	records = append(records, recordsDownloaded...)
-	recordsComplete, err := buildCompleteRecords(fileManifest, dirVersion, records)
-	if err != nil {
-		return err
+	var recordsComplete []FileRecord
+	if source.RequireCompleteAssets {
+		recordsComplete = records
+		sortRecords(recordsComplete)
+		if err := validateCompleteRecords(source, recordsComplete); err != nil {
+			return err
+		}
+	} else {
+		recordsComplete, err = buildCompleteRecords(fileManifest, dirVersion, records)
+		if err != nil {
+			return err
+		}
 	}
 	if err := writeManifest(fileManifest, source, recordsComplete, time.Now()); err != nil {
 		return err
@@ -256,12 +275,17 @@ func Lock(source Source, dirVersion string, options Options, trace TraceSink) er
 		}
 	}
 	progress := newProgressReporter(source, options, 0, 0)
-	records, err := scanRecords(dirVersion, assetsByPath, source.LockOnlyDeclaredAssets, progress, options.WorkersMax)
+	records, err := scanRecords(dirVersion, assetsByPath, source.LockOnlyDeclaredAssets, source.RejectUndeclaredAssets, progress, options.WorkersMax)
 	if err != nil {
 		progress.finish(false)
 		return err
 	}
 	progress.finish(true)
+	if source.RequireCompleteAssets {
+		if err := validateCompleteRecords(source, records); err != nil {
+			return err
+		}
+	}
 	emit(trace, source, TraceEvent{Event: "scan_files", Path: filepath.Join(dirVersion, "raw"), Status: fmt.Sprintf("files=%d", len(records))})
 	if options.ShouldDryRun {
 		emit(trace, source, TraceEvent{Event: "lock_rebuild", Path: fileManifest, Status: "dry_run"})
@@ -309,12 +333,21 @@ func Sync(source Source, options Options, trace TraceSink) error {
 			source.VersionToken,
 		)
 	}
+	if source.RequireCompleteAssets && (manifest.Source != source.Source || manifest.Version != source.Version) {
+		return fmt.Errorf(
+			"manifest provenance mismatch: got source=%q version=%q, want source=%q version=%q",
+			manifest.Source, manifest.Version, source.Source, source.Version,
+		)
+	}
 	recordsManifest, err := readRecords(fileManifest)
 	if err != nil {
 		return err
 	}
 	if len(recordsManifest) == 0 {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
+	}
+	if err := validateRestoreRecords(source, recordsManifest); err != nil {
+		return err
 	}
 	emit(trace, source, TraceEvent{Event: "read_manifest", Path: fileManifest, Status: fmt.Sprintf("files=%d", len(recordsManifest))})
 	if options.ShouldDryRun {
@@ -335,32 +368,41 @@ func Sync(source Source, options Options, trace TraceSink) error {
 	limiterRequest := httpx.NewRequestLimiter(options.RequestInterval)
 	progress := newProgressReporter(source, options, len(recordsManifest), len(recordsReused))
 	progress.plan(len(recordsReused), len(tasksDownload))
-	writerManifest, err := newIncrementalManifestWriter(fileManifest, source, dirVersion)
-	if err != nil {
-		progress.finish(false)
-		return err
+	var writerManifest *incrementalManifestWriter
+	if !source.RequireCompleteAssets {
+		writerManifest, err = newIncrementalManifestWriter(fileManifest, source, dirVersion)
+		if err != nil {
+			progress.finish(false)
+			return err
+		}
 	}
 	recordsDownloaded, err := runDownloadTasks(clientHTTP, source, dirVersion, tasksDownload, options, limiterRequest, trace, progress, writerManifest)
 	if err != nil {
-		_ = writerManifest.flush()
+		if writerManifest != nil {
+			_ = writerManifest.flush()
+		}
 		progress.finish(false)
 		return err
 	}
-	if err := writerManifest.flush(); err != nil {
-		progress.finish(false)
-		return err
+	if writerManifest != nil {
+		if err := writerManifest.flush(); err != nil {
+			progress.finish(false)
+			return err
+		}
 	}
 	progress.finish(true)
-	records := append([]FileRecord{}, recordsReused...)
-	records = append(records, recordsDownloaded...)
-	recordsComplete, err := buildCompleteRecords(fileManifest, dirVersion, records)
-	if err != nil {
-		return err
+	if !source.RequireCompleteAssets {
+		records := append([]FileRecord{}, recordsReused...)
+		records = append(records, recordsDownloaded...)
+		recordsComplete, err := buildCompleteRecords(fileManifest, dirVersion, records)
+		if err != nil {
+			return err
+		}
+		if err := writeManifest(fileManifest, source, recordsComplete, time.Now()); err != nil {
+			return err
+		}
+		emit(trace, source, TraceEvent{Event: "write_manifest", Path: fileManifest, Status: fmt.Sprintf("files=%d", len(recordsComplete))})
 	}
-	if err := writeManifest(fileManifest, source, recordsComplete, time.Now()); err != nil {
-		return err
-	}
-	emit(trace, source, TraceEvent{Event: "write_manifest", Path: fileManifest, Status: fmt.Sprintf("files=%d", len(recordsComplete))})
 	return nil
 }
 
@@ -401,6 +443,9 @@ func validateSource(source Source) error {
 			return fmt.Errorf("duplicate asset name: %s", asset.Name)
 		}
 		namesSeen[asset.Name] = struct{}{}
+		if asset.ExpectedBytes < 0 {
+			return fmt.Errorf("asset %q expected bytes must be >= 0", asset.Name)
+		}
 	}
 	return nil
 }
@@ -567,6 +612,73 @@ func validateSyncAsset(asset Asset) error {
 	return nil
 }
 
+func validateRestoreRecords(source Source, records []FileRecord) error {
+	paths := make(map[string]struct{}, len(records))
+	names := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		asset := Asset{Name: record.Asset, Path: record.Path, URL: record.URL}
+		if err := validateSyncAsset(asset); err != nil {
+			return err
+		}
+		pathClean, _ := cleanRelativePath(record.Path)
+		if pathClean != record.Path {
+			return fmt.Errorf("manifest path is not canonical: %s", record.Path)
+		}
+		if _, exists := paths[record.Path]; exists {
+			return fmt.Errorf("duplicate manifest path: %s", record.Path)
+		}
+		paths[record.Path] = struct{}{}
+		if _, exists := names[record.Asset]; exists {
+			return fmt.Errorf("duplicate manifest asset: %s", record.Asset)
+		}
+		names[record.Asset] = struct{}{}
+		if record.Bytes < 0 {
+			return fmt.Errorf("manifest asset %q bytes must be >= 0", record.Asset)
+		}
+		if len(record.SHA256) != 64 {
+			return fmt.Errorf("manifest asset %q SHA256 must contain 64 hexadecimal characters", record.Asset)
+		}
+		if _, err := hex.DecodeString(record.SHA256); err != nil {
+			return fmt.Errorf("manifest asset %q SHA256 is invalid: %w", record.Asset, err)
+		}
+	}
+	if source.RequireCompleteAssets {
+		return validateCompleteRecords(source, records)
+	}
+	return nil
+}
+
+func validateCompleteRecords(source Source, records []FileRecord) error {
+	declared := make(map[string]Asset, len(source.Assets))
+	for _, asset := range source.Assets {
+		declared[asset.Path] = asset
+	}
+	if len(records) != len(declared) {
+		return fmt.Errorf("complete asset collection requires %d files, got %d", len(declared), len(records))
+	}
+	seen := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		asset, ok := declared[record.Path]
+		if !ok {
+			return fmt.Errorf("undeclared manifest path: %s", record.Path)
+		}
+		if _, exists := seen[record.Path]; exists {
+			return fmt.Errorf("duplicate manifest path: %s", record.Path)
+		}
+		seen[record.Path] = struct{}{}
+		if record.Asset != asset.Name {
+			return fmt.Errorf("manifest path %s asset = %q, want %q", record.Path, record.Asset, asset.Name)
+		}
+		if record.URL != asset.URL {
+			return fmt.Errorf("manifest asset %q URL = %q, want %q", record.Asset, record.URL, asset.URL)
+		}
+		if asset.ExpectedBytes > 0 && record.Bytes != asset.ExpectedBytes {
+			return fmt.Errorf("manifest asset %q bytes = %d, want %d", record.Asset, record.Bytes, asset.ExpectedBytes)
+		}
+	}
+	return nil
+}
+
 func shouldReuseRecord(filePath string, record FileRecord) bool {
 	infoFile, err := os.Stat(filePath)
 	if err != nil || infoFile.IsDir() || infoFile.Size() != record.Bytes {
@@ -629,6 +741,11 @@ func downloadFileWithRetry(
 	for attempt := 1; attempt <= retryMax; attempt++ {
 		progress.startFile(asset)
 		if err := httpx.DownloadFileWithResumeOptions(clientHTTP, asset.URL, filePart, progress.callbackForFile(asset), httpx.DownloadOptions{Limiter: limiterRequest}); err == nil {
+			if err := verifyExpectedBytes(filePart, asset); err != nil {
+				_ = os.Remove(filePart)
+				progress.finishFile(asset, false)
+				return fmt.Errorf("asset %q failed downloaded-file verification: %w", asset.Name, err)
+			}
 			if asset.VerifyDownloadedFile != nil {
 				if err := asset.VerifyDownloadedFile(filePart); err != nil {
 					if errRemove := os.Remove(filePart); errRemove != nil && !os.IsNotExist(errRemove) {
@@ -681,6 +798,23 @@ func retryWaitForError(err error, fallback time.Duration) time.Duration {
 	return wait
 }
 
+func verifyExpectedBytes(path string, asset Asset) error {
+	if asset.ExpectedBytes == 0 {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("asset %q is not a regular file", asset.Name)
+	}
+	if info.Size() != asset.ExpectedBytes {
+		return fmt.Errorf("asset %q bytes = %d, want %d", asset.Name, info.Size(), asset.ExpectedBytes)
+	}
+	return nil
+}
+
 func buildRecord(filePath string, asset Asset) (FileRecord, error) {
 	return buildRecordWithProgress(filePath, asset, nil)
 }
@@ -716,8 +850,8 @@ func buildRecordWithProgress(filePath string, asset Asset, progress *progressRep
 	}, nil
 }
 
-func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool, progress *progressReporter, workersMax int) ([]FileRecord, error) {
-	tasks, err := planScanRecords(dirVersion, assetsByPath, onlyDeclared)
+func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool, rejectUndeclared bool, progress *progressReporter, workersMax int) ([]FileRecord, error) {
+	tasks, err := planScanRecords(dirVersion, assetsByPath, onlyDeclared, rejectUndeclared)
 	if err != nil {
 		return nil, err
 	}
@@ -727,8 +861,12 @@ func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared 
 		if assetName == "" {
 			assetName = filepath.Base(task.filePath)
 		}
-		asset := Asset{Name: assetName, Path: task.pathRel, URL: task.url, HashForLock: task.hashForLock}
+		asset := Asset{Name: assetName, Path: task.pathRel, URL: task.url, HashForLock: task.hashForLock, ExpectedBytes: task.expectedBytes}
 		progress.startScanFile(asset)
+		if err := verifyExpectedBytes(task.filePath, asset); err != nil {
+			progress.finishScanFile(asset, false)
+			return FileRecord{}, err
+		}
 		if task.verifyFile != nil {
 			if err := task.verifyFile(task.filePath); err != nil {
 				progress.finishScanFile(asset, false)
@@ -750,7 +888,7 @@ func scanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared 
 	return records, nil
 }
 
-func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool) ([]scanTask, error) {
+func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDeclared bool, rejectUndeclared bool) ([]scanTask, error) {
 	tasks := make([]scanTask, 0)
 	dirScan := filepath.Join(dirVersion, "raw")
 	if err := filepath.WalkDir(dirScan, func(path string, entry os.DirEntry, err error) error {
@@ -774,16 +912,20 @@ func planScanRecords(dirVersion string, assetsByPath map[string]Asset, onlyDecla
 		pathRel = filepath.ToSlash(pathRel)
 		asset, declared := assetsByPath[pathRel]
 		if onlyDeclared && !declared {
+			if rejectUndeclared {
+				return fmt.Errorf("undeclared raw file: %s", pathRel)
+			}
 			return nil
 		}
 		tasks = append(tasks, scanTask{
-			filePath:    path,
-			pathRel:     pathRel,
-			asset:       asset.Name,
-			url:         asset.URL,
-			bytes:       infoFile.Size(),
-			hashForLock: asset.HashForLock,
-			verifyFile:  asset.VerifyDownloadedFile,
+			filePath:      path,
+			pathRel:       pathRel,
+			asset:         asset.Name,
+			url:           asset.URL,
+			bytes:         infoFile.Size(),
+			hashForLock:   asset.HashForLock,
+			verifyFile:    asset.VerifyDownloadedFile,
+			expectedBytes: asset.ExpectedBytes,
 		})
 		return nil
 	}); err != nil {

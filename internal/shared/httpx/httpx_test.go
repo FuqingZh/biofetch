@@ -177,8 +177,12 @@ func TestDownloadFileWithResumeRestartsWhenRangeUnsupported(t *testing.T) {
 		t.Fatalf("os.WriteFile returned error: %v", err)
 	}
 	err := DownloadFileWithResume(server.Client(), server.URL+"/asset", fileOut, nil)
-	if err != nil {
-		t.Fatalf("DownloadFileWithResume returned error: %v", err)
+	var ignored RangeIgnoredError
+	if !errors.As(err, &ignored) {
+		t.Fatalf("first DownloadFileWithResume error = %v, want RangeIgnoredError", err)
+	}
+	if err := DownloadFileWithResume(server.Client(), server.URL+"/asset", fileOut, nil); err != nil {
+		t.Fatalf("clean DownloadFileWithResume returned error: %v", err)
 	}
 	data, err := os.ReadFile(fileOut)
 	if err != nil {
@@ -209,6 +213,10 @@ func TestDownloadFileWithResumeClosesIgnoredRangeWithoutReadingBody(t *testing.T
 			}
 			response.Body = ignored
 		case 3:
+			response.Header.Set("Content-Length", "11")
+			response.ContentLength = 11
+			response.Body = io.NopCloser(bytes.NewReader(nil))
+		case 4:
 			if request.Header.Get("Range") != "" {
 				t.Fatalf("restart Range = %q", request.Header.Get("Range"))
 			}
@@ -224,8 +232,13 @@ func TestDownloadFileWithResumeClosesIgnoredRangeWithoutReadingBody(t *testing.T
 	if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	err := DownloadFileWithResume(client, "https://example.test/asset", fileOut, nil)
+	var rangeIgnored RangeIgnoredError
+	if !errors.As(err, &rangeIgnored) {
+		t.Fatalf("first error = %v, want RangeIgnoredError", err)
+	}
 	if err := DownloadFileWithResume(client, "https://example.test/asset", fileOut, nil); err != nil {
-		t.Fatal(err)
+		t.Fatalf("clean retry: %v", err)
 	}
 	if ignored.bytesRead != 0 || !ignored.closed {
 		t.Fatalf("ignored body bytesRead=%d closed=%v, want 0/true", ignored.bytesRead, ignored.closed)

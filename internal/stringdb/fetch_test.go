@@ -246,7 +246,12 @@ func TestRunDownloadTasksPreservesOrderWithWorkers(t *testing.T) {
 func TestDownloadFileWithRetryResumesPartialFile(t *testing.T) {
 	var gotRange atomic.Value
 	serverHTTP := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodHead {
+			writer.Header().Set("Content-Length", "6")
+			return
+		}
 		gotRange.Store(request.Header.Get("Range"))
+		writer.Header().Set("Content-Range", "bytes 3-5/6")
 		writer.WriteHeader(http.StatusPartialContent)
 		_, _ = writer.Write([]byte("bar"))
 	}))

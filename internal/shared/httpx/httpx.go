@@ -34,6 +34,14 @@ type UnexpectedStatusError struct {
 	RetryAfter  time.Duration
 }
 
+type RangeIgnoredError struct {
+	URL string
+}
+
+func (err RangeIgnoredError) Error() string {
+	return fmt.Sprintf("request %s: server ignored Range; stale partial removed", err.URL)
+}
+
 func unexpectedStatus(response *http.Response, urlFile string) UnexpectedStatusError {
 	return UnexpectedStatusError{
 		URL:         urlFile,
@@ -262,7 +270,7 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 		if err := os.Remove(fileOut); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale partial %s: %w", fileOut, err)
 		}
-		return downloadFileSingleResume(clientHTTP, urlFile, fileOut, progress, metadata, hasMetadata, limiter)
+		return RangeIgnoredError{URL: urlFile}
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		shouldAppend = false
 	default:
