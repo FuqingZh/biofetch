@@ -19,9 +19,12 @@ Read these documents in order:
 5. [HMDB browser acquisition and lock implementation plan](implementation-plan/20260727-v1.0-hmdb-browser-acquisition-lock-implementation-plan.md)
    for the active fix to browser-authorized acquisition, first-time lock
    metadata, archive validation, and authentication-failure behavior.
-6. [Test contract](testing/20260717-v1.0-test-contract.md) for local, CLI,
+6. [dbCAN database acquisition implementation plan](implementation-plan/20260803-v1.0-dbcan-database-acquisition-implementation-plan.md)
+   for the planned pinned S3 CAZyme collection, large-download safety
+   hardening, and exact lock/restore contract.
+7. [Test contract](testing/20260717-v1.0-test-contract.md) for local, CLI,
    concurrency, and real-resource validation requirements.
-7. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
+8. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
    for the current measured storage baseline.
 
 The architecture and test contracts above describe the maintained
