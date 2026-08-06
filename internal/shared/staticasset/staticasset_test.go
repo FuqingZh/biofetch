@@ -2,6 +2,7 @@ package staticasset
 
 import (
 	"biofetch/internal/shared/filehash"
+	"biofetch/internal/shared/httpx"
 	"bytes"
 	"fmt"
 	"net/http"
@@ -187,9 +188,14 @@ func TestFetchVerifierFailureRemovesPartAndNextInvocationRedownloads(t *testing.
 
 func TestFetchVerifierChecksResumedPart(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodHead {
+			writer.Header().Set("Content-Length", "8")
+			return
+		}
 		if got := request.Header.Get("Range"); got != "bytes=4-" {
 			t.Fatalf("Range = %q, want bytes=4-", got)
 		}
+		writer.Header().Set("Content-Range", "bytes 4-7/8")
 		writer.WriteHeader(http.StatusPartialContent)
 		_, _ = writer.Write([]byte("ived"))
 	}))
@@ -220,6 +226,24 @@ func TestFetchVerifierChecksResumedPart(t *testing.T) {
 	}
 	if !verified {
 		t.Fatal("resumed part was not verified")
+	}
+}
+
+func TestRetryWaitForErrorHonorsAndBoundsRetryAfter(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want time.Duration
+	}{
+		{name: "429", err: httpx.UnexpectedStatusError{Code: http.StatusTooManyRequests, RetryAfter: 7 * time.Second}, want: 7 * time.Second},
+		{name: "503 bounded", err: httpx.UnexpectedStatusError{Code: http.StatusServiceUnavailable, RetryAfter: time.Hour}, want: retryAfterMax},
+		{name: "other status", err: httpx.UnexpectedStatusError{Code: http.StatusBadGateway, RetryAfter: 7 * time.Second}, want: time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := retryWaitForError(test.err, time.Second); got != test.want {
+				t.Fatalf("retryWaitForError = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 
@@ -276,6 +300,38 @@ func TestFetchWritesManifestAfterEachDownloadedFile(t *testing.T) {
 	}
 	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[0].Bytes != 5 {
 		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
+func TestFetchCompleteCollectionDoesNotPublishPartialManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/alpha.txt" {
+			_, _ = writer.Write([]byte("alpha"))
+			return
+		}
+		http.Error(writer, "failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	source := Source{
+		Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1",
+		RequireCompleteAssets: true,
+		Assets: []Asset{
+			{Name: "alpha", Path: "raw/alpha.txt", URL: server.URL + "/alpha.txt", ExpectedBytes: 5},
+			{Name: "bravo", Path: "raw/bravo.txt", URL: server.URL + "/bravo.txt", ExpectedBytes: 5},
+		},
+	}
+	err := Fetch(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil)
+	if err == nil {
+		t.Fatal("Fetch returned nil error")
+	}
+	dirVersion := DeriveVersionDir(dirOut, source)
+	if _, statErr := os.Stat(filepath.Join(dirVersion, "manifest.lock")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial collection published manifest: %v", statErr)
+	}
+	if data, readErr := os.ReadFile(filepath.Join(dirVersion, "raw", "alpha.txt")); readErr != nil || string(data) != "alpha" {
+		t.Fatalf("verified completed file = %q, %v", data, readErr)
 	}
 }
 
@@ -544,6 +600,45 @@ func TestSyncRejectsManifestIdentityMismatch(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsIncompleteRequiredCollectionBeforeNetwork(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		_, _ = writer.Write([]byte("alpha"))
+	}))
+	defer server.Close()
+
+	dirOut := t.TempDir()
+	dirVersion := filepath.Join(dirOut, "fixed", "v1")
+	if err := os.MkdirAll(dirVersion, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hashAlpha, err := filehash.SHA256(strings.NewReader("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Source{
+		Database: "testdb", Asset: "fixed", Source: "fixture", Version: "software-v1", VersionToken: "v1",
+		RequireCompleteAssets: true,
+		Assets: []Asset{
+			{Name: "alpha", Path: "raw/alpha.txt", URL: server.URL + "/alpha.txt", ExpectedBytes: 5},
+			{Name: "bravo", Path: "raw/bravo.txt", URL: server.URL + "/bravo.txt", ExpectedBytes: 5},
+		},
+	}
+	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, []FileRecord{{
+		Asset: "alpha", Path: "raw/alpha.txt", URL: server.URL + "/alpha.txt", Bytes: 5, SHA256: hashAlpha,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	err = Sync(source, Options{DirOut: dirOut, RuleExisting: "skip", RetryMax: 1, WorkersMax: 1, ShouldDryRun: true}, nil)
+	if err == nil || !strings.Contains(err.Error(), "requires 2 files") {
+		t.Fatalf("Sync error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("network requests = %d, want 0", requests)
+	}
+}
+
 func TestFetchKeepsVerifierRejectedFileWhenReplacementFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "failed", http.StatusInternalServerError)
@@ -612,7 +707,7 @@ func TestFetchKeepsVerifierRejectedFileWhenReplacementFails(t *testing.T) {
 	}
 }
 
-func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
+func TestSyncKeepsManifestImmutableOnPartialFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/alpha.txt":
@@ -630,14 +725,24 @@ func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
 	if err := os.MkdirAll(dirVersion, 0o755); err != nil {
 		t.Fatalf("os.MkdirAll returned error: %v", err)
 	}
-	source := Source{Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1"}
+	source := Source{
+		Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1", RequireCompleteAssets: true,
+		Assets: []Asset{
+			{Name: "alpha", Path: "raw/alpha.txt", URL: server.URL + "/alpha.txt", ExpectedBytes: 5},
+			{Name: "bravo", Path: "raw/bravo.txt", URL: server.URL + "/bravo.txt", ExpectedBytes: 5},
+		},
+	}
 	hashAlpha, err := filehash.SHA256(strings.NewReader("alpha"))
+	if err != nil {
+		t.Fatalf("filehash.SHA256 returned error: %v", err)
+	}
+	hashBravo, err := filehash.SHA256(strings.NewReader("bravo"))
 	if err != nil {
 		t.Fatalf("filehash.SHA256 returned error: %v", err)
 	}
 	records := []FileRecord{
 		{Asset: "alpha", Path: "raw/alpha.txt", SHA256: hashAlpha, Bytes: 5, URL: server.URL + "/alpha.txt"},
-		{Asset: "bravo", Path: "raw/bravo.txt", SHA256: "old", Bytes: 5, URL: server.URL + "/bravo.txt"},
+		{Asset: "bravo", Path: "raw/bravo.txt", SHA256: hashBravo, Bytes: 5, URL: server.URL + "/bravo.txt"},
 	}
 	if err := writeManifest(filepath.Join(dirVersion, "manifest.lock"), source, records, time.Now()); err != nil {
 		t.Fatalf("writeManifest returned error: %v", err)
@@ -655,8 +760,8 @@ func TestSyncWritesManifestAfterEachDownloadedFile(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest was not written")
 	}
-	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[0].SHA256 != hashAlpha {
-		t.Fatalf("manifest files = %#v", manifest.Files)
+	if len(manifest.Files) != 2 || manifest.Files[0].Path != "raw/alpha.txt" || manifest.Files[1].Path != "raw/bravo.txt" || manifest.Files[1].SHA256 != hashBravo {
+		t.Fatalf("manifest files changed = %#v", manifest.Files)
 	}
 }
 
@@ -742,6 +847,47 @@ func TestLockOnlyDeclaredAssetsDropsUndeclaredRecordsFromExistingManifest(t *tes
 	}
 	if len(manifest.Files) != 1 || manifest.Files[0].Asset != "core" || manifest.Files[0].Path != "raw/core.txt" {
 		t.Fatalf("manifest files = %#v", manifest.Files)
+	}
+}
+
+func TestLockStrictDeclaredLayoutRejectsExtraAndWrongSize(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		extra bool
+		core  string
+		want  string
+	}{
+		{name: "extra", extra: true, core: "core", want: "undeclared raw file"},
+		{name: "wrong size", core: "short", want: "bytes = 5, want 4"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dirVersion := filepath.Join(t.TempDir(), "fixed", "v1")
+			dirRaw := filepath.Join(dirVersion, "raw")
+			if err := os.MkdirAll(dirRaw, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dirRaw, "core.txt"), []byte(test.core), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if test.extra {
+				if err := os.WriteFile(filepath.Join(dirRaw, "notes.txt"), []byte("notes"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := Source{
+				Database: "testdb", Asset: "fixed", Source: "fixture", Version: "v1", VersionToken: "v1",
+				LockOnlyDeclaredAssets: true, RejectUndeclaredAssets: true, RequireCompleteAssets: true,
+				RequiredAssets: []string{"core"},
+				Assets:         []Asset{{Name: "core", Path: "raw/core.txt", URL: "https://example.test/core.txt", ExpectedBytes: 4}},
+			}
+			err := Lock(source, dirVersion, Options{RuleExisting: "skip", RetryMax: 1, WorkersMax: 1}, nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Lock error = %v, want %q", err, test.want)
+			}
+			if _, statErr := os.Stat(filepath.Join(dirVersion, "manifest.lock")); !os.IsNotExist(statErr) {
+				t.Fatalf("invalid layout published manifest: %v", statErr)
+			}
+		})
 	}
 }
 

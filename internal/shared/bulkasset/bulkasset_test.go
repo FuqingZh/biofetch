@@ -109,3 +109,48 @@ func TestFetchRequiresOptInForLargeAsset(t *testing.T) {
 		t.Fatalf("Execute error = %v", err)
 	}
 }
+
+func TestFixedVersionCollectionDisablesAssetSelectionAndRejectsAliases(t *testing.T) {
+	const fixed = "db_v5-2-9_5-5-2026"
+	spec := Spec{
+		Database: "dbcan", Asset: "database", FixedVersion: fixed, SourceVersion: "5.2.9",
+		DisableAssetSelection: true, RequireCompleteAssets: true,
+		Assets: []AssetSpec{{Name: "core", Path: "core.hmm", URL: "https://example.test/" + fixed + "/core.hmm", Default: true, ExpectedBytes: 7}},
+	}
+	command := NewCommand(spec)
+	fetch, _, err := command.Find([]string{"database", "fetch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetch.Flags().Lookup("assets") != nil {
+		t.Fatal("fixed complete collection exposes --assets")
+	}
+	versionFlag := fetch.Flags().Lookup("version")
+	if versionFlag == nil || versionFlag.DefValue != fixed {
+		t.Fatalf("version default = %#v, want %s", versionFlag, fixed)
+	}
+	for _, alias := range []string{"current", "latest", "db_current", "other"} {
+		if _, err := resolveVersion(spec, http.DefaultClient, alias); err == nil || !strings.Contains(err.Error(), fixed) {
+			t.Fatalf("resolveVersion(%q) error = %v", alias, err)
+		}
+	}
+	if got, err := resolveVersion(spec, http.DefaultClient, ""); err != nil || got != fixed {
+		t.Fatalf("resolveVersion(empty) = %q, %v", got, err)
+	}
+}
+
+func TestBuildSourceCarriesCompleteCollectionContract(t *testing.T) {
+	spec := Spec{
+		Database: "dbcan", Asset: "database", Source: "run-dbcan-s3", SourceVersion: "5.2.9",
+		RequireCompleteAssets: true, RejectUndeclaredAssets: true, LockOnlyDeclaredAssets: true,
+		RequireDefaultAssetsOnLock: true,
+		Assets:                     []AssetSpec{{Name: "core", Path: "core.hmm", URL: "https://example.test/{version}/core.hmm", Default: true, ExpectedBytes: 7}},
+	}
+	source := buildSource(spec, "fixed", spec.Assets)
+	if source.Version != "5.2.9" || !source.RequireCompleteAssets || !source.RejectUndeclaredAssets {
+		t.Fatalf("source contract = %#v", source)
+	}
+	if len(source.Assets) != 1 || source.Assets[0].ExpectedBytes != 7 || source.Assets[0].URL != "https://example.test/fixed/core.hmm" {
+		t.Fatalf("source assets = %#v", source.Assets)
+	}
+}

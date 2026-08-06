@@ -26,6 +26,7 @@ type AssetSpec struct {
 	Large                bool
 	RecoverDownloadError func(string, error) (bool, error)
 	VerifyDownloadedFile func(string) error
+	ExpectedBytes        int64
 }
 
 type Spec struct {
@@ -43,6 +44,11 @@ type Spec struct {
 	DefaultRequestWait         time.Duration
 	LockOnlyDeclaredAssets     bool
 	RequireDefaultAssetsOnLock bool
+	RequireCompleteAssets      bool
+	RejectUndeclaredAssets     bool
+	DisableAssetSelection      bool
+	FixedVersion               string
+	SourceVersion              string
 }
 
 type config struct {
@@ -114,6 +120,7 @@ func createFetchCommand(spec Spec) *cobra.Command {
 		cfg.WorkersMax = 1
 	}
 	cfg.RequestInterval = spec.DefaultRequestWait
+	cfg.VersionToken = spec.FixedVersion
 
 	command := &cobra.Command{
 		Use:           "fetch",
@@ -129,7 +136,9 @@ func createFetchCommand(spec Spec) *cobra.Command {
 	flags.SortFlags = false
 	cliopt.BindDirOutFlag(flags, &cfg.DirOutConfig, spec.Database+" asset root directory")
 	cliopt.BindVersionFlag(flags, &cfg.VersionConfig, spec.VersionDescription)
-	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "Assets to fetch; omit for the maintained default set; repeat the flag,")
+	if !spec.DisableAssetSelection {
+		cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "Assets to fetch; omit for the maintained default set; repeat the flag,")
+	}
 	if hasLargeAssets(spec.Assets) {
 		flags.BoolVar(&cfg.allowLarge, "allow-large-downloads", false, "Allow explicitly selected large assets")
 	}
@@ -182,6 +191,9 @@ func createRestoreCommand(spec Spec) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := cliopt.ApplyFlatSnapshot(&cfg.DirOutConfig, &cfg.VersionConfig, args[0], spec.Asset); err != nil {
 				return err
+			}
+			if spec.FixedVersion != "" && cfg.VersionToken != spec.FixedVersion {
+				return fmt.Errorf("%s %s supports only fixed version %s", spec.Database, spec.Asset, spec.FixedVersion)
 			}
 			if err := validateCommon(&cfg.DirOutConfig, &cfg.ExistingRuleConfig, &cfg.RetryConfig, &cfg.DownloadControlConfig); err != nil {
 				return err
@@ -244,6 +256,9 @@ func runLock(spec Spec, cfg *lockConfig) error {
 	if err != nil {
 		return err
 	}
+	if spec.FixedVersion != "" && version != spec.FixedVersion {
+		return fmt.Errorf("%s %s supports only fixed version %s", spec.Database, spec.Asset, spec.FixedVersion)
+	}
 	source := buildSource(spec, version, spec.Assets)
 	_, closeRun, err := logx.StartVersionedRun("biofetch "+spec.Database, "lock", cfg.DirLogs, cfg.DirSnapshot)
 	if err != nil {
@@ -259,7 +274,7 @@ func runLock(spec Spec, cfg *lockConfig) error {
 }
 
 func runRestore(spec Spec, cfg *restoreConfig) error {
-	source := buildSource(spec, cfg.VersionToken, nil)
+	source := buildSource(spec, cfg.VersionToken, spec.Assets)
 	trace, closeRun, err := logx.StartSourceRun("biofetch "+spec.Database, "restore", cfg.DirLogs, cfg.DirOut, source)
 	if err != nil {
 		return err
@@ -286,6 +301,15 @@ func validateCommon(dirOut *cliopt.DirOutConfig, existing *cliopt.ExistingRuleCo
 
 func resolveVersion(spec Spec, clientHTTP *http.Client, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
+	if spec.FixedVersion != "" {
+		if requested == "" {
+			return spec.FixedVersion, nil
+		}
+		if requested != spec.FixedVersion {
+			return "", fmt.Errorf("%s %s supports only fixed version %s", spec.Database, spec.Asset, spec.FixedVersion)
+		}
+		return requested, nil
+	}
 	if requested != "" && requested != "current" {
 		if !spec.SupportsFixedVersion {
 			return "", fmt.Errorf("%s %s fetch supports only current/empty version; use restore for an existing fixed snapshot", spec.Database, spec.Asset)
@@ -349,6 +373,7 @@ func buildSource(spec Spec, version string, assets []AssetSpec) staticasset.Sour
 			URL:                  url,
 			RecoverDownloadError: asset.RecoverDownloadError,
 			VerifyDownloadedFile: asset.VerifyDownloadedFile,
+			ExpectedBytes:        asset.ExpectedBytes,
 		})
 	}
 	if spec.RequireDefaultAssetsOnLock {
@@ -358,15 +383,21 @@ func buildSource(spec Spec, version string, assets []AssetSpec) staticasset.Sour
 			}
 		}
 	}
+	sourceVersion := version
+	if spec.SourceVersion != "" {
+		sourceVersion = spec.SourceVersion
+	}
 	return staticasset.Source{
 		Database:               spec.Database,
 		Asset:                  spec.Asset,
 		Source:                 spec.Source,
-		Version:                version,
+		Version:                sourceVersion,
 		VersionToken:           version,
 		Assets:                 result,
 		LockOnlyDeclaredAssets: spec.LockOnlyDeclaredAssets,
 		RequiredAssets:         required,
+		RequireCompleteAssets:  spec.RequireCompleteAssets,
+		RejectUndeclaredAssets: spec.RejectUndeclaredAssets,
 	}
 }
 

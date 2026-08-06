@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -512,10 +513,16 @@ func newScanServer(t *testing.T, archive []byte, checksum string, observe func(*
 		case "/" + scanTestVersion + "/" + archiveName + ".md5":
 			_, _ = writer.Write([]byte(checksum))
 		case "/" + scanTestVersion + "/" + archiveName:
+			writer.Header().Set("Content-Length", fmt.Sprint(len(archive)))
+			if request.Method == http.MethodHead {
+				return
+			}
 			start := 0
 			if request.Header.Get("Range") != "" {
 				if request.Header.Get("Range") == "bytes=7-" {
 					start = 7
+					writer.Header().Set("Content-Length", fmt.Sprint(len(archive)-start))
+					writer.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(archive)-1, len(archive)))
 					writer.WriteHeader(http.StatusPartialContent)
 				} else {
 					t.Fatalf("unexpected Range: %s", request.Header.Get("Range"))

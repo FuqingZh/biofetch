@@ -1131,6 +1131,10 @@ func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool
 		if errors.As(err, &statusErr) {
 			return isRetryableKEGGStatus(statusErr.Code), err
 		}
+		var rangeIgnored httpx.RangeIgnoredError
+		if errors.As(err, &rangeIgnored) {
+			return true, err
+		}
 		return isRetryableKEGGError(err), err
 	}
 	if err := os.Rename(filePart, fileOut); err != nil {
