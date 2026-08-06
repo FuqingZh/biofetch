@@ -1,6 +1,8 @@
 package biofetch
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,6 +121,32 @@ func TestNestedOmniPathRestoreUsesExactSnapshot(t *testing.T) {
 	err := RunCLI([]string{"omnipath", "interactions", "restore", snapshot, "--dry-run"})
 	if err == nil || !strings.Contains(err.Error(), snapshot+"/manifest.lock") {
 		t.Fatalf("nested restore error = %v", err)
+	}
+}
+
+func TestOmniPathInteractionsDorotheaLevelsAreDatasetScoped(t *testing.T) {
+	err := RunCLI([]string{
+		"omnipath", "interactions", "fetch", "--output", t.TempDir(),
+		"--organisms", "9606", "--dataset", "kinaseextra", "--dorothea-levels", "A,B",
+		"--dry-run",
+	})
+	if err == nil || !strings.Contains(err.Error(), "valid only with --dataset dorothea") {
+		t.Fatalf("dataset-scoped dorothea levels error = %v", err)
+	}
+}
+
+func TestOmniPathInteractionsDorotheaLevelsFileIsDatasetScoped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "levels.txt")
+	if err := os.WriteFile(path, []byte("A\nB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := RunCLI([]string{
+		"omnipath", "interactions", "fetch", "--output", t.TempDir(),
+		"--organisms", "9606", "--dataset", "collectri", "--dorothea-levels-file", path,
+		"--dry-run",
+	})
+	if err == nil || !strings.Contains(err.Error(), "valid only with --dataset dorothea") {
+		t.Fatalf("dataset-scoped dorothea levels file error = %v", err)
 	}
 }
 

@@ -5,7 +5,10 @@ import (
 	"biofetch/internal/shared/logx"
 	"biofetch/internal/shared/parallel"
 	"biofetch/internal/shared/tomlx"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,7 +55,11 @@ func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
 	}
 	dirVersion := cfg.dirSnapshot
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "lock", cfg.dirLogs, dirVersion)
+	logDir := cfg.dirLogs
+	if logDir == "" && asset == "interactions" {
+		logDir = fullEvidenceLogDir(dirVersion, dataset)
+	}
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "lock", logDir, dirVersion)
 	if err != nil {
 		return err
 	}
@@ -78,6 +85,25 @@ func runLockCommon(cfg *lockConfig, asset string, dataset string) error {
 		QueryURL:   deriveOmniPathQueryURL(records, ""),
 		Files:      records,
 	}
+	if asset == "interactions" {
+		query, err := lockInteractionQuery(dirVersion, filepath.Join(dirVersion, "raw", "query_meta.json"), records, dataset, versionToken)
+		if err != nil {
+			return err
+		}
+		manifest.Query = query
+		if query.Schema == fullEvidenceSchema {
+			manifest.Version = query.AcquiredAt
+			manifest.DownloadedAt = query.AcquiredAt
+			manifest.RequestURL = ""
+			manifest.QueryURL = queryInteractionsURL
+			if err := validateFullEvidenceLayout(dirVersion, query.Organisms, false); err != nil {
+				return err
+			}
+			if err := validateLockedQuery(manifest); err != nil {
+				return err
+			}
+		}
+	}
 
 	if cfg.shouldDryRun {
 		logf("[dry-run] lock version dir: %s", dirVersion)
@@ -100,11 +126,6 @@ func runRestoreInteractions(cfg *restoreConfig) error {
 
 func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error {
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
-	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "restore", cfg.dirLogs, dirVersion)
-	if err != nil {
-		return err
-	}
-	defer closeRun()
 	manifestExisting, err := readExistingManifest(fileManifest)
 	if err != nil {
 		return err
@@ -112,8 +133,23 @@ func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error
 	if len(manifestExisting.Files) == 0 {
 		return fmt.Errorf("manifest is empty or missing: %s", fileManifest)
 	}
+	if err := validateRestoreRecordPaths(dirVersion, manifestExisting.Files); err != nil {
+		return err
+	}
+	logDir := cfg.dirLogs
+	if logDir == "" && asset == "interactions" && manifestExisting.Query.Schema == fullEvidenceSchema {
+		logDir = fullEvidenceLogDir(dirVersion, manifestExisting.Dataset)
+	}
+	_, closeRun, err := logx.StartVersionedRun("biofetch omnipath", "restore", logDir, dirVersion)
+	if err != nil {
+		return err
+	}
+	defer closeRun()
 	if strings.HasPrefix(strings.TrimSpace(manifestExisting.QueryURL), archiveURL) {
 		return runRestoreArchive(cfg, dirVersion, manifestExisting, asset)
+	}
+	if asset == "interactions" && manifestExisting.Query.Schema == fullEvidenceSchema {
+		return runRestoreFullEvidence(cfg, dirVersion, manifestExisting)
 	}
 
 	client := createClient(cfg.shouldAllowInsecureTLS, cfg.retryMax, cfg.retryWait)
@@ -184,6 +220,164 @@ func runRestoreCommon(cfg *restoreConfig, dirVersion string, asset string) error
 	logf("restore done (files=%d)", len(recordsComplete))
 	logf("manifest written: %s", fileManifest)
 	return nil
+}
+
+func validateRestoreRecordPaths(dirVersion string, records []recordFile) error {
+	root, err := filepath.Abs(filepath.Clean(dirVersion))
+	if err != nil {
+		return fmt.Errorf("resolve snapshot root: %w", err)
+	}
+	seen := map[string]struct{}{}
+	for _, record := range records {
+		pathRaw := strings.TrimSpace(record.Path)
+		pathClean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(pathRaw)))
+		if pathRaw == "" || pathRaw != record.Path || pathClean != pathRaw ||
+			filepath.IsAbs(filepath.FromSlash(pathRaw)) ||
+			!strings.HasPrefix(pathClean, "raw/") {
+			return fmt.Errorf("unsafe OmniPath manifest record path %q", record.Path)
+		}
+		parts := strings.Split(pathClean, "/")
+		for _, part := range parts {
+			if part == "" || part == "." || part == ".." {
+				return fmt.Errorf("unsafe OmniPath manifest record path %q", record.Path)
+			}
+		}
+		if _, duplicate := seen[pathClean]; duplicate {
+			return fmt.Errorf("duplicate OmniPath manifest record path %q", record.Path)
+		}
+		seen[pathClean] = struct{}{}
+		candidate := filepath.Join(root, filepath.FromSlash(pathClean))
+		relative, err := filepath.Rel(root, candidate)
+		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || relative == ".." {
+			return fmt.Errorf("OmniPath manifest record path escapes snapshot: %q", record.Path)
+		}
+		current := root
+		for index, part := range parts {
+			current = filepath.Join(current, part)
+			info, err := os.Lstat(current)
+			if os.IsNotExist(err) {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("inspect OmniPath restore path %s: %w", current, err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("OmniPath restore path must not traverse a symlink: %s", current)
+			}
+			if index < len(parts)-1 && !info.IsDir() {
+				return fmt.Errorf("OmniPath restore parent is not a directory: %s", current)
+			}
+			if index == len(parts)-1 && !info.Mode().IsRegular() {
+				return fmt.Errorf("OmniPath restore destination is not a regular file: %s", current)
+			}
+		}
+	}
+	return nil
+}
+
+func fullEvidenceLogDir(dirVersion, dataset string) string {
+	dirInteractions := filepath.Dir(filepath.Dir(filepath.Clean(dirVersion)))
+	dirRoot := filepath.Dir(dirInteractions)
+	return filepath.Join(dirRoot, "logs", "omnipath", "interactions", dataset)
+}
+
+func lockInteractionQuery(dirVersion, path string, records []recordFile, dataset, versionToken string) (manifestQuery, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return manifestQuery{}, fmt.Errorf("read query sidecar: %w", err)
+	}
+	var meta interactionQueryMeta
+	if !json.Valid(data) {
+		if strings.HasPrefix(strings.TrimSpace(string(data)), "{") || strings.HasPrefix(strings.TrimSpace(string(data)), "[") {
+			return manifestQuery{}, fmt.Errorf("query sidecar contains malformed JSON")
+		}
+		table, err := parseTSV(data, []string{"argument", "values"})
+		if err != nil || len(table.rows) == 0 {
+			if err == nil {
+				err = fmt.Errorf("capability TSV has no rows")
+			}
+			return manifestQuery{}, fmt.Errorf("legacy query sidecar is not the expected capability TSV: %w", err)
+		}
+		for _, row := range table.rows {
+			if strings.TrimSpace(row[0]) == "" {
+				return manifestQuery{}, fmt.Errorf("legacy query sidecar contains an empty capability argument")
+			}
+		}
+		return manifestQuery{Schema: "legacy-basic", SidecarPath: "raw/query_meta.json",
+			SidecarSHA: recordSHA(records, "raw/query_meta.json")}, nil
+	}
+	var envelope struct {
+		Schema string `json:"schema"`
+		Mode   string `json:"mode"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return manifestQuery{}, err
+	}
+	if envelope.Schema != fullEvidenceSchema {
+		if envelope.Mode == "archive" {
+			return manifestQuery{Schema: "legacy-basic", SidecarPath: "raw/query_meta.json",
+				SidecarSHA: recordSHA(records, "raw/query_meta.json")}, nil
+		}
+		return manifestQuery{}, fmt.Errorf("unsupported JSON query sidecar schema %q", envelope.Schema)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&meta); err != nil {
+		return manifestQuery{}, fmt.Errorf("decode full-evidence query sidecar: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return manifestQuery{}, fmt.Errorf("query sidecar contains trailing JSON values")
+	}
+	canonical, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return manifestQuery{}, err
+	}
+	canonical = append(canonical, '\n')
+	if !bytes.Equal(data, canonical) {
+		return manifestQuery{}, fmt.Errorf("full-evidence query sidecar is not canonical deterministic JSON")
+	}
+	if err := validateInteractionQueryMeta(meta, dataset, versionToken); err != nil {
+		return manifestQuery{}, err
+	}
+	if !slicesEqual(meta.Query.Organisms, deriveOmniPathTaxIDsFromRecords(records)) {
+		return manifestQuery{}, fmt.Errorf("query sidecar organisms do not match snapshot files")
+	}
+	if recordSHA(records, "raw/query_meta.json") == "" {
+		return manifestQuery{}, fmt.Errorf("query sidecar is missing from snapshot records")
+	}
+	if err := validateFullEvidenceSnapshot(dirVersion, meta, records); err != nil {
+		return manifestQuery{}, err
+	}
+	leaves := make([]manifestLeaf, len(meta.LeafBatches))
+	for i, leaf := range meta.LeafBatches {
+		leaves[i] = manifestLeaf(leaf)
+	}
+	return manifestQuery{
+		Schema: meta.Schema, Fingerprint: meta.Fingerprint, License: meta.Query.License,
+		Fields: meta.Query.Fields, OutputFields: meta.Query.OutputFields, Levels: meta.Query.Levels, SidecarPath: "raw/query_meta.json",
+		SidecarSHA: recordSHA(records, "raw/query_meta.json"), AcquiredAt: meta.AcquiredAtUTC,
+		Transport: meta.Transport, Organisms: meta.Query.Organisms,
+		StartSHA: meta.Start.SHA256, StartEdges: meta.Start.Edges,
+		EndSHA: meta.End.SHA256, EndEdges: meta.End.Edges, LeafBatches: leaves,
+	}, nil
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func recordSHA(records []recordFile, path string) string {
+	for _, record := range records {
+		if record.Path == path {
+			return record.SHA256
+		}
+	}
+	return ""
 }
 
 func runRestoreArchive(cfg *restoreConfig, dirVersion string, manifestExisting manifestFile, asset string) error {
@@ -272,6 +466,14 @@ func scanOmniPathRecords(dirVersion string, asset string, dataset string, manife
 	}
 
 	dirRaw := filepath.Join(dirVersion, "raw")
+	fullEvidenceSidecar := false
+	if asset == "interactions" {
+		var meta interactionQueryMeta
+		if data, err := os.ReadFile(filepath.Join(dirRaw, "query_meta.json")); err == nil &&
+			json.Unmarshal(data, &meta) == nil && meta.Schema == fullEvidenceSchema {
+			fullEvidenceSidecar = true
+		}
+	}
 	urlsExisting := buildOmniPathExistingURLMap(manifestExisting)
 	urlArchive := firstNonEmpty(
 		strings.TrimSpace(manifestExisting.QueryURL),
@@ -297,10 +499,16 @@ func scanOmniPathRecords(dirVersion string, asset string, dataset string, manife
 					continue
 				}
 				fileName := entryFile.Name()
+				if fileName != asset+".tsv" {
+					return nil, fmt.Errorf("unexpected OmniPath raw file: %s", filepath.Join(taxID, fileName))
+				}
 				filePath := filepath.Join(dirTaxID, fileName)
 				pathRel := filepath.ToSlash(filepath.Join("raw", taxID, fileName))
-				urlFile := urlsExisting[pathRel]
-				if urlFile == "" {
+				urlFile := ""
+				if !fullEvidenceSidecar {
+					urlFile = urlsExisting[pathRel]
+				}
+				if urlFile == "" && !fullEvidenceSidecar {
 					if strings.HasPrefix(urlArchive, archiveURL) {
 						urlFile = urlArchive
 					} else {
@@ -322,8 +530,11 @@ func scanOmniPathRecords(dirVersion string, asset string, dataset string, manife
 		}
 		filePath := filepath.Join(dirRaw, entry.Name())
 		pathRel := filepath.ToSlash(filepath.Join("raw", entry.Name()))
-		urlQuery := urlsExisting[pathRel]
-		if urlQuery == "" {
+		urlQuery := ""
+		if !fullEvidenceSidecar {
+			urlQuery = urlsExisting[pathRel]
+		}
+		if urlQuery == "" && !fullEvidenceSidecar {
 			if strings.HasPrefix(urlArchive, archiveURL) {
 				urlQuery = urlArchive
 			} else {

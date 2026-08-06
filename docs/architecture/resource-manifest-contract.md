@@ -81,6 +81,32 @@ same exact snapshot operand as `lock`, reads its identity and source URLs from
 snapshots such as OmniPath interactions remain exact rather than being reduced
 to a fixed number of parent directories.
 
+Live OmniPath interaction snapshots use the `full-evidence-v1` contract.
+`raw/query_meta.json` is locally generated canonical JSON, not an upstream
+query response. It records the explicit license, dataset, organisms, supported
+query-field tokens, distinct fixed output header, DoRothEA levels, start/end
+inventory digests, transport, and actual leaf plan. The typed `[query]`
+manifest section cross-checks that sidecar. Lock never reconstructs these
+values from filenames or guessed URLs. Full-evidence JSON must be the exact
+canonical serialization that restore can reproduce; unknown fields or merely
+equivalent non-canonical bytes are rejected. The old two-column capability TSV
+is `legacy-basic`; arbitrary text, malformed JSON, and unknown JSON are
+rejected.
+
+Full-evidence restore replays locked leaf URLs into staging and validates
+headers, target partitions, JSON evidence fields, confidence levels, byte
+counts, and every original SHA256 before replacing an invalid destination.
+All manifest record paths are confined below `raw/` and existing symlink
+components are rejected before restore. Upstream drift leaves the lock and
+existing valid files unchanged. Published
+snapshots contain only `raw/query_meta.json`, one
+`raw/<taxid>/interactions.tsv` per organism, and `manifest.lock`.
+
+Reactome mapping resolves `current` through the version endpoint with bounded
+429/5xx retry, including status 521 and `Retry-After`. Both resolved-current
+and explicit versions download from the immutable numeric release directory;
+explicit versions do not contact the current-version endpoint.
+
 InterProScan lock additionally requires the official archive and `.md5` pair
 and verifies their MD5 relationship before publishing the rebuilt lock. A
 fresh lock assigns the fixed versioned EBI HTTPS URLs to both records; it does

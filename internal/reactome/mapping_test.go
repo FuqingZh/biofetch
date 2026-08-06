@@ -1,6 +1,9 @@
 package reactome
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,9 +11,16 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"biofetch/internal/shared/staticasset"
 )
+
+type reactomeRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn reactomeRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestResolveMappingAssets(t *testing.T) {
 	assets, err := resolveMappingAssets([]string{"ReactomePathways.txt,UniProt2Reactome_All_Levels.txt"})
@@ -88,12 +98,193 @@ func TestResolveMappingFetchVersionTokenCurrent(t *testing.T) {
 	t.Cleanup(func() { mappingCurrentVersionURL = originalURL })
 	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
 
-	versionToken, err := resolveMappingFetchVersionToken(server.Client(), "")
+	versionToken, err := resolveMappingFetchVersionToken(server.Client(), "", 1, 0)
 	if err != nil {
 		t.Fatalf("resolveMappingFetchVersionToken returned error: %v", err)
 	}
 	if versionToken != "v96" {
 		t.Fatalf("versionToken = %q, want v96", versionToken)
+	}
+}
+
+func TestResolveMappingCurrentVersionRetries521WithRetryAfter(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		if attempts == 1 {
+			writer.Header().Set("Retry-After", "120")
+			writer.WriteHeader(521)
+			return
+		}
+		_, _ = writer.Write([]byte("96"))
+	}))
+	defer server.Close()
+	originalURL, originalSleep := mappingCurrentVersionURL, reactomeSleep
+	t.Cleanup(func() { mappingCurrentVersionURL, reactomeSleep = originalURL, originalSleep })
+	mappingCurrentVersionURL = server.URL
+	var waits []time.Duration
+	reactomeSleep = func(wait time.Duration) { waits = append(waits, wait) }
+	version, err := resolveMappingFetchVersionToken(server.Client(), "", 2, time.Second)
+	if err != nil || version != "v96" || attempts != 2 {
+		t.Fatalf("version=%q attempts=%d err=%v", version, attempts, err)
+	}
+	if !reflect.DeepEqual(waits, []time.Duration{2 * time.Minute}) {
+		t.Fatalf("waits = %#v", waits)
+	}
+}
+
+func TestResolveMappingCurrentVersionExhaustionReportsIdentity(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	originalURL, originalSleep := mappingCurrentVersionURL, reactomeSleep
+	t.Cleanup(func() { mappingCurrentVersionURL, reactomeSleep = originalURL, originalSleep })
+	mappingCurrentVersionURL = server.URL
+	var waits []time.Duration
+	reactomeSleep = func(wait time.Duration) { waits = append(waits, wait) }
+	_, err := resolveMappingFetchVersionToken(server.Client(), "", 3, time.Hour)
+	if err == nil || !strings.Contains(err.Error(), server.URL) ||
+		!strings.Contains(err.Error(), "503") || !strings.Contains(err.Error(), "attempts=3") {
+		t.Fatalf("error = %v", err)
+	}
+	if attempts != 3 || !reflect.DeepEqual(waits, []time.Duration{time.Hour, time.Hour}) {
+		t.Fatalf("attempts=%d waits=%#v", attempts, waits)
+	}
+}
+
+func TestResolveMappingCurrentVersionRetries429AndDoesNotLeakRetryAfter(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		switch attempts {
+		case 1:
+			writer.Header().Set("Retry-After", "120")
+			writer.WriteHeader(http.StatusTooManyRequests)
+		case 2:
+			writer.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			_, _ = writer.Write([]byte("96"))
+		}
+	}))
+	defer server.Close()
+	originalURL, originalSleep := mappingCurrentVersionURL, reactomeSleep
+	t.Cleanup(func() { mappingCurrentVersionURL, reactomeSleep = originalURL, originalSleep })
+	mappingCurrentVersionURL = server.URL
+	var waits []time.Duration
+	reactomeSleep = func(wait time.Duration) { waits = append(waits, wait) }
+	version, err := resolveMappingFetchVersionToken(server.Client(), "", 3, time.Second)
+	if err != nil || version != "v96" {
+		t.Fatalf("version=%q err=%v", version, err)
+	}
+	if !reflect.DeepEqual(waits, []time.Duration{2 * time.Minute, time.Second}) {
+		t.Fatalf("Retry-After leaked across attempts: %#v", waits)
+	}
+}
+
+func TestResolveMappingCurrentVersionFinalTransportErrorReportsStatus(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: reactomeRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{
+				StatusCode: 521,
+				Status:     "521 Web Server Is Down",
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		}
+		return nil, errors.New("network unavailable")
+	})}
+	originalSleep := reactomeSleep
+	t.Cleanup(func() { reactomeSleep = originalSleep })
+	reactomeSleep = func(time.Duration) {}
+	_, err := resolveMappingFetchVersionToken(client, "", 2, 0)
+	if err == nil || !strings.Contains(err.Error(), "status=transport-error") ||
+		!strings.Contains(err.Error(), "attempts=2") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestResolveMappingExplicitVersionBypassesCurrentProbe(t *testing.T) {
+	probes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		probes++
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	version, err := resolveMappingFetchVersionToken(server.Client(), "v96", 1, 0)
+	if err != nil || version != "v96" || probes != 0 {
+		t.Fatalf("version=%q probes=%d err=%v", version, probes, err)
+	}
+	assets := buildMappingStaticAssets(
+		fmt.Sprintf(mappingReleaseBaseURL, strings.TrimPrefix(version, "v")),
+		[]string{"ReactomePathways.txt"},
+	)
+	if len(assets) != 1 || assets[0].URL != "https://download.reactome.org/96/ReactomePathways.txt" {
+		t.Fatalf("explicit immutable URL = %#v", assets)
+	}
+}
+
+func TestRunFetchMappingExplicitVersionBypassesProbe(t *testing.T) {
+	probes := 0
+	downloads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/ContentService/data/database/version" {
+			probes++
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if request.URL.Path != "/96/ReactomePathways.txt" {
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+		if request.Method == http.MethodGet {
+			downloads++
+		}
+		_, _ = writer.Write([]byte("pathways"))
+	}))
+	defer server.Close()
+	originalReleaseURL, originalVersionURL := mappingReleaseBaseURL, mappingCurrentVersionURL
+	t.Cleanup(func() {
+		mappingReleaseBaseURL = originalReleaseURL
+		mappingCurrentVersionURL = originalVersionURL
+	})
+	mappingReleaseBaseURL = server.URL + "/%s/"
+	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
+	cfg := createDefaultMappingConfig()
+	cfg.DirOut = t.TempDir()
+	cfg.VersionToken = "v96"
+	cfg.RetryMax = 1
+	cfg.WorkersMax = 1
+	cfg.shouldAllowLargeAssets = true
+	cfg.assetNames = []string{"ReactomePathways.txt"}
+	if err := runFetchMapping(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if probes != 0 || downloads != 1 {
+		t.Fatalf("probes=%d downloads=%d", probes, downloads)
+	}
+}
+
+func TestReactomeRetryAfterHTTPDateUsesInjectedClock(t *testing.T) {
+	originalNow := reactomeNow
+	t.Cleanup(func() { reactomeNow = originalNow })
+	reactomeNow = func() time.Time { return time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC) }
+	if wait := reactomeRetryAfter("Wed, 21 Oct 2015 07:28:10 GMT", time.Second); wait != 10*time.Second {
+		t.Fatalf("wait = %s", wait)
+	}
+}
+
+func TestReactomeRetryAfterNeverShortensConfiguredWait(t *testing.T) {
+	originalNow := reactomeNow
+	t.Cleanup(func() { reactomeNow = originalNow })
+	reactomeNow = func() time.Time { return time.Date(2015, 10, 21, 7, 28, 20, 0, time.UTC) }
+	for _, value := range []string{"0", "invalid", "Wed, 21 Oct 2015 07:28:10 GMT"} {
+		if wait := reactomeRetryAfter(value, time.Minute); wait != time.Minute {
+			t.Fatalf("Retry-After %q shortened wait to %s", value, wait)
+		}
 	}
 }
 
@@ -135,13 +326,13 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	originalBaseURL := mappingCurrentBaseURL
+	originalReleaseURL := mappingReleaseBaseURL
 	originalVersionURL := mappingCurrentVersionURL
 	t.Cleanup(func() {
-		mappingCurrentBaseURL = originalBaseURL
+		mappingReleaseBaseURL = originalReleaseURL
 		mappingCurrentVersionURL = originalVersionURL
 	})
-	mappingCurrentBaseURL = server.URL + "/"
+	mappingReleaseBaseURL = server.URL + "/%s/"
 	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
 
 	cfg := createDefaultMappingConfig()
@@ -177,6 +368,9 @@ func TestRunFetchMappingDownloadsAndReuses(t *testing.T) {
 	if len(manifest.Files) != 1 || manifest.Files[0].SHA256 == "" || manifest.Files[0].Bytes != 8 {
 		t.Fatalf("manifest files = %#v", manifest.Files)
 	}
+	if manifest.Files[0].URL != server.URL+"/96/ReactomePathways.txt" {
+		t.Fatalf("immutable release URL = %q", manifest.Files[0].URL)
+	}
 }
 
 func TestRunFetchMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
@@ -189,13 +383,13 @@ func TestRunFetchMappingFailsWhenCurrentVersionCannotResolve(t *testing.T) {
 	}))
 	defer server.Close()
 
-	originalBaseURL := mappingCurrentBaseURL
+	originalReleaseURL := mappingReleaseBaseURL
 	originalVersionURL := mappingCurrentVersionURL
 	t.Cleanup(func() {
-		mappingCurrentBaseURL = originalBaseURL
+		mappingReleaseBaseURL = originalReleaseURL
 		mappingCurrentVersionURL = originalVersionURL
 	})
-	mappingCurrentBaseURL = server.URL + "/"
+	mappingReleaseBaseURL = server.URL + "/%s/"
 	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
 
 	cfg := createDefaultMappingConfig()
@@ -249,13 +443,13 @@ func TestRunSyncMappingRehydratesManifest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	originalBaseURL := mappingCurrentBaseURL
+	originalReleaseURL := mappingReleaseBaseURL
 	originalVersionURL := mappingCurrentVersionURL
 	t.Cleanup(func() {
-		mappingCurrentBaseURL = originalBaseURL
+		mappingReleaseBaseURL = originalReleaseURL
 		mappingCurrentVersionURL = originalVersionURL
 	})
-	mappingCurrentBaseURL = server.URL + "/"
+	mappingReleaseBaseURL = server.URL + "/%s/"
 	mappingCurrentVersionURL = server.URL + "/ContentService/data/database/version"
 
 	cfg := createDefaultMappingConfig()

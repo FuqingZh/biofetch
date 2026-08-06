@@ -98,8 +98,21 @@ biofetch kegg metabolic fetch --output /database/bioinfo/resources/kegg
 biofetch omnipath interactions fetch \
   --output /database/bioinfo/resources/omnipath \
   --dataset collectri \
+  --license academic \
   --organisms 9606
 ```
+
+Live OmniPath interaction snapshots use `academic` when `--license` is
+omitted. DoRothEA defaults to confidence levels `A,B,C,D`; use
+`--dorothea-levels` only with `--dataset dorothea`. Live acquisition verifies
+the advertised API capabilities, inventories the edge set before and after
+bounded target batches, and publishes only the generated query sidecar and one
+full-evidence TSV per organism. Commercial mode is sent explicitly and never
+falls back to academic data. Historical archives remain academic-only.
+
+Reactome `current` is resolved with bounded retry and all mapping downloads
+then use the immutable numeric release URL. An explicit `--version vNN`
+bypasses the current-release endpoint.
 
 P1 chemical resources use the same `fetch`, `lock`, and `restore` contract:
 

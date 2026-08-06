@@ -47,7 +47,34 @@ type manifestFile struct {
 	Scope        manifestScope `toml:"scope"`
 	RequestURL   string        `toml:"request_url"`
 	QueryURL     string        `toml:"query_url"`
+	Query        manifestQuery `toml:"query,omitempty"`
 	Files        []recordFile  `toml:"files"`
+}
+
+type manifestQuery struct {
+	Schema       string         `toml:"schema,omitempty"`
+	Fingerprint  string         `toml:"fingerprint,omitempty"`
+	License      string         `toml:"license,omitempty"`
+	Fields       []string       `toml:"fields,omitempty"`
+	OutputFields []string       `toml:"output_fields,omitempty"`
+	Levels       []string       `toml:"levels,omitempty"`
+	SidecarPath  string         `toml:"sidecar_path,omitempty"`
+	SidecarSHA   string         `toml:"sidecar_sha256,omitempty"`
+	AcquiredAt   string         `toml:"acquired_at_utc,omitempty"`
+	Transport    string         `toml:"transport,omitempty"`
+	Organisms    []string       `toml:"organisms,omitempty"`
+	StartSHA     string         `toml:"start_inventory_sha256,omitempty"`
+	StartEdges   int            `toml:"start_inventory_edges,omitempty"`
+	EndSHA       string         `toml:"end_inventory_sha256,omitempty"`
+	EndEdges     int            `toml:"end_inventory_edges,omitempty"`
+	LeafBatches  []manifestLeaf `toml:"leaf_batches,omitempty"`
+}
+
+type manifestLeaf struct {
+	Organism      string   `toml:"organism"`
+	Targets       []string `toml:"targets"`
+	ExpectedEdges int      `toml:"expected_edges"`
+	URL           string   `toml:"url"`
 }
 
 type manifestScope struct {
@@ -97,11 +124,15 @@ func runFetchInteractions(cfg *configInteractions) error {
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(cfg.versionToken) == "" {
+		return runFetchInteractionsLive(client, cfg, taxIDs, scopeType, scopeValue)
+	}
 	return runFetchCommon(fetchInput{
 		asset:                   "interactions",
 		dataset:                 strings.ToLower(strings.TrimSpace(cfg.dataset)),
 		versionToken:            cfg.versionToken,
 		ruleLicense:             cfg.ruleLicense,
+		levels:                  cfg.dorotheaLevels,
 		taxIDs:                  taxIDs,
 		urlQuery:                queryInteractionsURL,
 		dirOut:                  cfg.dirOut,
@@ -131,6 +162,7 @@ type fetchInput struct {
 	dataset                 string
 	versionToken            string
 	ruleLicense             string
+	levels                  []string
 	taxIDs                  []string
 	urlQuery                string
 	dirOut                  string

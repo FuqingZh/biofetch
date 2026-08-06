@@ -81,6 +81,18 @@ func TestExtractArchiveSnapshotFromIndexSelectsRequestedVersion(t *testing.T) {
 	}
 }
 
+func TestRunFetchArchiveRejectsCommercialWithoutFallback(t *testing.T) {
+	err := runFetchArchive(nil, fetchInput{
+		asset:        "interactions",
+		dataset:      "collectri",
+		versionToken: "2025-08-13",
+		ruleLicense:  "commercial",
+	})
+	if err == nil || !strings.Contains(err.Error(), "supports only default/academic license mode") {
+		t.Fatalf("runFetchArchive error = %v", err)
+	}
+}
+
 func TestMatchArchiveTaxIDsEnzSub(t *testing.T) {
 	taxIDs, err := matchArchiveTaxIDs(
 		"enz_sub",
