@@ -28,7 +28,8 @@ Read these documents in order:
    metadata, archive validation, and authentication-failure behavior.
 8. [dbCAN database acquisition implementation plan](implementation-plan/20260803-v1.0-dbcan-database-acquisition-implementation-plan.md)
    for the implemented pinned S3 CAZyme collection, large-download safety
-   hardening, exact lock/restore contract, and pending full release acceptance.
+   hardening, exact lock/restore contract, and remaining restore/publication
+   acceptance.
 9. [Test contract](testing/20260717-v1.0-test-contract.md) for local, CLI,
    concurrency, and real-resource validation requirements.
 10. [CephFS lock and manifest benchmark](benchmarks/20260717-v1.0-cephfs-lock-and-manifest-benchmark.md)
@@ -40,9 +41,10 @@ Read these documents in order:
 
 The architecture and test contracts above describe the maintained
 InterProScan and dbCAN snapshot, checksum, verifier-failure, and offline-test
-behavior; they are the current authority for delivered behavior. dbCAN is not
-production-ready and must not be published to CephFS until its separately
-authorized full-size release acceptance passes.
+behavior; they are the current authority for delivered behavior. The current
+dbCAN full-size lock has been byte/SHA verified, but the snapshot is not called
+production-ready and must not be published or redistributed until its
+separately authorized exact-restore and release acceptance passes.
 
 ## History
 
