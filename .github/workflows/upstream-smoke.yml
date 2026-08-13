@@ -34,10 +34,12 @@ jobs:
             fi
           }
           : >"$RUNNER_TEMP/smoke/results.tsv"
-          probe reactome-version 'https://reactome.org/ContentService/data/database/version' '^(200)$'
-          probe kegg-info 'https://rest.kegg.jp/info/kegg' '^(200)$'
-          probe jaspar-api 'https://jaspar.elixir.no/api/v1/' '^(200|301|302|404)$'
-          probe rhea-download 'https://www.rhea-db.org/download' '^(200|301|302)$'
+          # Providers may honor the one-byte range with 206 or ignore it with
+          # 200; both are bounded, body-discarded compatibility responses.
+          probe reactome-version 'https://reactome.org/ContentService/data/database/version' '^(200|206)$'
+          probe kegg-info 'https://rest.kegg.jp/info/kegg' '^(200|206)$'
+          probe jaspar-api 'https://jaspar.elixir.no/api/v1/' '^(200|206|301|302|404)$'
+          probe rhea-download 'https://www.rhea-db.org/download' '^(200|206|301|302)$'
           probe hmdb-browser-authorization 'https://hmdb.ca/system/downloads/current/hmdb_metabolites.zip' '^(401|403)$'
 
       - name: Upload bounded smoke evidence
