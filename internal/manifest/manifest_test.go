@@ -257,6 +257,47 @@ bytes = 1
 	}
 }
 
+func TestBuildIgnoresSymlinkedManifestLock(t *testing.T) {
+	root := t.TempDir()
+	writeLock(t, root, "real/v1", `
+database = "go"
+asset = "ontology"
+version_token = "v1"
+[[files]]
+path = "raw/go.obo"
+sha256 = "`+validSHA256+`"
+bytes = 1
+`)
+	namespace := filepath.Join(root, "symlinked")
+	if err := os.MkdirAll(namespace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "real", "v1", "manifest.lock"), filepath.Join(namespace, "manifest.lock")); err != nil {
+		t.Fatal(err)
+	}
+	writeLock(t, root, "symlinked/nested/v2", `
+database = "string"
+asset = "network"
+version_token = "v2"
+[[files]]
+path = "raw/network.tsv"
+sha256 = "`+validSHA256+`"
+bytes = 1
+`)
+
+	output := filepath.Join(root, "meta")
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(root, output, []string{"toml"}); err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	data := readFile(t, filepath.Join(output, "manifest.toml"))
+	if strings.Count(string(data), "database = 'go'") != 1 || strings.Count(string(data), "database = 'string'") != 1 {
+		t.Fatalf("symlinked lock was treated as an additional snapshot: %s", data)
+	}
+}
+
 func TestBuildUsesFixedOutputNames(t *testing.T) {
 	root := t.TempDir()
 	result, err := Build(root, root, nil)

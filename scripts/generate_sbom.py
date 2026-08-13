@@ -27,8 +27,21 @@ def main() -> int:
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     created = datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
     root = "SPDXRef-DOCUMENT"
-    packages = []
-    relationships = []
+    application = "SPDXRef-Package-biofetch"
+    packages = [
+        {
+            "SPDXID": application,
+            "name": "github.com/FuqingZh/biofetch",
+            "versionInfo": args.version,
+            "downloadLocation": "https://github.com/FuqingZh/biofetch",
+            "licenseConcluded": "Apache-2.0",
+            "licenseDeclared": "Apache-2.0",
+            "filesAnalyzed": False,
+        }
+    ]
+    relationships = [
+        {"spdxElementId": root, "relationshipType": "DESCRIBES", "relatedSpdxElement": application}
+    ]
     for item in items:
         ident = package_id(item["path"], item["version"])
         packages.append(
@@ -43,7 +56,7 @@ def main() -> int:
             }
         )
         relationships.append(
-            {"spdxElementId": root, "relationshipType": "DESCRIBES", "relatedSpdxElement": ident}
+            {"spdxElementId": application, "relationshipType": "DEPENDS_ON", "relatedSpdxElement": ident}
         )
     document = {
         "spdxVersion": "SPDX-2.3",

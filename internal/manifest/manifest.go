@@ -364,10 +364,13 @@ func discoverLocks(root string) ([]string, error) {
 				return filepath.SkipDir
 			}
 			pathLock := filepath.Join(filePath, "manifest.lock")
-			info, statErr := os.Stat(pathLock)
+			info, statErr := os.Lstat(pathLock)
 			switch {
 			case statErr == nil:
-				if info.IsDir() {
+				if info.Mode()&os.ModeSymlink != 0 {
+					return nil
+				}
+				if !info.Mode().IsRegular() {
 					return fmt.Errorf("manifest.lock must be a file: %s", pathLock)
 				}
 				locks = append(locks, pathLock)
@@ -378,7 +381,7 @@ func discoverLocks(root string) ([]string, error) {
 				return fmt.Errorf("inspect %s: %w", pathLock, statErr)
 			}
 		}
-		if entry.Name() == "manifest.lock" {
+		if entry.Name() == "manifest.lock" && entry.Type().IsRegular() {
 			locks = append(locks, filePath)
 		}
 		return nil

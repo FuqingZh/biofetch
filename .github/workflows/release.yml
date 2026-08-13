@@ -41,7 +41,7 @@ jobs:
       - name: Verify protected-main ancestry
         run: |
           git fetch origin main --depth=1
-          git merge-base --is-ancestor origin/main HEAD
+          git merge-base --is-ancestor HEAD origin/main
 
       - name: Run source gate
         run: |
@@ -122,9 +122,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: publish-release
+    name: verify-and-publish-release
     needs: build
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -158,7 +157,7 @@ jobs:
           (cd release && sha256sum -c checksums.txt)
           test -s release/checksums.txt
 
-      - name: Verify archive contents and amd64 smoke
+      - name: Verify archive contents and both architecture smokes
         run: |
           set -euo pipefail
           for archive in release/biofetch_*.tar.gz; do
@@ -171,13 +170,20 @@ jobs:
           mkdir -p "$RUNNER_TEMP/amd64-smoke"
           tar -xzf release/biofetch_*_linux_amd64.tar.gz -C "$RUNNER_TEMP/amd64-smoke"
           "$RUNNER_TEMP/amd64-smoke/biofetch" --version
+          mkdir -p "$RUNNER_TEMP/arm64-smoke"
+          tar -xzf release/biofetch_*_linux_arm64.tar.gz -C "$RUNNER_TEMP/arm64-smoke"
+          docker run --rm --platform linux/arm64 \
+            -v "$RUNNER_TEMP/arm64-smoke:/release:ro" \
+            ubuntu:24.04 /release/biofetch --version
 
       - name: Attest release artifacts
+        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@bd77c077858b8d561b7a36cbe48ef4cc642ca39d # v2.2.2
         with:
           subject-path: release/biofetch_*.tar.gz
 
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

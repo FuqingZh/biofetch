@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import Any
 
 
 EXACT_LICENSES = {
@@ -67,8 +71,70 @@ def modules() -> list[dict[str, str]]:
         path = item.get("Path")
         version = item.get("Version", "")
         if path and version:
-            result.append({"path": path, "version": version})
+            result.append({"path": path, "version": version, "dir": item.get("Dir", "")})
     return sorted(result, key=lambda item: item["path"])
+
+
+def module_dir(item: dict[str, str]) -> Path:
+    """Resolve a module source directory from the Go module cache."""
+    directory = item.get("dir", "")
+    if directory:
+        path = Path(directory)
+        if path.is_dir():
+            return path
+
+    query = f"{item['path']}@{item['version']}"
+    with tempfile.TemporaryDirectory(prefix="biofetch-module-") as temporary:
+        modfile = Path(temporary) / "go.mod"
+        shutil.copyfile("go.mod", modfile)
+        shutil.copyfile("go.sum", modfile.with_suffix(".sum"))
+        environment = os.environ.copy()
+        environment["GOFLAGS"] = f"-modfile={modfile}"
+        downloaded = subprocess.check_output(
+            ["go", "mod", "download", "-json", query], text=True, env=environment
+        )
+    metadata: dict[str, Any] = json.loads(downloaded)
+    path = Path(metadata.get("Dir", ""))
+    if not path.is_dir():
+        raise SystemExit(f"module source directory is unavailable: {query}")
+    return path
+
+
+def license_files(directory: Path) -> list[Path]:
+    """Return root-level license and notice files in stable order."""
+    candidates = []
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        name = path.name.lower()
+        if (
+            name == "license"
+            or name.startswith("license-")
+            or name.startswith("license.")
+            or name == "copying"
+            or name.startswith("copying-")
+            or name.startswith("copying.")
+            or name == "notice"
+            or name.startswith("notice-")
+            or name.startswith("notice.")
+        ):
+            candidates.append(path)
+    return sorted(candidates, key=lambda path: path.name.lower())
+
+
+def license_texts(item: dict[str, str]) -> list[tuple[str, str]]:
+    """Load the exact license/notice texts shipped by a dependency."""
+    files = license_files(module_dir(item))
+    if not files:
+        raise SystemExit(
+            f"no root license or notice text found for {item['path']}@{item['version']}"
+        )
+    texts = []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        text = "\n".join(line.rstrip() for line in text.splitlines()).rstrip()
+        texts.append((path.name, text))
+    return texts
 
 
 def render(items: list[dict[str, str]]) -> str:
@@ -86,7 +152,8 @@ def render(items: list[dict[str, str]]) -> str:
         "This file is generated from the exact `go list -m -json all` graph.",
         "Run `python3 scripts/generate_third_party_notices.py --check` after",
         "changing `go.mod` or `go.sum`. License identifiers are SPDX identifiers;",
-        "the corresponding source distribution remains the authoritative text.",
+        "the exact license and notice text from each source distribution is",
+        "included below for binary redistribution compliance.",
         "",
         "| Module | Version | License | Source |",
         "| --- | --- | --- | --- |",
@@ -98,6 +165,34 @@ def render(items: list[dict[str, str]]) -> str:
         lines.append(f"| `{path}` | `{version}` | `{license_for(path)}` | {source} |")
     lines.extend(
         [
+            "",
+            "## Full license and notice texts",
+            "",
+            "The following texts are copied from each exact module source",
+            "directory in the resolved graph.",
+            "",
+        ]
+    )
+    for item in items:
+        lines.extend(
+            [
+                f"### `{item['path']}@{item['version']}`",
+                f"SPDX license: `{license_for(item['path'])}`",
+                "",
+            ]
+        )
+        for file_name, text in license_texts(item):
+            lines.extend(
+                [
+                    f"----- BEGIN {file_name} -----",
+                    text,
+                    f"----- END {file_name} -----",
+                    "",
+                ]
+            )
+    lines.extend(
+        [
+            "## Biofetch license boundary",
             "",
             "The Apache-2.0 license in `LICENSE` applies only to repository-owned",
             "biofetch code and documentation. It does not relicense upstream",
