@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -403,11 +402,4 @@ func makeGzipBytes(data []byte) []byte {
 	_, _ = writerGzip.Write(data)
 	_ = writerGzip.Close()
 	return buffer.Bytes()
-}
-
-func assertContains(t *testing.T, text string, expected string) {
-	t.Helper()
-	if !strings.Contains(text, expected) {
-		t.Fatalf("expected %q in text:\n%s", expected, text)
-	}
 }

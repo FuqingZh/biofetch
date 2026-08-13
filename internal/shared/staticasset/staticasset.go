@@ -1,13 +1,13 @@
 package staticasset
 
 import (
+	"encoding/hex"
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/filehash"
 	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"github.com/FuqingZh/biofetch/internal/shared/parallel"
 	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
-	"encoding/hex"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -1088,13 +1088,7 @@ func readRecords(fileManifest string) ([]FileRecord, error) {
 	}
 	records := make([]FileRecord, 0, len(manifest.Files))
 	for _, item := range manifest.Files {
-		records = append(records, FileRecord{
-			Asset:  item.Asset,
-			Path:   item.Path,
-			SHA256: item.SHA256,
-			Bytes:  item.Bytes,
-			URL:    item.URL,
-		})
+		records = append(records, FileRecord(item))
 	}
 	return records, nil
 }
@@ -1127,13 +1121,7 @@ func hasPath(paths map[string]struct{}, path string) bool { _, ok := paths[path]
 func writeManifest(fileManifest string, source Source, records []FileRecord, timeDownloaded time.Time) error {
 	files := make([]ManifestFileRecord, 0, len(records))
 	for _, record := range records {
-		files = append(files, ManifestFileRecord{
-			Asset:  record.Asset,
-			Path:   record.Path,
-			SHA256: record.SHA256,
-			Bytes:  record.Bytes,
-			URL:    record.URL,
-		})
+		files = append(files, ManifestFileRecord(record))
 	}
 	return tomlx.WriteFileAtomic(fileManifest, Manifest{
 		Database:     source.Database,
@@ -1214,7 +1202,7 @@ func cleanRelativePath(value string) (string, error) {
 	}
 	for _, part := range strings.Split(pathValue, "/") {
 		if part == ".." {
-			return "", fmt.Errorf("must not contain ..")
+			return "", fmt.Errorf("must not contain parent traversal")
 		}
 	}
 	pathClean := filepath.ToSlash(filepath.Clean(pathValue))

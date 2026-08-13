@@ -1,11 +1,11 @@
 package kegg
 
 import (
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/logx"
 	"github.com/FuqingZh/biofetch/internal/shared/parallel"
 	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,11 +14,10 @@ import (
 )
 
 type keggLockConfig struct {
-	dirSnapshot     string
-	dirLogs         string
-	workersMax      int
-	requestInterval time.Duration
-	shouldDryRun    bool
+	dirSnapshot  string
+	dirLogs      string
+	workersMax   int
+	shouldDryRun bool
 }
 
 type keggRestoreConfig struct {
@@ -93,7 +92,7 @@ func runRestorePathway(cfg *keggRestoreConfig) error {
 	}
 
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
+	clientKegg := createKEGGClient(clientHTTP, defaultKEGGRequestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
 	recordsCurrent := make([]pathwayRecord, 0, len(manifestExisting.Files))
 
 	for _, item := range manifestExisting.Files {
@@ -232,7 +231,7 @@ func runRestoreBrite(cfg *keggRestoreConfig) error {
 	}
 
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
+	clientKegg := createKEGGClient(clientHTTP, defaultKEGGRequestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
 	recordsCurrent := make([]briteRecord, 0, len(manifestExisting.Files))
 
 	for _, item := range manifestExisting.Files {

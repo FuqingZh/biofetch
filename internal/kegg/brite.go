@@ -1,11 +1,11 @@
 package kegg
 
 import (
+	"bufio"
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/logx"
 	"github.com/FuqingZh/biofetch/internal/shared/sets"
 	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
-	"bufio"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -230,10 +230,6 @@ func resolveBriteIDs(
 
 func parseBriteIDsCSV(textCSV string) ([]string, error) {
 	return resolveBriteIDInputs([]string{textCSV}, ruleOrderAsc)
-}
-
-func readBriteIDsFromFile(fileBriteIDs string) ([]string, error) {
-	return resolveBriteIDInputs([]string{"@" + fileBriteIDs}, ruleOrderAsc)
 }
 
 func parseBriteIDsFromList(data []byte) ([]string, error) {

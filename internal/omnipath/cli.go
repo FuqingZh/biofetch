@@ -1,8 +1,8 @@
 package omnipath
 
 import (
-	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"strings"
 	"time"
 
@@ -430,10 +430,6 @@ func parseOrganisms(valuesInput []string) ([]string, error) {
 		return nil, fmt.Errorf("organisms must not be empty")
 	}
 	return cliopt.SortedUniqueStrings(valuesValid), nil
-}
-
-func readOrganismsFromFile(filePath string) ([]string, error) {
-	return parseOrganisms([]string{"@" + filePath})
 }
 
 func validateRuleLicense(ruleLicense string) error {

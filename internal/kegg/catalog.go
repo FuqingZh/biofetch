@@ -1,11 +1,11 @@
 package kegg
 
 import (
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/logx"
 	"github.com/FuqingZh/biofetch/internal/shared/parallel"
 	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -443,19 +443,6 @@ func deriveKEGGCatalogURL() string {
 
 func deriveKEGGGenomeListURL() string {
 	return baseURL + "/list/genome"
-}
-
-func writeCatalogFile(
-	filePath string,
-	pathRel string,
-	assetName string,
-	urlFile string,
-	data []byte,
-) (catalogRecord, error) {
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return catalogRecord{}, fmt.Errorf("write %s: %w", filePath, err)
-	}
-	return buildCatalogRecord(filePath, pathRel, assetName, urlFile)
 }
 
 func buildCatalogRecord(

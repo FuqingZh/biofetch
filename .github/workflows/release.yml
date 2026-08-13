@@ -119,7 +119,6 @@ jobs:
           name: biofetch-linux-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/biofetch_*_linux_${{ matrix.arch }}.tar.gz
-            ${{ runner.temp }}/go-version-${{ matrix.arch }}.txt
           if-no-files-found: error
 
   publish:

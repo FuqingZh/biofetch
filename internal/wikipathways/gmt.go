@@ -1,13 +1,13 @@
 package wikipathways
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"github.com/FuqingZh/biofetch/internal/shared/logx"
 	"github.com/FuqingZh/biofetch/internal/shared/sets"
 	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
-	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -373,10 +373,4 @@ func stringSet(values []string) map[string]struct{} {
 		set[value] = struct{}{}
 	}
 	return set
-}
-
-func sortGMTAssets(assets []gmtAsset) {
-	sort.Slice(assets, func(i, j int) bool {
-		return assets[i].species < assets[j].species
-	})
 }

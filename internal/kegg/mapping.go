@@ -1,12 +1,12 @@
 package kegg
 
 import (
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"github.com/FuqingZh/biofetch/internal/shared/logx"
 	"github.com/FuqingZh/biofetch/internal/shared/sets"
 	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,8 +42,6 @@ type mappingConfig struct {
 	shouldDryRun            bool
 	shouldDisableProgress   bool
 	dirLogs                 string
-	scopeType               string
-	scopeValue              string
 }
 
 type mappingLockConfig struct {

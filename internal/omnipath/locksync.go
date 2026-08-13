@@ -1,13 +1,13 @@
 package omnipath
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/logx"
 	"github.com/FuqingZh/biofetch/internal/shared/parallel"
 	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -360,15 +360,6 @@ func lockInteractionQuery(dirVersion, path string, records []recordFile, dataset
 		StartSHA: meta.Start.SHA256, StartEdges: meta.Start.Edges,
 		EndSHA: meta.End.SHA256, EndEdges: meta.End.Edges, LeafBatches: leaves,
 	}, nil
-}
-
-func containsString(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
 }
 
 func recordSHA(records []recordFile, path string) string {
