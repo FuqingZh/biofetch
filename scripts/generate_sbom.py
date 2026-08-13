@@ -36,6 +36,7 @@ def main() -> int:
             "downloadLocation": "https://github.com/FuqingZh/biofetch",
             "licenseConcluded": "Apache-2.0",
             "licenseDeclared": "Apache-2.0",
+            "copyrightText": "NOASSERTION",
             "filesAnalyzed": False,
         }
     ]
@@ -52,6 +53,7 @@ def main() -> int:
                 "downloadLocation": f"https://pkg.go.dev/{item['path']}@{item['version']}",
                 "licenseConcluded": license_for(item["path"]),
                 "licenseDeclared": license_for(item["path"]),
+                "copyrightText": "NOASSERTION",
                 "filesAnalyzed": False,
             }
         )

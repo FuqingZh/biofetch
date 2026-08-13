@@ -92,7 +92,7 @@ func runRestorePathway(cfg *keggRestoreConfig) error {
 	}
 
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, defaultKEGGRequestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
+	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
 	recordsCurrent := make([]pathwayRecord, 0, len(manifestExisting.Files))
 
 	for _, item := range manifestExisting.Files {
@@ -231,7 +231,7 @@ func runRestoreBrite(cfg *keggRestoreConfig) error {
 	}
 
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
-	clientKegg := createKEGGClient(clientHTTP, defaultKEGGRequestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
+	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, defaultKEGGRetryMax, defaultKEGGRetryWait)
 	recordsCurrent := make([]briteRecord, 0, len(manifestExisting.Files))
 
 	for _, item := range manifestExisting.Files {

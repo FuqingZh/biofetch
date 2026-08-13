@@ -1,7 +1,6 @@
 name: Upstream compatibility smoke
 
 on:
-  pull_request:
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
@@ -23,14 +22,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/smoke"
+          failures=0
           probe() {
             local name="$1" url="$2" expected="$3" headers="$RUNNER_TEMP/smoke/${1}.headers"
             local status
-            status="$(curl --fail-with-body --silent --show-error --location --max-time 20 --retry 2 --retry-delay 2 --range 0-0 -D "$headers" -o /dev/null -w '%{http_code}' "$url" || true)"
+            status="$(curl --fail-with-body --silent --show-error --location --max-time 20 --retry 2 --retry-delay 2 --max-filesize 1048576 --range 0-0 -D "$headers" -o /dev/null -w '%{http_code}' "$url" || true)"
             printf '%s\t%s\t%s\n' "$name" "$status" "$url" | tee -a "$RUNNER_TEMP/smoke/results.tsv"
             if [[ ! "$status" =~ $expected ]]; then
               echo "unexpected status for $name: $status (expected $expected)" >&2
-              return 1
+              failures=$((failures + 1))
             fi
           }
           : >"$RUNNER_TEMP/smoke/results.tsv"
@@ -41,6 +41,10 @@ jobs:
           probe jaspar-api 'https://jaspar.elixir.no/api/v1/' '^(200|206|301|302|404)$'
           probe rhea-release 'https://ftp.expasy.org/databases/rhea/rhea-release.properties' '^(200|206)$'
           probe hmdb-browser-authorization 'https://hmdb.ca/system/downloads/current/hmdb_metabolites.zip' '^(401|403)$'
+          if ((failures > 0)); then
+            echo "${failures} upstream probe(s) failed" >&2
+            exit 1
+          fi
 
       - name: Upload bounded smoke evidence
         if: always()

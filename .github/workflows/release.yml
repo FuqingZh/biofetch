@@ -93,17 +93,18 @@ jobs:
           version="${VERSION_BUILD}"
           staging="$RUNNER_TEMP/package"
           mkdir -p "$staging/completions"
+          GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/biofetch-host" ./cmd/biofetch
+          "$RUNNER_TEMP/biofetch-host" completion bash >"$staging/completions/biofetch.bash"
+          "$RUNNER_TEMP/biofetch-host" completion zsh >"$staging/completions/_biofetch"
+          "$RUNNER_TEMP/biofetch-host" completion fish >"$staging/completions/biofetch.fish"
+          "$RUNNER_TEMP/biofetch-host" completion powershell >"$staging/completions/biofetch.ps1"
           go build -trimpath -ldflags "-X github.com/FuqingZh/biofetch/internal/biofetch.Version=${version}" -o "$staging/biofetch" ./cmd/biofetch
-          "$staging/biofetch" completion bash >"$staging/completions/biofetch.bash"
-          "$staging/biofetch" completion zsh >"$staging/completions/_biofetch"
-          "$staging/biofetch" completion fish >"$staging/completions/biofetch.fish"
-          "$staging/biofetch" completion powershell >"$staging/completions/biofetch.ps1"
           cp LICENSE THIRD_PARTY_NOTICES "$staging/"
           cat >"$staging/README.release.md" <<EOF
           # biofetch ${version}
 
-          Install this Linux ${GOARCH} archive by placing the `biofetch` binary
-          on PATH. Shell completion files are under `completions/`.
+          Install this Linux ${GOARCH} archive by placing the \`biofetch\` binary
+          on PATH. Shell completion files are under \`completions/\`.
 
           This archive contains software and notices only. Database snapshots
           must be acquired from their official providers with biofetch.
