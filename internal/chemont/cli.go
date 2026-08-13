@@ -1,14 +1,18 @@
 package chemont
 
 import (
-	"biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 	"net/http"
 
 	"github.com/spf13/cobra"
 )
 
 func NewCommand() *cobra.Command {
-	return bulkasset.NewCommand(bulkasset.Spec{
+	return bulkasset.NewCommand(sourceSpec())
+}
+
+func sourceSpec() bulkasset.Spec {
+	return bulkasset.Spec{
 		Database:            "chemont",
 		Asset:               "ontology",
 		Source:              "classyfire",
@@ -24,5 +28,5 @@ func NewCommand() *cobra.Command {
 			URL:     "http://classyfire.wishartlab.com/system/downloads/1_0/chemont/ChemOnt_2_1.obo.zip",
 			Default: true,
 		}},
-	})
+	}
 }

@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Tag or version to dry-run (must already exist on protected main)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: biofetch-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: validate-release-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify protected-main ancestry
+        run: |
+          git fetch origin main --depth=1
+          git merge-base --is-ancestor origin/main HEAD
+
+      - name: Run source gate
+        run: |
+          go mod tidy -diff
+          go mod verify
+          go test ./...
+          go test -race ./...
+          go vet ./...
+          go build -trimpath -o "$RUNNER_TEMP/biofetch" ./cmd/biofetch
+          "$RUNNER_TEMP/biofetch" --version
+          "$RUNNER_TEMP/biofetch" manifest build --help >/dev/null
+
+      - name: Verify generated notices
+        run: python3 scripts/generate_third_party_notices.py --check
+
+  build:
+    name: build-${{ matrix.arch }}
+    needs: validate
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            goarch: amd64
+          - arch: arm64
+            goarch: arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          VERSION_BUILD: ${{ inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${VERSION_BUILD}"
+          staging="$RUNNER_TEMP/package"
+          mkdir -p "$staging/completions"
+          go build -trimpath -ldflags "-X github.com/FuqingZh/biofetch/internal/biofetch.Version=${version}" -o "$staging/biofetch" ./cmd/biofetch
+          "$staging/biofetch" completion bash >"$staging/completions/biofetch.bash"
+          "$staging/biofetch" completion zsh >"$staging/completions/_biofetch"
+          "$staging/biofetch" completion fish >"$staging/completions/biofetch.fish"
+          "$staging/biofetch" completion powershell >"$staging/completions/biofetch.ps1"
+          cp LICENSE THIRD_PARTY_NOTICES "$staging/"
+          cat >"$staging/README.release.md" <<EOF
+          # biofetch ${version}
+
+          Install this Linux ${GOARCH} archive by placing the `biofetch` binary
+          on PATH. Shell completion files are under `completions/`.
+
+          This archive contains software and notices only. Database snapshots
+          must be acquired from their official providers with biofetch.
+          EOF
+          git log -1 --format=%ct >"$staging/source-date-epoch"
+          epoch="$(cat "$staging/source-date-epoch")"
+          tar --sort=name --mtime="@${epoch}" --owner=0 --group=0 --numeric-owner -czf "$RUNNER_TEMP/biofetch_${version}_linux_${{ matrix.arch }}.tar.gz" -C "$staging" biofetch LICENSE THIRD_PARTY_NOTICES README.release.md completions
+          go version -m "$staging/biofetch" | tee "$RUNNER_TEMP/go-version-${{ matrix.arch }}.txt"
+
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: biofetch-linux-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/biofetch_*_linux_${{ matrix.arch }}.tar.gz
+            ${{ runner.temp }}/go-version-${{ matrix.arch }}.txt
+          if-no-files-found: error
+
+  publish:
+    name: publish-release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.version || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: release
+          pattern: biofetch-linux-*
+          merge-multiple: true
+
+      - name: Generate checksums and SBOM
+        env:
+          VERSION_BUILD: ${{ inputs.version || github.ref_name }}
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_sbom.py --version "$VERSION_BUILD" --output release/sbom.spdx.json
+          (cd release && sha256sum biofetch_*.tar.gz sbom.spdx.json > checksums.txt)
+          (cd release && sha256sum -c checksums.txt)
+          test -s release/checksums.txt
+
+      - name: Verify archive contents and amd64 smoke
+        run: |
+          set -euo pipefail
+          for archive in release/biofetch_*.tar.gz; do
+            tar -tzf "$archive" | grep -Fx 'biofetch'
+            tar -tzf "$archive" | grep -Fx 'LICENSE'
+            tar -tzf "$archive" | grep -Fx 'THIRD_PARTY_NOTICES'
+            tar -tzf "$archive" | grep -Fx 'README.release.md'
+            tar -tzf "$archive" | grep -Fx 'completions/biofetch.bash'
+          done
+          mkdir -p "$RUNNER_TEMP/amd64-smoke"
+          tar -xzf release/biofetch_*_linux_amd64.tar.gz -C "$RUNNER_TEMP/amd64-smoke"
+          "$RUNNER_TEMP/amd64-smoke/biofetch" --version
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@bd77c077858b8d561b7a36cbe48ef4cc642ca39d # v2.2.2
+        with:
+          subject-path: release/biofetch_*.tar.gz
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.version || github.ref_name }}"
+          changelog_version="${tag#v}"
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v tag="$changelog_version" 'BEGIN { found=0 } $0 ~ "^## \\[?" tag "\\]?" { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md >"$notes"
+          test -s "$notes"
+          gh release create "$tag" release/* --title "$tag" --notes-file "$notes" --verify-tag

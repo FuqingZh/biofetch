@@ -1,4 +1,4 @@
-module biofetch
+module github.com/FuqingZh/biofetch
 
 go 1.26
 

@@ -50,3 +50,30 @@ func TestBuildCommandFormatsFileOverridesDefault(t *testing.T) {
 		t.Fatalf("unexpected TOML output stat error = %v", err)
 	}
 }
+
+func TestBuildCommandWorkersContract(t *testing.T) {
+	command := newBuildCommand()
+	flag := command.Flags().Lookup("workers")
+	if flag == nil {
+		t.Fatal("workers flag missing")
+	}
+	if flag.DefValue != "4" {
+		t.Fatalf("workers default = %q, want 4", flag.DefValue)
+	}
+	if !strings.Contains(flag.Usage, "reading and validating child manifests") {
+		t.Fatalf("workers usage = %q", flag.Usage)
+	}
+
+	root := t.TempDir()
+	command = newBuildCommand()
+	command.SetArgs([]string{root, "--output", root, "--workers", "0"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "workers must be >= 1") {
+		t.Fatalf("workers=0 error = %v", err)
+	}
+
+	command = newBuildCommand()
+	command.SetArgs([]string{root, "--output", root, "--workers", "65"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "workers must be <= 64") {
+		t.Fatalf("workers=65 error = %v", err)
+	}
+}

@@ -1,10 +1,10 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/parallel"
-	"biofetch/internal/shared/tomlx"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"fmt"
 	"os"
 	"path/filepath"

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 )
 
 func TestNormalizeCOGVersionToken(t *testing.T) {

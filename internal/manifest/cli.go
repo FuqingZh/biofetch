@@ -1,7 +1,7 @@
 package manifest
 
 import (
-	"biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -22,6 +22,7 @@ func newBuildCommand() *cobra.Command {
 	var resourceRoot string
 	var dirOut string
 	var formatsInput []string
+	workersMax := cliopt.DefaultLockWorkersMax
 	command := &cobra.Command{
 		Use:           "build RESOURCE-ROOT",
 		Short:         "Build a deterministic aggregate manifest from manifest.lock files",
@@ -37,7 +38,10 @@ func newBuildCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := Build(resourceRoot, dirOut, formats)
+			if err := cliopt.ValidateLockWorkersMax(workersMax); err != nil {
+				return err
+			}
+			result, err := BuildWithWorkers(resourceRoot, dirOut, formats, workersMax)
 			if err != nil {
 				return err
 			}
@@ -56,6 +60,7 @@ func newBuildCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.SortFlags = false
 	flags.StringVarP(&dirOut, "output", "o", "", "Existing directory for fixed-name manifest output files")
+	flags.IntVar(&workersMax, "workers", workersMax, "Max concurrent workers for reading and validating child manifests (1-64)")
 	cliopt.BindStringListFlags(flags, &formatsInput, "formats", "Output formats: toml|tsv|json; repeat or comma-separate")
 	return command
 }

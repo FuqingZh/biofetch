@@ -1,9 +1,9 @@
 package stringdb
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/parallel"
-	"biofetch/internal/shared/tomlx"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"crypto/sha256"
 	"fmt"
 	"io"

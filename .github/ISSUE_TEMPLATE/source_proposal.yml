@@ -1,0 +1,37 @@
+name: New source proposal
+description: Propose a new upstream database or asset family
+title: "source: "
+labels: [source-request]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: Official source URL
+    validations:
+      required: true
+  - type: input
+    id: terms
+    attributes:
+      label: Terms or license URL
+    validations:
+      required: true
+  - type: textarea
+    id: release
+    attributes:
+      label: Release, size, and update semantics
+      description: State fixed/current behavior, expected bytes, and refresh cadence.
+    validations:
+      required: true
+  - type: textarea
+    id: authentication
+    attributes:
+      label: Authentication and access constraints
+      description: Include commercial, browser, token, rate-limit, or bulk-download requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: layout
+    attributes:
+      label: Proposed snapshot layout and citation
+    validations:
+      required: true

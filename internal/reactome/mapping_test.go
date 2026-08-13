@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 )
 
 type reactomeRoundTripFunc func(*http.Request) (*http.Response, error)

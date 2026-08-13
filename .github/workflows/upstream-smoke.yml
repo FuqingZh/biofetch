@@ -1,0 +1,48 @@
+name: Upstream compatibility smoke
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: bounded-source-probes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Probe documented endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke"
+          probe() {
+            local name="$1" url="$2" expected="$3" headers="$RUNNER_TEMP/smoke/${1}.headers"
+            local status
+            status="$(curl --fail-with-body --silent --show-error --location --max-time 20 --retry 2 --retry-delay 2 --range 0-0 -D "$headers" -o /dev/null -w '%{http_code}' "$url" || true)"
+            printf '%s\t%s\t%s\n' "$name" "$status" "$url" | tee -a "$RUNNER_TEMP/smoke/results.tsv"
+            if [[ ! "$status" =~ $expected ]]; then
+              echo "unexpected status for $name: $status (expected $expected)" >&2
+              return 1
+            fi
+          }
+          : >"$RUNNER_TEMP/smoke/results.tsv"
+          probe reactome-version 'https://reactome.org/ContentService/data/database/version' '^(200)$'
+          probe kegg-info 'https://rest.kegg.jp/info/kegg' '^(200)$'
+          probe jaspar-api 'https://jaspar.elixir.no/api/v1/' '^(200|301|302|404)$'
+          probe rhea-download 'https://www.rhea-db.org/download' '^(200|301|302)$'
+          probe hmdb-browser-authorization 'https://hmdb.ca/system/downloads/current/hmdb_metabolites.zip' '^(401|403)$'
+
+      - name: Upload bounded smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upstream-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: warn

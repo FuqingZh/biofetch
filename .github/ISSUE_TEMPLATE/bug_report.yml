@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible biofetch problem
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include the exact command and the observed error.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide a minimal temporary-resource fixture; redact secrets and licensed data.
+    validations:
+      required: true

@@ -1,10 +1,10 @@
 package eggnog
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/sets"
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"fmt"
 	"path/filepath"
 	"regexp"

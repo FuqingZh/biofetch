@@ -1,7 +1,7 @@
 package logx
 
 import (
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"

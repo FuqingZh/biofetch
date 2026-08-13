@@ -1,7 +1,7 @@
 package chebi
 
 import (
-	"biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 
 	"github.com/spf13/cobra"
 )
@@ -9,7 +9,11 @@ import (
 const baseURL = "https://ftp.ebi.ac.uk/pub/databases/chebi"
 
 func NewCommand() *cobra.Command {
-	return bulkasset.NewCommand(bulkasset.Spec{
+	return bulkasset.NewCommand(sourceSpec())
+}
+
+func sourceSpec() bulkasset.Spec {
+	return bulkasset.Spec{
 		Database:            "chebi",
 		Asset:               "database",
 		Source:              "ebi-ftp-https",
@@ -30,5 +34,5 @@ func NewCommand() *cobra.Command {
 			{Name: "license", Path: "LICENSE", URL: baseURL + "/ontology/LICENSE", Default: true},
 			{Name: "postgres-dump", Path: "pgsql_allstars.dump", URL: baseURL + "/generic_dumps/pgsql_allstars.dump", Large: true},
 		},
-	})
+	}
 }

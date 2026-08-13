@@ -1,7 +1,7 @@
 package wikipathways
 
 import (
-	"biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"strings"
 	"time"
 

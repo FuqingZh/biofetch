@@ -1,7 +1,7 @@
 package lipidmaps
 
 import (
-	"biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 	"regexp"
 
 	"github.com/spf13/cobra"
@@ -10,7 +10,11 @@ import (
 var patternLMSDRelease = regexp.MustCompile(`Last updated:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})`)
 
 func NewCommand() *cobra.Command {
-	return bulkasset.NewCommand(bulkasset.Spec{
+	return bulkasset.NewCommand(sourceSpec())
+}
+
+func sourceSpec() bulkasset.Spec {
+	return bulkasset.Spec{
 		Database:            "lipidmaps",
 		Asset:               "lmsd",
 		Source:              "lipidmaps-download",
@@ -23,5 +27,5 @@ func NewCommand() *cobra.Command {
 			{Name: "rdf", Path: "LMSD.ttl", URL: "https://www.lipidmaps.org/files/?ext=ttl&file=sparql_lipids", Default: true},
 			{Name: "identifiers", Path: "lipidmaps_ids_cc0.tsv", URL: "https://www.lipidmaps.org/files/?ext=tsv&file=lipidmaps_ids_cc0", Default: true},
 		},
-	})
+	}
 }

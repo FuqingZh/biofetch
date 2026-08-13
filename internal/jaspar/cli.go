@@ -1,8 +1,8 @@
 package jaspar
 
 import (
-	"biofetch/internal/shared/bulkasset"
 	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 	"regexp"
 
 	"github.com/spf13/cobra"
@@ -11,7 +11,23 @@ import (
 var patternRelease = regexp.MustCompile(`/download/data/([0-9]{4})/`)
 
 func NewCommand() *cobra.Command {
-	command := bulkasset.NewCommand(bulkasset.Spec{
+	command := bulkasset.NewCommand(sourceSpec())
+	// Keep the removed name explicitly rejected so Cobra cannot treat it as a
+	// parent command that merely prints help. JASPAR's upstream product name is
+	// "data"; there is intentionally no compatibility alias for "profiles".
+	command.AddCommand(&cobra.Command{
+		Use:    "profiles",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("unknown command %q for jaspar; use %q", "profiles", "data")
+		},
+	})
+	return command
+}
+
+func sourceSpec() bulkasset.Spec {
+	return bulkasset.Spec{
 		Database:             "jaspar",
 		Asset:                "data",
 		Source:               "jaspar-download",
@@ -44,17 +60,5 @@ func NewCommand() *cobra.Command {
 			{Name: "sites", Path: "sites.tar.gz", URL: "https://jaspar.elixir.no/download/data/{version}/sites.tar.gz"},
 			{Name: "bed", Path: "bed.tar.gz", URL: "https://jaspar.elixir.no/download/data/{version}/bed.tar.gz"},
 		},
-	})
-	// Keep the removed name explicitly rejected so Cobra cannot treat it as a
-	// parent command that merely prints help. JASPAR's upstream product name is
-	// "data"; there is intentionally no compatibility alias for "profiles".
-	command.AddCommand(&cobra.Command{
-		Use:    "profiles",
-		Hidden: true,
-		Args:   cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return fmt.Errorf("unknown command %q for jaspar; use %q", "profiles", "data")
-		},
-	})
-	return command
+	}
 }

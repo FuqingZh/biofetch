@@ -1,11 +1,11 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/parallel"
-	"biofetch/internal/shared/sets"
-	"biofetch/internal/shared/tomlx"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"bufio"
 	"crypto/sha256"
 	"errors"

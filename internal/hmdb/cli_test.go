@@ -2,8 +2,8 @@ package hmdb
 
 import (
 	"archive/zip"
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"net/http"
 	"os"
 	"path/filepath"

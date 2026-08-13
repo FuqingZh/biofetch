@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+title: biofetch
+message: If you use biofetch, please cite the versioned release and the upstream databases it downloads.
+type: software
+authors:
+  - family-names: Zhang
+    given-names: Fuqing
+repository-code: https://github.com/FuqingZh/biofetch
+license: Apache-2.0
+version: 0.1.0
+date-released: 2026-08-13
