@@ -1,0 +1,25 @@
+name: Set up pinned Go toolchain
+description: Install the exact Go toolchain used by Biofetch CI from the official distribution host
+runs:
+  using: composite
+  steps:
+    - name: Download and verify Go
+      shell: bash
+      run: |
+        set -euo pipefail
+        go_version='1.26.6'
+        go_sha256='708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89'
+        archive="$RUNNER_TEMP/go${go_version}.linux-amd64.tar.gz"
+        go_root="$RUNNER_TEMP/go"
+        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+          --retry 3 --retry-delay 2 --max-time 180 \
+          --output "$archive" \
+          "https://dl.google.com/go/go${go_version}.linux-amd64.tar.gz"
+        printf '%s  %s\n' "$go_sha256" "$archive" | sha256sum --check --strict
+        rm -rf "$go_root"
+        tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+        test -x "$go_root/bin/go"
+        echo "$go_root/bin" >> "$GITHUB_PATH"
+        echo "GOROOT=$go_root" >> "$GITHUB_ENV"
+        echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
+        "$go_root/bin/go" version
