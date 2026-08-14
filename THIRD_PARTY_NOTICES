@@ -9,7 +9,7 @@ included below for binary redistribution compliance.
 | Module | Version | License | Source |
 | --- | --- | --- | --- |
 | `github.com/aymanbagabas/go-osc52/v2` | `v2.0.1` | `MIT` | https://pkg.go.dev/github.com/aymanbagabas/go-osc52/v2@v2.0.1 |
-| `github.com/aymanbagabas/go-udiff` | `v0.2.0` | `MIT` | https://pkg.go.dev/github.com/aymanbagabas/go-udiff@v0.2.0 |
+| `github.com/aymanbagabas/go-udiff` | `v0.2.0` | `MIT AND BSD-3-Clause` | https://pkg.go.dev/github.com/aymanbagabas/go-udiff@v0.2.0 |
 | `github.com/charmbracelet/colorprofile` | `v0.2.3-0.20250311203215-f60798e515dc` | `MIT` | https://pkg.go.dev/github.com/charmbracelet/colorprofile@v0.2.3-0.20250311203215-f60798e515dc |
 | `github.com/charmbracelet/lipgloss` | `v1.1.0` | `MIT` | https://pkg.go.dev/github.com/charmbracelet/lipgloss@v1.1.0 |
 | `github.com/charmbracelet/log` | `v1.0.0` | `MIT` | https://pkg.go.dev/github.com/charmbracelet/log@v1.0.0 |
@@ -80,7 +80,7 @@ SOFTWARE.
 ----- END LICENSE -----
 
 ### `github.com/aymanbagabas/go-udiff@v0.2.0`
-SPDX license: `MIT`
+SPDX license: `MIT AND BSD-3-Clause`
 
 ----- BEGIN LICENSE-BSD -----
 Copyright (c) 2009 The Go Authors. All rights reserved.

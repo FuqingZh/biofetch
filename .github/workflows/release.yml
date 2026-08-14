@@ -12,9 +12,8 @@ on:
         type: string
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  actions: read
+  contents: read
 
 concurrency:
   group: biofetch-release-${{ github.ref }}
@@ -40,7 +39,10 @@ jobs:
 
       - name: Verify protected-main ancestry
         run: |
-          git fetch origin main --depth=1
+          git fetch origin main --no-tags
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            git fetch origin main --no-tags --unshallow
+          fi
           git merge-base --is-ancestor HEAD origin/main
 
       - name: Run source gate
@@ -125,6 +127,11 @@ jobs:
   publish:
     name: verify-and-publish-release
     needs: build
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

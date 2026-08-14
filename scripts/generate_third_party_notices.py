@@ -16,7 +16,7 @@ from typing import Any
 
 EXACT_LICENSES = {
     "github.com/aymanbagabas/go-osc52/v2": "MIT",
-    "github.com/aymanbagabas/go-udiff": "MIT",
+    "github.com/aymanbagabas/go-udiff": "MIT AND BSD-3-Clause",
     "github.com/charmbracelet/colorprofile": "MIT",
     "github.com/charmbracelet/lipgloss": "MIT",
     "github.com/charmbracelet/log": "MIT",
