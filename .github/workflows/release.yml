@@ -132,9 +132,31 @@ jobs:
             ${{ runner.temp }}/biofetch_*_linux_${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
+  smoke-arm64:
+    name: smoke-arm64
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Download arm64 package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: release
+          name: biofetch-linux-arm64
+
+      - name: Execute native arm64 binary
+        env:
+          VERSION_BUILD: ${{ inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          mkdir -p "$RUNNER_TEMP/arm64-smoke"
+          tar -xzf release/biofetch_*_linux_arm64.tar.gz -C "$RUNNER_TEMP/arm64-smoke"
+          test "$("$RUNNER_TEMP/arm64-smoke/biofetch" --version)" = "biofetch version ${VERSION_BUILD}"
+
   publish:
     name: verify-and-publish-release
-    needs: [validate, build]
+    needs: [validate, build, smoke-arm64]
     permissions:
       actions: read
       attestations: write
@@ -171,7 +193,7 @@ jobs:
           (cd release && sha256sum -c checksums.txt)
           test -s release/checksums.txt
 
-      - name: Verify archive contents and both architecture smokes
+      - name: Verify archive contents and amd64 smoke
         env:
           VERSION_BUILD: ${{ inputs.version || github.ref_name }}
         run: |
@@ -186,12 +208,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/amd64-smoke"
           tar -xzf release/biofetch_*_linux_amd64.tar.gz -C "$RUNNER_TEMP/amd64-smoke"
           test "$("$RUNNER_TEMP/amd64-smoke/biofetch" --version)" = "biofetch version ${VERSION_BUILD}"
-          mkdir -p "$RUNNER_TEMP/arm64-smoke"
-          tar -xzf release/biofetch_*_linux_arm64.tar.gz -C "$RUNNER_TEMP/arm64-smoke"
-          test "$(docker run --rm --platform linux/arm64 \
-            -v "$RUNNER_TEMP/arm64-smoke:/release:ro" \
-            ubuntu:24.04 /release/biofetch --version)" = "biofetch version ${VERSION_BUILD}"
-
       - name: Attest release artifacts
         if: github.event_name == 'push' || inputs.publish == true
         uses: actions/attest-build-provenance@bd77c077858b8d561b7a36cbe48ef4cc642ca39d # v2.2.2
