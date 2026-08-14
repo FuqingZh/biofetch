@@ -10,6 +10,11 @@ on:
         description: Tag or version to dry-run (must already exist on protected main)
         required: true
         type: string
+      publish:
+        description: Publish the existing tag after an explicit owner-approved recovery run
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -94,13 +99,13 @@ jobs:
           version="${VERSION_BUILD}"
           staging="$RUNNER_TEMP/package"
           mkdir -p "$staging/completions"
-          GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/biofetch-host" ./cmd/biofetch
+          GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/FuqingZh/biofetch/internal/biofetch.Version=${version}" -o "$RUNNER_TEMP/biofetch-host" ./cmd/biofetch
           "$RUNNER_TEMP/biofetch-host" completion bash >"$staging/completions/biofetch.bash"
           "$RUNNER_TEMP/biofetch-host" completion zsh >"$staging/completions/_biofetch"
           "$RUNNER_TEMP/biofetch-host" completion fish >"$staging/completions/biofetch.fish"
           "$RUNNER_TEMP/biofetch-host" completion powershell >"$staging/completions/biofetch.ps1"
           go build -trimpath -ldflags "-X github.com/FuqingZh/biofetch/internal/biofetch.Version=${version}" -o "$staging/biofetch" ./cmd/biofetch
-          test "$("$staging/biofetch" --version)" = "biofetch version ${version}"
+          test "$("$RUNNER_TEMP/biofetch-host" --version)" = "biofetch version ${version}"
           cp LICENSE THIRD_PARTY_NOTICES "$staging/"
           cat >"$staging/README.release.md" <<EOF
           # biofetch ${version}
@@ -167,6 +172,8 @@ jobs:
           test -s release/checksums.txt
 
       - name: Verify archive contents and both architecture smokes
+        env:
+          VERSION_BUILD: ${{ inputs.version || github.ref_name }}
         run: |
           set -euo pipefail
           for archive in release/biofetch_*.tar.gz; do
@@ -178,21 +185,21 @@ jobs:
           done
           mkdir -p "$RUNNER_TEMP/amd64-smoke"
           tar -xzf release/biofetch_*_linux_amd64.tar.gz -C "$RUNNER_TEMP/amd64-smoke"
-          "$RUNNER_TEMP/amd64-smoke/biofetch" --version
+          test "$("$RUNNER_TEMP/amd64-smoke/biofetch" --version)" = "biofetch version ${VERSION_BUILD}"
           mkdir -p "$RUNNER_TEMP/arm64-smoke"
           tar -xzf release/biofetch_*_linux_arm64.tar.gz -C "$RUNNER_TEMP/arm64-smoke"
-          docker run --rm --platform linux/arm64 \
+          test "$(docker run --rm --platform linux/arm64 \
             -v "$RUNNER_TEMP/arm64-smoke:/release:ro" \
-            ubuntu:24.04 /release/biofetch --version
+            ubuntu:24.04 /release/biofetch --version)" = "biofetch version ${VERSION_BUILD}"
 
       - name: Attest release artifacts
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.publish == true
         uses: actions/attest-build-provenance@bd77c077858b8d561b7a36cbe48ef4cc642ca39d # v2.2.2
         with:
           subject-path: release/*
 
       - name: Create GitHub Release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.publish == true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
