@@ -38,7 +38,7 @@ jobs:
           # 200; both are bounded, body-discarded compatibility responses.
           probe reactome-version 'https://reactome.org/ContentService/data/database/version' '^(200|206)$'
           probe kegg-info 'https://rest.kegg.jp/info/kegg' '^(200|206)$'
-          probe jaspar-api 'https://jaspar.elixir.no/api/v1/' '^(200|206|301|302|404)$'
+          probe jaspar-api 'https://jaspar.elixir.no/api/v1/' '^(200|206)$'
           probe rhea-release 'https://ftp.expasy.org/databases/rhea/rhea-release.properties' '^(200|206)$'
           probe hmdb-browser-authorization 'https://hmdb.ca/system/downloads/current/hmdb_metabolites.zip' '^(401|403)$'
           if ((failures > 0)); then
