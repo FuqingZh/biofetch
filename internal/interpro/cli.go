@@ -1,7 +1,7 @@
 package interpro
 
 import (
-	"biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"fmt"
 	"strings"
 	"time"

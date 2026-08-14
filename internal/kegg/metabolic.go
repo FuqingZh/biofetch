@@ -1,7 +1,7 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 	"fmt"
 	"io"
 	"net/http"

@@ -1,13 +1,13 @@
 package stringdb
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/filehash"
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/parallel"
-	"biofetch/internal/shared/sets"
-	"biofetch/internal/shared/tomlx"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/filehash"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"bufio"
 	"compress/gzip"
 	"fmt"

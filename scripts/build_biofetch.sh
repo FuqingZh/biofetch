@@ -14,5 +14,6 @@ mkdir -p "$(dirname "${file_out}")"
 
 cd "${dir_repo}"
 env GOCACHE="${go_cache}" CGO_ENABLED=0 "${go_bin}" build \
-  -ldflags "-X biofetch/internal/biofetch.Version=${version_build}" \
+  -trimpath \
+  -ldflags "-X github.com/FuqingZh/biofetch/internal/biofetch.Version=${version_build}" \
   -o "${file_out}" ./cmd/biofetch

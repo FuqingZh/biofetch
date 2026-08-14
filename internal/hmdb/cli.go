@@ -1,9 +1,9 @@
 package hmdb
 
 import (
-	"biofetch/internal/shared/archiveverify"
-	"biofetch/internal/shared/bulkasset"
-	"biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/archiveverify"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"errors"
 	"fmt"
 	"net/http"

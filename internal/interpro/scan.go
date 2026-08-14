@@ -1,9 +1,9 @@
 package interpro
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"

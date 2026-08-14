@@ -4,6 +4,22 @@
 ends at source acquisition: raw files, source metadata, and per-snapshot
 `manifest.lock` files.
 
+The first public release targets Linux `amd64` and `arm64`, with `CGO_ENABLED=0`.
+Install the latest tagged release from the public module with:
+
+```bash
+go install github.com/FuqingZh/biofetch/cmd/biofetch@latest
+```
+
+Prebuilt archives, checksums, SBOM, provenance, and completion files are
+published on the [GitHub Releases](https://github.com/FuqingZh/biofetch/releases)
+page. Source installation requires the Go version declared in `go.mod`.
+
+The repository-owned code and documentation are licensed under
+[Apache-2.0](LICENSE). Downloaded databases are not relicensed by this
+repository; read [the upstream terms boundary](docs/compatibility/upstream-data-terms.md)
+before acquiring or redistributing any source snapshot.
+
 Parsing, normalization, and canonical derived datasets belong to
 `bioextract`, including every `tidy/` asset. New `biofetch` runs do not create
 empty `tidy/` directories. Existing directories and files are never removed
@@ -152,4 +168,6 @@ durations accept native values such as `350ms`, `3s`, and `1m`. Use
 for Cobra-generated completion scripts.
 
 See [docs/README.md](docs/README.md) for the current architecture and
-validation contract.
+validation contract. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local gate,
+[SECURITY.md](SECURITY.md) for private vulnerability reports, and
+[CHANGELOG.md](CHANGELOG.md) for compatibility history.

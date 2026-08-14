@@ -1,7 +1,7 @@
 package bulkasset
 
 import (
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"

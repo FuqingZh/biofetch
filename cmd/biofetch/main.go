@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	rootcli "biofetch/internal/biofetch"
-	"biofetch/internal/shared/logx"
+	rootcli "github.com/FuqingZh/biofetch/internal/biofetch"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
 )
 
 func main() {

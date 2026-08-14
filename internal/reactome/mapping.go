@@ -1,12 +1,12 @@
 package reactome
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/sets"
-	"biofetch/internal/shared/staticasset"
 	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -215,7 +215,7 @@ func validateMappingDownloadSizes(clientHTTP *http.Client, assets []staticasset.
 			return err
 		}
 		if ok && bytes > thresholdBytes {
-			return fmt.Errorf("Reactome mapping asset %s is %d bytes, above threshold %d; pass --allow-large-downloads to fetch", asset.Name, bytes, thresholdBytes)
+			return fmt.Errorf("reactome mapping asset %s is %d bytes, above threshold %d; pass --allow-large-downloads to fetch", asset.Name, bytes, thresholdBytes)
 		}
 	}
 	return nil
@@ -264,11 +264,11 @@ func resolveMappingFetchVersionToken(clientHTTP *http.Client, value string, maxA
 func normalizeMappingFixedVersionToken(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if strings.EqualFold(value, mappingDefaultVersionToken) {
-		return "", fmt.Errorf("Reactome mapping version must be a fixed release token for this operation, not current")
+		return "", fmt.Errorf("reactome mapping version must be a fixed release token for this operation, not current")
 	}
 	matches := patternMappingVersion.FindStringSubmatch(value)
 	if len(matches) != 2 {
-		return "", fmt.Errorf("Reactome mapping version must look like v96 or 96: %s", value)
+		return "", fmt.Errorf("reactome mapping version must look like v96 or 96: %s", value)
 	}
 	return "v" + matches[1], nil
 }

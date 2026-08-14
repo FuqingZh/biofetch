@@ -1,12 +1,12 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/sets"
-	"biofetch/internal/shared/staticasset"
 	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,8 +42,6 @@ type mappingConfig struct {
 	shouldDryRun            bool
 	shouldDisableProgress   bool
 	dirLogs                 string
-	scopeType               string
-	scopeValue              string
 }
 
 type mappingLockConfig struct {

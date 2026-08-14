@@ -1,8 +1,8 @@
 package staticasset
 
 import (
-	"biofetch/internal/shared/filehash"
-	"biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/filehash"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"bytes"
 	"fmt"
 	"net/http"

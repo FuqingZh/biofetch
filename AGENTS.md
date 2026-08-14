@@ -6,7 +6,11 @@ authority. Set up Go from [go.mod](go.mod), then run the canonical local gate:
 ```bash
 GOCACHE=/tmp/biofetch-test go test ./...
 GOCACHE=/tmp/biofetch-test go vet ./...
-GOCACHE=/tmp/biofetch-test go build -o /tmp/biofetch ./cmd/biofetch
+GOCACHE=/tmp/biofetch-race go test -race ./...
+GOCACHE=/tmp/biofetch-test go build -trimpath -o /tmp/biofetch ./cmd/biofetch
+go mod tidy -diff
+go mod verify
+python3 scripts/generate_third_party_notices.py --check
 ```
 
 The public CLI contract tests are in
@@ -16,6 +20,12 @@ write to CephFS. Treat real resource trees as read-only; CephFS writes require
 explicit task scope. See the
 [test contract](docs/testing/20260717-v1.0-test-contract.md) for the maintained
 validation and real-resource boundaries.
+
+Public repository identity, release artifacts, upstream-data terms, and
+security/contribution entrypoints are governed by
+[the publication readiness plan](docs/implementation-plan/20260813-v1.0-github-publication-readiness-implementation-plan.md).
+Release archives contain software and notices only; never add database
+payloads or credentials.
 
 ## AO delivery
 

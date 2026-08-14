@@ -1,15 +1,15 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/parallel"
-	"biofetch/internal/shared/sets"
-	"biofetch/internal/shared/tomlx"
 	"bufio"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"io"
 	"net"
 	"net/http"
@@ -486,14 +486,6 @@ func derivePathwayAssetSpecs(
 	}
 
 	return specs
-}
-
-func parsePathwayIDsCSV(textCSV string) ([]string, error) {
-	return resolvePathwayIDInputs([]string{textCSV}, ruleOrderAsc)
-}
-
-func readPathwayIDsFromFile(filePathwayIDs string) ([]string, error) {
-	return resolvePathwayIDInputs([]string{"@" + filePathwayIDs}, ruleOrderAsc)
 }
 
 func parsePathwayIDsFromList(data []byte) ([]string, error) {

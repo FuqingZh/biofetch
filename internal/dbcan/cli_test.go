@@ -1,9 +1,9 @@
 package dbcan
 
 import (
-	"biofetch/internal/shared/bulkasset"
-	"biofetch/internal/shared/staticasset"
-	"biofetch/internal/shared/tomlx"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"bytes"
 	"fmt"
 	"net/http"

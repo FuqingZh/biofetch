@@ -20,19 +20,39 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
+        uses: ./.github/actions/setup-go
+
+      - name: Check module files
+        run: |
+          go mod tidy -diff
+          go mod verify
 
       - name: Run tests
         run: go test ./...
 
+      - name: Run race tests
+        run: go test -race ./...
+
       - name: Run vet
         run: go vet ./...
 
+      - name: Run staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          "$(go env GOPATH)/bin/staticcheck" ./...
+
+      - name: Run vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.4.0 ./...
+
       - name: Build CLI
-        run: go build -o "$RUNNER_TEMP/biofetch" ./cmd/biofetch
+        run: go build -trimpath -o "$RUNNER_TEMP/biofetch" ./cmd/biofetch
+
+      - name: Run CLI smoke checks
+        run: |
+          "$RUNNER_TEMP/biofetch" --version
+          "$RUNNER_TEMP/biofetch" --help
+          "$RUNNER_TEMP/biofetch" manifest build --help
+          "$RUNNER_TEMP/biofetch" completion bash >/dev/null

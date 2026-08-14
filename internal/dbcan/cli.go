@@ -1,7 +1,7 @@
 package dbcan
 
 import (
-	"biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 
 	"github.com/spf13/cobra"
 )

@@ -1,8 +1,8 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/sets"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/sets"
 	"fmt"
 	"sort"
 	"strings"

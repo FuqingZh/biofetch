@@ -16,18 +16,22 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+
 	"github.com/pelletier/go-toml/v2"
 )
 
 const (
-	schemaVersion      = "biofetch-manifest-v1"
+	schemaVersion      = "biofetch-manifest-v2"
 	outputFileBaseName = "manifest"
 )
 
 type buildConfig struct {
-	dirIn   string
-	dirOut  string
-	formats []string
+	dirIn      string
+	dirOut     string
+	formats    []string
+	workersMax int
 }
 
 type BuildResult struct {
@@ -55,6 +59,7 @@ type summary struct {
 type snapshot struct {
 	Database              string         `toml:"database" json:"database"`
 	Asset                 string         `toml:"asset" json:"asset"`
+	Dataset               string         `toml:"dataset,omitempty" json:"dataset,omitempty"`
 	Version               string         `toml:"version" json:"version"`
 	SourceVersion         string         `toml:"source_version,omitempty" json:"source_version,omitempty"`
 	Path                  string         `toml:"path" json:"path"`
@@ -81,6 +86,7 @@ type manifestRecord struct {
 type lockEnvelope struct {
 	Database              string             `toml:"database"`
 	Asset                 string             `toml:"asset"`
+	Dataset               *string            `toml:"dataset"`
 	Version               string             `toml:"version"`
 	VersionToken          string             `toml:"version_token"`
 	DownloadedAt          string             `toml:"downloaded_at"`
@@ -111,11 +117,30 @@ type outputFile struct {
 	data []byte
 }
 
+type snapshotResult struct {
+	snapshot snapshot
+	path     string
+	err      error
+}
+
+type validationIssue struct {
+	path string
+	err  error
+}
+
 func Build(dirIn string, dirOut string, formats []string) (BuildResult, error) {
+	return BuildWithWorkers(dirIn, dirOut, formats, cliopt.DefaultLockWorkersMax)
+}
+
+func BuildWithWorkers(dirIn string, dirOut string, formats []string, workersMax int) (BuildResult, error) {
+	if err := cliopt.ValidateLockWorkersMax(workersMax); err != nil {
+		return BuildResult{}, err
+	}
 	model, dirOutPhysical, formatsResolved, err := buildModel(buildConfig{
-		dirIn:   dirIn,
-		dirOut:  dirOut,
-		formats: formats,
+		dirIn:      dirIn,
+		dirOut:     dirOut,
+		formats:    formats,
+		workersMax: workersMax,
 	})
 	if err != nil {
 		return BuildResult{}, err
@@ -162,19 +187,32 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 	if err != nil {
 		return aggregateManifest{}, "", nil, err
 	}
-	snapshots := make([]snapshot, 0, len(lockPaths))
-	validationErrors := make([]error, 0)
-	for _, fileLock := range lockPaths {
+	results, err := parallel.MapOrderedWithWorkers(lockPaths, cfg.workersMax, func(fileLock string) (snapshotResult, error) {
 		item, err := readSnapshot(rootPhysical, fileLock)
 		if err != nil {
 			pathRel, relErr := filepath.Rel(rootPhysical, fileLock)
 			if relErr != nil {
 				pathRel = fileLock
 			}
-			validationErrors = append(validationErrors, fmt.Errorf("%s: %w", filepath.ToSlash(pathRel), err))
+			pathRel = filepath.ToSlash(pathRel)
+			return snapshotResult{
+				path: pathRel,
+				err:  fmt.Errorf("%s: %w", pathRel, err),
+			}, nil
+		}
+		return snapshotResult{snapshot: item, path: item.Path + "/manifest.lock"}, nil
+	})
+	if err != nil {
+		return aggregateManifest{}, "", nil, fmt.Errorf("validate child manifests: %w", err)
+	}
+	snapshots := make([]snapshot, 0, len(results))
+	validationIssues := make([]validationIssue, 0)
+	for _, result := range results {
+		if result.err != nil {
+			validationIssues = append(validationIssues, validationIssue{path: result.path, err: result.err})
 			continue
 		}
-		snapshots = append(snapshots, item)
+		snapshots = append(snapshots, result.snapshot)
 	}
 	sort.Slice(snapshots, func(i, j int) bool {
 		left := snapshots[i]
@@ -184,6 +222,9 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 		}
 		if left.Asset != right.Asset {
 			return left.Asset < right.Asset
+		}
+		if left.Dataset != right.Dataset {
+			return left.Dataset < right.Dataset
 		}
 		if left.Version != right.Version {
 			return left.Version < right.Version
@@ -197,16 +238,20 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 	var totalBytes int64
 	validatedSnapshots := make([]snapshot, 0, len(snapshots))
 	for _, item := range snapshots {
-		identity := item.Database + "\x00" + item.Asset + "\x00" + item.Version
+		identity := strings.Join([]string{item.Database, item.Asset, item.Dataset, item.Version}, "\x00")
 		if previous, ok := identities[identity]; ok {
-			validationErrors = append(validationErrors, fmt.Errorf(
-				"duplicate snapshot identity (%s, %s, %s): %s and %s",
-				item.Database,
-				item.Asset,
-				item.Version,
-				previous,
-				item.Path,
-			))
+			validationIssues = append(validationIssues, validationIssue{
+				path: item.Path + "/manifest.lock",
+				err: fmt.Errorf(
+					"duplicate snapshot identity (%s, %s, %s, %s): %s and %s",
+					item.Database,
+					item.Asset,
+					item.Dataset,
+					item.Version,
+					previous,
+					item.Path,
+				),
+			})
 			continue
 		}
 		identities[identity] = item.Path
@@ -230,7 +275,17 @@ func buildModel(cfg buildConfig) (aggregateManifest, string, []string, error) {
 		},
 		Snapshots: validatedSnapshots,
 	}
-	if len(validationErrors) > 0 {
+	if len(validationIssues) > 0 {
+		sort.SliceStable(validationIssues, func(i, j int) bool {
+			if validationIssues[i].path != validationIssues[j].path {
+				return validationIssues[i].path < validationIssues[j].path
+			}
+			return validationIssues[i].err.Error() < validationIssues[j].err.Error()
+		})
+		validationErrors := make([]error, 0, len(validationIssues))
+		for _, issue := range validationIssues {
+			validationErrors = append(validationErrors, issue.err)
+		}
 		return aggregateManifest{}, "", nil, fmt.Errorf(
 			"manifest validation failed: compatible databases=%d snapshots=%d files=%d bytes=%d; incompatible=%d: %w",
 			model.Summary.DatabaseCount,
@@ -304,7 +359,29 @@ func discoverLocks(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() && entry.Name() == "manifest.lock" {
+		if entry.IsDir() {
+			if filePath != root && isNonAuthorityDirectory(entry.Name()) {
+				return filepath.SkipDir
+			}
+			pathLock := filepath.Join(filePath, "manifest.lock")
+			info, statErr := os.Lstat(pathLock)
+			switch {
+			case statErr == nil:
+				if info.Mode()&os.ModeSymlink != 0 {
+					return nil
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("manifest.lock must be a file: %s", pathLock)
+				}
+				locks = append(locks, pathLock)
+				return filepath.SkipDir
+			case errors.Is(statErr, os.ErrNotExist):
+				return nil
+			default:
+				return fmt.Errorf("inspect %s: %w", pathLock, statErr)
+			}
+		}
+		if entry.Name() == "manifest.lock" && entry.Type().IsRegular() {
 			locks = append(locks, filePath)
 		}
 		return nil
@@ -314,6 +391,28 @@ func discoverLocks(root string) ([]string, error) {
 	}
 	sort.Strings(locks)
 	return locks, nil
+}
+
+func isNonAuthorityDirectory(name string) bool {
+	switch name {
+	case "raw", "tidy", "logs":
+		return true
+	default:
+		return strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".part.parts")
+	}
+}
+
+func normalizeDataset(value *string) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	if strings.TrimSpace(*value) == "" {
+		return "", fmt.Errorf("dataset must not be empty")
+	}
+	if strings.TrimSpace(*value) != *value {
+		return "", fmt.Errorf("dataset must not have leading or trailing whitespace")
+	}
+	return *value, nil
 }
 
 func readSnapshot(root string, fileLock string) (snapshot, error) {
@@ -330,6 +429,10 @@ func readSnapshot(root string, fileLock string) (snapshot, error) {
 	}
 	if strings.TrimSpace(lock.Asset) == "" {
 		return snapshot{}, fmt.Errorf("asset is required")
+	}
+	dataset, err := normalizeDataset(lock.Dataset)
+	if err != nil {
+		return snapshot{}, err
 	}
 	if strings.TrimSpace(lock.VersionToken) == "" {
 		return snapshot{}, fmt.Errorf("version_token is required")
@@ -373,6 +476,7 @@ func readSnapshot(root string, fileLock string) (snapshot, error) {
 	item := snapshot{
 		Database:              lock.Database,
 		Asset:                 lock.Asset,
+		Dataset:               dataset,
 		Version:               lock.VersionToken,
 		Path:                  filepath.ToSlash(pathSnapshot),
 		DownloadedAt:          lock.DownloadedAt,
@@ -464,7 +568,7 @@ func renderTSV(model aggregateManifest) ([]byte, error) {
 	writer := csv.NewWriter(&buffer)
 	writer.Comma = '\t'
 	header := []string{
-		"SchemaVersion", "ResourceRoot", "Database", "Asset", "Version", "SourceVersion", "Path",
+		"SchemaVersion", "ResourceRoot", "Database", "Asset", "Dataset", "Version", "SourceVersion", "Path",
 		"DownloadedAt", "FileCount", "TotalBytes", "SourceRelease", "SourceReleaseStart", "SourceReleaseEnd",
 		"SourceLastUpdate", "SourceLastUpdateStart", "SourceLastUpdateEnd", "RecordKind", "RecordCount",
 		"ManifestPath", "ManifestSHA256", "ManifestBytes",
@@ -478,6 +582,7 @@ func renderTSV(model aggregateManifest) ([]byte, error) {
 			model.ResourceRoot,
 			item.Database,
 			item.Asset,
+			item.Dataset,
 			item.Version,
 			item.SourceVersion,
 			item.Path,

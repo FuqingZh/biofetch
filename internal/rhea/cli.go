@@ -1,7 +1,7 @@
 package rhea
 
 import (
-	"biofetch/internal/shared/bulkasset"
+	"github.com/FuqingZh/biofetch/internal/shared/bulkasset"
 	"regexp"
 
 	"github.com/spf13/cobra"
@@ -12,7 +12,11 @@ const baseURL = "https://ftp.expasy.org/databases/rhea"
 var patternReleaseDate = regexp.MustCompile(`rhea\.release\.date=([0-9]{4}-[0-9]{2}-[0-9]{2})`)
 
 func NewCommand() *cobra.Command {
-	return bulkasset.NewCommand(bulkasset.Spec{
+	return bulkasset.NewCommand(sourceSpec())
+}
+
+func sourceSpec() bulkasset.Spec {
+	return bulkasset.Spec{
 		Database:            "rhea",
 		Asset:               "database",
 		Source:              "expasy-ftp-https",
@@ -38,5 +42,5 @@ func NewCommand() *cobra.Command {
 			{Name: "biopax", Path: "rhea-biopax.owl.gz", URL: baseURL + "/biopax/rhea-biopax.owl.gz"},
 			{Name: "license", Path: "LICENSE.txt", URL: baseURL + "/LICENSE.txt", Default: true},
 		},
-	})
+	}
 }

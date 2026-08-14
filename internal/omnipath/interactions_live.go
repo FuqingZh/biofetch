@@ -1,8 +1,8 @@
 package omnipath
 
 import (
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
 	"bufio"
 	"bytes"
 	"crypto/sha256"

@@ -1,7 +1,7 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"bytes"
 	"errors"
 	"io"

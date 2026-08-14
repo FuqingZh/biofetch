@@ -1,11 +1,11 @@
 package kegg
 
 import (
-	"biofetch/internal/shared/cliopt"
-	"biofetch/internal/shared/logx"
-	"biofetch/internal/shared/parallel"
-	"biofetch/internal/shared/tomlx"
 	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
+	"github.com/FuqingZh/biofetch/internal/shared/logx"
+	"github.com/FuqingZh/biofetch/internal/shared/parallel"
+	"github.com/FuqingZh/biofetch/internal/shared/tomlx"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,11 +14,10 @@ import (
 )
 
 type keggLockConfig struct {
-	dirSnapshot     string
-	dirLogs         string
-	workersMax      int
-	requestInterval time.Duration
-	shouldDryRun    bool
+	dirSnapshot  string
+	dirLogs      string
+	workersMax   int
+	shouldDryRun bool
 }
 
 type keggRestoreConfig struct {

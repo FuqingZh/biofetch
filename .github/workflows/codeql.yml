@@ -1,0 +1,37 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: analyze-go
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@0fa1882f994fbd81a47ab0804f93354f5ea40147 # v3.28.17
+        with:
+          languages: go
+
+      - name: Build
+        run: go build -trimpath -o "$RUNNER_TEMP/biofetch" ./cmd/biofetch
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@0fa1882f994fbd81a47ab0804f93354f5ea40147 # v3.28.17

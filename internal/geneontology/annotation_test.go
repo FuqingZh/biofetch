@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"biofetch/internal/shared/httpx"
-	"biofetch/internal/shared/staticasset"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
+	"github.com/FuqingZh/biofetch/internal/shared/staticasset"
 )
 
 func TestResolveAnnotationDatasetsAllowsOmittedValues(t *testing.T) {

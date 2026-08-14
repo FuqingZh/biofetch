@@ -1,7 +1,7 @@
 # Biofetch resource and manifest contract
 
-Version: v1.2
-Date: 2026-07-23
+Version: v1.3
+Date: 2026-08-10
 Status: current
 
 ## Ownership boundary
@@ -153,6 +153,8 @@ The current production-storage measurement is recorded in the
 Each snapshot lock is database-specific but provides a common envelope:
 
 - `database`, `asset`, and `version_token` identify the snapshot;
+- optional `dataset` qualifies an asset when the upstream source defines
+  multiple datasets under one asset;
 - optional `version` records an upstream source version when it differs;
 - `downloaded_at` and database-specific source metadata preserve provenance;
 - `[[files]]` records each `raw/` path, SHA256, byte count, and source URL when
@@ -163,16 +165,32 @@ or BRITE entries, may remain in the snapshot lock.
 
 ### Aggregate manifest
 
-`biofetch manifest build RESOURCE-ROOT` recursively discovers files named exactly
-`manifest.lock`. It validates only the common envelope, aggregates snapshot and
-file counts, and hashes the lock files themselves. It does not open, stat, or
-rehash the large files referenced by `[[files]]`; their byte totals come from
-the validated lock records.
+`biofetch manifest build RESOURCE-ROOT` discovers files named exactly
+`manifest.lock` using snapshot-aware traversal. A directory containing a
+`manifest.lock` is an authoritative, terminal snapshot; `raw/`, `tidy/`,
+`logs/`, and directories ending in `.part` or `.part.parts` are non-authority
+subtrees and are not traversed. This keeps incomplete payload and staging trees
+out of the aggregate scan while retaining arbitrary namespace depth.
 
-The aggregate identity `(database, asset, version)` is unique, where
+The aggregate schema is `biofetch-manifest-v2`. It validates only the common
+envelope, aggregates snapshot and file counts, and hashes the lock files
+themselves. It does not open, stat, or rehash the large files referenced by
+`[[files]]`; their byte totals come from the validated lock records. Child-lock
+validation uses bounded ordered workers controlled by `--workers` (default 4,
+range 1-64); directory discovery remains deterministic and serial.
+
+The aggregate identity `(database, asset, dataset, version)` is unique, where
+`dataset` is the optional typed child-lock qualifier (empty when absent) and
 `version` is always the child `version_token`. A differing child `version` is
 retained as `source_version`; equal values are omitted. Snapshots are sorted by
-`database`, `asset`, `version`, and `path`.
+`database`, `asset`, `dataset`, `version`, and `path`. Dataset is emitted in
+TOML/JSON when present and appears as the `Dataset` column between `Asset` and
+`Version` in TSV.
+
+The builder emits v2 only; it does not provide a schema-selection flag or a
+parallel v1 writer. Previously published v1 aggregates remain readable as
+historical rollback artifacts until every consumer has passed the v2 contract
+and a separately authorized publication replaces them.
 
 TOML is the canonical default. JSON and the flattened TSV view are rendered
 from the same in-memory model. No generation timestamp is stored, so the same
