@@ -170,6 +170,7 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	statsPlanning := pathwayLocalPlanningStats{}
 	countPathways := 0
 	countScopes := 0
+	finalCheckpointObservedEnd := false
 	for _, group := range scopeGroups {
 		completed, skipped := 0, 0
 		batchesScope := chunkStrings(group.organismCodes, keggPathwayScopeBatchSize)
@@ -195,7 +196,7 @@ func runFetchPathway(cfg *pathwayConfig) error {
 			countScopes += len(batchScopeKeys)
 			if !cfg.shouldDryRun {
 				var recordsComplete []pathwayRecord
-				recordsComplete, err = checkpointPathwayManifest(clientKegg, fileManifest, dirVersion, cfg, records)
+				recordsComplete, finalCheckpointObservedEnd, err = checkpointPathwayManifest(clientKegg, fileManifest, dirVersion, cfg, records)
 				if err != nil {
 					return err
 				}
@@ -226,7 +227,9 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	if err != nil {
 		return err
 	}
-	refreshPathwayEndMetadata(clientKegg, cfg)
+	if !finalCheckpointObservedEnd {
+		refreshPathwayEndMetadata(clientKegg, cfg)
+	}
 
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return err
@@ -340,10 +343,12 @@ func mapPathwayScopesOrdered(
 	}()
 
 	ordered := make([]pathwayScopeResult, len(scopeKeys))
+	firstErrorIndex := len(scopeKeys)
 	var firstError error
 	for indexed := range results {
 		if indexed.err != nil {
-			if firstError == nil {
+			if indexed.index < firstErrorIndex {
+				firstErrorIndex = indexed.index
 				firstError = indexed.err
 			}
 			continue
@@ -356,27 +361,28 @@ func mapPathwayScopesOrdered(
 	return ordered, nil
 }
 
-func checkpointPathwayManifest(clientKegg *keggClient, fileManifest, dirVersion string, cfg *pathwayConfig, records []pathwayRecord) ([]pathwayRecord, error) {
+func checkpointPathwayManifest(clientKegg *keggClient, fileManifest, dirVersion string, cfg *pathwayConfig, records []pathwayRecord) ([]pathwayRecord, bool, error) {
 	recordsComplete, err := buildCompletePathwayRecords(fileManifest, dirVersion, records)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	refreshPathwayEndMetadata(clientKegg, cfg)
+	observedEnd := refreshPathwayEndMetadata(clientKegg, cfg)
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return recordsComplete, nil
+	return recordsComplete, observedEnd, nil
 }
 
-func refreshPathwayEndMetadata(clientKegg *keggClient, cfg *pathwayConfig) {
+func refreshPathwayEndMetadata(clientKegg *keggClient, cfg *pathwayConfig) bool {
 	cfg.sourceReleaseEnd = ""
 	cfg.sourceLastUpdateEnd = ""
 	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
 	if err != nil {
 		logf("warning: KEGG pathway info metadata unavailable after download: %v", err)
-		return
+		return false
 	}
 	cfg.applyKEGGInfoMetadataEnd(metadataEnd)
+	return true
 }
 
 func resolvePathwayIDs(
@@ -740,7 +746,7 @@ func downloadPathwayAsset(
 ) (pathwayRecord, bool, error) {
 	for attempt := 1; attempt <= clientKegg.retryMax; attempt++ {
 		logf("downloading %s", filepath.Base(fileOut))
-		shouldRetry, err := clientKegg.downloadPathwayFileOnce(urlFile, fileOut)
+		shouldRetry, err := clientKegg.downloadPathwayFileOnce(urlFile, fileOut, attempt < clientKegg.retryMax)
 		if err != nil {
 			if shouldSkipPathwayDownloadStatus(assetName, err) {
 				logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
@@ -1299,8 +1305,8 @@ func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool
 	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, false)
 }
 
-func (client *keggClient) downloadPathwayFileOnce(urlFile string, fileOut string) (bool, error) {
-	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, true)
+func (client *keggClient) downloadPathwayFileOnce(urlFile string, fileOut string, propagateProbeErrors bool) (bool, error) {
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, propagateProbeErrors)
 }
 
 func (client *keggClient) downloadFileOnceWithProbePolicy(urlFile string, fileOut string, propagateProbeErrors bool) (bool, error) {

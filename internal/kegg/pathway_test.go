@@ -1187,6 +1187,25 @@ func TestKEGGClientTimeoutRetriesExactAttemptCount(t *testing.T) {
 	}
 }
 
+func TestPathwayAssetFinalGETFailureRemainsBounded(t *testing.T) {
+	var requests atomic.Int32
+	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		if request.Method == http.MethodHead {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return nil, context.DeadlineExceeded
+	})}
+	client := createKEGGClient(clientHTTP, 0, 2, 0)
+	_, ok, err := downloadPathwayAsset(client, filepath.Join(t.TempDir(), "hsa00010.kgml"), "raw/hsa/hsa00010.kgml", "hsa00010", "pathway.kgml", "https://example.test/get/hsa00010/kgml")
+	if err != nil || ok {
+		t.Fatalf("downloadPathwayAsset = ok %v, err %v, want bounded unavailable result", ok, err)
+	}
+	if got := requests.Load(); got != 3 {
+		t.Fatalf("request count = %d, want 3 (strict HEAD plus permissive HEAD/GET)", got)
+	}
+}
+
 func TestRunFetchPathwayPrefixUsesOneCatalogAndBoundedWorkers(t *testing.T) {
 	oldBaseURL := baseURL
 	defer func() { baseURL = oldBaseURL }()
@@ -1290,6 +1309,48 @@ func TestRunFetchPathwayCheckpointsCompletedBatchBeforeLaterFailure(t *testing.T
 	}
 	if manifest.SourceReleaseStart != "1" || manifest.SourceReleaseEnd != "2" {
 		t.Fatalf("checkpoint release range = %q..%q, want 1..2", manifest.SourceReleaseStart, manifest.SourceReleaseEnd)
+	}
+}
+
+func TestRunFetchPathwayReusesSuccessfulFinalCheckpointMetadata(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var infoRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/info/pathway":
+			switch infoRequests.Add(1) {
+			case 1:
+				_, _ = w.Write([]byte("pathway Release 1\n"))
+			case 2:
+				_, _ = w.Write([]byte("pathway Release 2\n"))
+			default:
+				http.Error(w, "redundant final probe", http.StatusBadRequest)
+			}
+		case "/list/pathway/hsa":
+			_, _ = w.Write([]byte("hsa00010\tpathway\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames, cfg.organismCodes = []string{"list"}, []string{"hsa"}
+	cfg.retryMax, cfg.requestInterval = 1, 0
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := infoRequests.Load(); got != 2 {
+		t.Fatalf("info requests = %d, want start plus final checkpoint only", got)
+	}
+	if manifest.SourceReleaseStart != "1" || manifest.SourceReleaseEnd != "2" {
+		t.Fatalf("release range = %q..%q, want 1..2", manifest.SourceReleaseStart, manifest.SourceReleaseEnd)
 	}
 }
 
@@ -1483,23 +1544,16 @@ func TestKEGGClientSharedLimiterSpacesWorkersAndRetries(t *testing.T) {
 	}
 }
 
-func TestPathwayAssetHEADTimeoutConsumesOuterAttempt(t *testing.T) {
+func TestPathwayAssetPersistentHEADTimeoutUsesFinalGETAttempt(t *testing.T) {
 	var mutex sync.Mutex
 	methods := make([]string, 0, 3)
-	headAttempts := 0
 	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		mutex.Lock()
 		methods = append(methods, request.Method)
-		if request.Method == http.MethodHead {
-			headAttempts++
-			attempt := headAttempts
-			mutex.Unlock()
-			if attempt == 1 {
-				return nil, context.DeadlineExceeded
-			}
-			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 2, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
-		}
 		mutex.Unlock()
+		if request.Method == http.MethodHead {
+			return nil, context.DeadlineExceeded
+		}
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 2, Body: io.NopCloser(strings.NewReader("ok")), Request: request}, nil
 	})}
 	client := createKEGGClient(clientHTTP, 0, 2, 0)
@@ -1510,6 +1564,27 @@ func TestPathwayAssetHEADTimeoutConsumesOuterAttempt(t *testing.T) {
 	}
 	if want := []string{http.MethodHead, http.MethodHead, http.MethodGet}; !reflect.DeepEqual(methods, want) {
 		t.Fatalf("request methods = %#v, want %#v", methods, want)
+	}
+}
+
+func TestMapPathwayScopesOrderedReturnsLowestIndexedConcurrentError(t *testing.T) {
+	bothStarted := make(chan struct{})
+	var starts atomic.Int32
+	releaseLower := make(chan struct{})
+	_, err := mapPathwayScopesOrdered([]string{"lower", "higher"}, 2, func(scopeKey string) (pathwayScopeResult, error) {
+		if starts.Add(1) == 2 {
+			close(bothStarted)
+		}
+		<-bothStarted
+		if scopeKey == "higher" {
+			close(releaseLower)
+			return pathwayScopeResult{}, errors.New("higher")
+		}
+		<-releaseLower
+		return pathwayScopeResult{}, errors.New("lower")
+	})
+	if err == nil || err.Error() != "lower" {
+		t.Fatalf("map error = %v, want lower-indexed error", err)
 	}
 }
 
