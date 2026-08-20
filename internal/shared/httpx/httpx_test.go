@@ -111,6 +111,34 @@ func TestDownloadFileWithResumeMetadataProbePolicy(t *testing.T) {
 	}
 }
 
+func TestDownloadFileWithResumeSkipProbeRejectsIncompleteOpenEndedRange(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if got := request.Header.Get("Range"); got != "bytes=5-" {
+			t.Fatalf("Range = %q, want bytes=5-", got)
+		}
+		return &http.Response{
+			StatusCode:    http.StatusPartialContent,
+			Status:        "206 Partial Content",
+			Header:        http.Header{"Content-Range": []string{"bytes 5-9/15"}},
+			ContentLength: 5,
+			Body:          io.NopCloser(strings.NewReader("bravo")),
+			Request:       request,
+		}, nil
+	})}
+	fileOut := filepath.Join(t.TempDir(), "asset.part")
+	if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+	if err == nil || !strings.Contains(err.Error(), "want final byte 14") {
+		t.Fatalf("error = %v, want incomplete Content-Range error", err)
+	}
+	data, readErr := os.ReadFile(fileOut)
+	if readErr != nil || string(data) != "alpha" {
+		t.Fatalf("partial file = %q, err %v; want unchanged alpha", data, readErr)
+	}
+}
+
 func TestDownloadFileWithResumeAppendsPartialContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodHead {

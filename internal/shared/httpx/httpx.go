@@ -118,6 +118,9 @@ func validateContentRange(value string, expectedStart int64, expectedEnd int64, 
 	if expectedEnd >= 0 && end != expectedEnd {
 		return fmt.Errorf("Content-Range end = %d, want %d", end, expectedEnd)
 	}
+	if expectedEnd < 0 && end != total-1 {
+		return fmt.Errorf("Content-Range end = %d, want final byte %d", end, total-1)
+	}
 	if requireTotal && expectedTotal > 0 && total != expectedTotal {
 		return fmt.Errorf("Content-Range total = %d, want %d", total, expectedTotal)
 	}
