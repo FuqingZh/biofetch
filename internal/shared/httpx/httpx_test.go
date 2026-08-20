@@ -168,16 +168,104 @@ func TestDownloadFileWithResumeSkipProbeCleanupFailureMakesNoRequest(t *testing.
 	if err := os.MkdirAll(fileOut+".parts", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dirOut, 0o555); err != nil {
-		t.Fatal(err)
+	originalRemoveAll := removeAllDownloadScratch
+	removeAllDownloadScratch = func(path string) error {
+		return os.ErrPermission
 	}
-	t.Cleanup(func() { _ = os.Chmod(dirOut, 0o755) })
+	t.Cleanup(func() { removeAllDownloadScratch = originalRemoveAll })
 	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
 	if err == nil || !strings.Contains(err.Error(), "remove unverified download scratch") {
 		t.Fatalf("error = %v, want cleanup failure", err)
 	}
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("request count = %d, want 0", got)
+	}
+}
+
+func TestDownloadFileWithResumeSkipProbeRejectsDirectoryOutput(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("unexpected request")
+	})}
+	fileOut := filepath.Join(t.TempDir(), "asset.part")
+	if err := os.MkdirAll(fileOut, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fileSentinel := filepath.Join(fileOut, "sentinel")
+	if err := os.WriteFile(fileSentinel, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+	if err == nil || !strings.Contains(err.Error(), "output path is a directory") {
+		t.Fatalf("error = %v, want directory rejection", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("request count = %d, want 0", got)
+	}
+	data, readErr := os.ReadFile(fileSentinel)
+	if readErr != nil || string(data) != "keep" {
+		t.Fatalf("sentinel = %q, err %v; want keep", data, readErr)
+	}
+}
+
+func TestDownloadFileWithResumeSkipProbeRejectsEmptyOutput(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("unexpected request")
+	})}
+	dirWork := t.TempDir()
+	t.Chdir(dirWork)
+	fileSentinel := filepath.Join(dirWork, ".parts", "sentinel")
+	if err := os.MkdirAll(filepath.Dir(fileSentinel), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileSentinel, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", "", nil, DownloadOptions{SkipMetadataProbe: true})
+	if err == nil || !strings.Contains(err.Error(), "output path is empty") {
+		t.Fatalf("error = %v, want empty-path rejection", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("request count = %d, want 0", got)
+	}
+	data, readErr := os.ReadFile(fileSentinel)
+	if readErr != nil || string(data) != "keep" {
+		t.Fatalf("sentinel = %q, err %v; want keep", data, readErr)
+	}
+}
+
+func TestDownloadFileWithResumeSkipProbeUnlinksSymlinkOnly(t *testing.T) {
+	dirOut := t.TempDir()
+	fileTarget := filepath.Join(dirOut, "target")
+	if err := os.WriteFile(fileTarget, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileOut := filepath.Join(dirOut, "asset.part")
+	if err := os.Symlink(fileTarget, fileOut); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("replacement")),
+			Request:    request,
+		}, nil
+	})}
+	if err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true}); err != nil {
+		t.Fatal(err)
+	}
+	targetData, err := os.ReadFile(fileTarget)
+	if err != nil || string(targetData) != "keep" {
+		t.Fatalf("symlink target = %q, err %v; want keep", targetData, err)
+	}
+	outputData, err := os.ReadFile(fileOut)
+	if err != nil || string(outputData) != "replacement" {
+		t.Fatalf("output = %q, err %v; want replacement", outputData, err)
 	}
 }
 

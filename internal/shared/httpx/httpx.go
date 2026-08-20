@@ -26,6 +26,8 @@ type DownloadOptions struct {
 var chunkedDownloadMinBytes int64 = 1 << 30
 var chunkSizeBytes int64 = 256 << 20
 var chunkWorkersMax = 4
+var removeDownloadScratchFile = os.Remove
+var removeAllDownloadScratch = os.RemoveAll
 
 type UnexpectedStatusError struct {
 	URL         string
@@ -351,17 +353,29 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 }
 
 func removeDownloadScratch(fileOut string) error {
-	for _, pathScratch := range []string{fileOut, fileOut + ".parts"} {
-		_, err := os.Lstat(pathScratch)
-		if os.IsNotExist(err) {
-			continue
+	if strings.TrimSpace(fileOut) == "" {
+		return fmt.Errorf("remove unverified download scratch: output path is empty")
+	}
+	info, err := os.Lstat(fileOut)
+	if err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("remove unverified download scratch %s: output path is a directory", fileOut)
 		}
-		if err != nil {
-			return fmt.Errorf("inspect unverified download scratch %s: %w", pathScratch, err)
+		if err := removeDownloadScratchFile(fileOut); err != nil {
+			return fmt.Errorf("remove unverified download scratch %s: %w", fileOut, err)
 		}
-		if err := os.RemoveAll(pathScratch); err != nil {
-			return fmt.Errorf("remove unverified download scratch %s: %w", pathScratch, err)
-		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect unverified download scratch %s: %w", fileOut, err)
+	}
+
+	dirParts := fileOut + ".parts"
+	if _, err := os.Lstat(dirParts); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect unverified download scratch %s: %w", dirParts, err)
+	}
+	if err := removeAllDownloadScratch(dirParts); err != nil {
+		return fmt.Errorf("remove unverified download scratch %s: %w", dirParts, err)
 	}
 	return nil
 }
