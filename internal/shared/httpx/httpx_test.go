@@ -169,7 +169,7 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 			if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+			err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, func(int64, int64) {}, DownloadOptions{SkipMetadataProbe: true})
 			if test.wantError && err == nil {
 				t.Fatal("incomplete body succeeded")
 			}

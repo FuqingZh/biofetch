@@ -313,7 +313,7 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	}
 	if progress != nil {
 		reader = &progressReader{
-			reader:     response.Body,
+			reader:     reader,
 			bytesDone:  bytesDoneStart,
 			bytesTotal: bytesTotal,
 			progress:   progress,
