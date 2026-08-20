@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -132,6 +133,92 @@ func TestDownloadFileWithResumeSkipProbeRejectsIncompleteOpenEndedRange(t *testi
 	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
 	if err == nil || !strings.Contains(err.Error(), "want final byte 14") {
 		t.Fatalf("error = %v, want incomplete Content-Range error", err)
+	}
+	data, readErr := os.ReadFile(fileOut)
+	if readErr != nil || string(data) != "alpha" {
+		t.Fatalf("partial file = %q, err %v; want unchanged alpha", data, readErr)
+	}
+}
+
+func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		body          string
+		wantError     bool
+		wantShortRead bool
+	}{
+		{name: "short", body: "bravo", wantError: true, wantShortRead: true},
+		{name: "long", body: "bravo123456", wantError: true},
+		{name: "complete", body: "bravo12345"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				requests.Add(1)
+				return &http.Response{
+					StatusCode:    http.StatusPartialContent,
+					Status:        "206 Partial Content",
+					Header:        http.Header{"Content-Range": []string{"bytes 5-14/15"}},
+					ContentLength: -1,
+					Body:          io.NopCloser(strings.NewReader(test.body)),
+					Request:       request,
+				}, nil
+			})}
+			fileOut := filepath.Join(t.TempDir(), "asset.part")
+			if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+			if test.wantError && err == nil {
+				t.Fatal("incomplete body succeeded")
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("complete body failed: %v", err)
+			}
+			if test.wantShortRead && !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("short body error = %v, want io.ErrUnexpectedEOF", err)
+			}
+			if got := requests.Load(); got != 1 {
+				t.Fatalf("request count = %d, want 1", got)
+			}
+			data, readErr := os.ReadFile(fileOut)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			want := "alphabravo12345"
+			if test.wantError {
+				want = "alpha"
+			}
+			if string(data) != want {
+				t.Fatalf("file content = %q, want %q", data, want)
+			}
+		})
+	}
+}
+
+func TestDownloadFileWithResumeSkipProbeRejectsUnknownRangeTotal(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return &http.Response{
+			StatusCode:    http.StatusPartialContent,
+			Status:        "206 Partial Content",
+			Header:        http.Header{"Content-Range": []string{"bytes 5-14/*"}},
+			ContentLength: 10,
+			Body:          io.NopCloser(strings.NewReader("bravo12345")),
+			Request:       request,
+		}, nil
+	})}
+	fileOut := filepath.Join(t.TempDir(), "asset.part")
+	if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+	if err == nil || !strings.Contains(err.Error(), "invalid Content-Range") {
+		t.Fatalf("error = %v, want invalid Content-Range", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1", got)
 	}
 	data, readErr := os.ReadFile(fileOut)
 	if readErr != nil || string(data) != "alpha" {

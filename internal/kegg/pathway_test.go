@@ -1645,7 +1645,7 @@ func TestPathwayAssetFinalGETRejectsIncompleteResume(t *testing.T) {
 		return &http.Response{
 			StatusCode:    http.StatusPartialContent,
 			Status:        "206 Partial Content",
-			Header:        http.Header{"Content-Range": []string{"bytes 5-9/15"}},
+			Header:        http.Header{"Content-Range": []string{"bytes 5-14/15"}},
 			ContentLength: 5,
 			Body:          io.NopCloser(strings.NewReader("bravo")),
 			Request:       request,
@@ -1658,8 +1658,8 @@ func TestPathwayAssetFinalGETRejectsIncompleteResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, ok, err := downloadPathwayAsset(client, fileOut, "raw/hsa/hsa00010.txt", "hsa00010", "pathway.entry", "https://example.test/get/hsa00010")
-	if err == nil || ok || !strings.Contains(err.Error(), "want final byte 14") {
-		t.Fatalf("downloadPathwayAsset = ok %v, err %v, want incomplete Content-Range failure", ok, err)
+	if err != nil || ok {
+		t.Fatalf("downloadPathwayAsset = ok %v, err %v, want bounded short-read result", ok, err)
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("request count = %d, want 1", got)
