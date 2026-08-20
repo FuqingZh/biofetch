@@ -1,9 +1,10 @@
 package kegg
 
 import (
-	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"bytes"
 	"errors"
+	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -969,8 +970,8 @@ func TestShouldSkipPathwayScopeListError(t *testing.T) {
 	if shouldSkipPathwayScopeListError(&pathwayConfig{shouldFetchReference: true}, errForbidden) {
 		t.Fatal("reference 403 should not be skipped")
 	}
-	if shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errServer) {
-		t.Fatal("organism 503 should not be skipped")
+	if !shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errServer) {
+		t.Fatal("organism 503 after retry exhaustion should be skipped")
 	}
 }
 
@@ -1115,5 +1116,153 @@ func TestReadExistingPathwayManifestBackfillsReleaseRange(t *testing.T) {
 	}
 	if manifestRead.SourceReleaseStart != "118.0+/04-01" || manifestRead.SourceReleaseEnd != "118.0+/04-01" {
 		t.Fatalf("manifestRead = %#v", manifestRead)
+	}
+}
+
+func TestNormalizeOrganismPrefixesPreservesFirstSeenOrder(t *testing.T) {
+	got, err := normalizeOrganismPrefixes([]string{" B,a ", "b", "c,a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"b", "a", "c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefixes = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeOrganismPrefixesRejectsInvalidTokens(t *testing.T) {
+	for _, value := range []string{"", "ab", "1", "é"} {
+		if _, err := normalizeOrganismPrefixes([]string{value}); err == nil {
+			t.Fatalf("normalizeOrganismPrefixes(%q) succeeded", value)
+		}
+	}
+}
+
+func TestPartitionOrganismsByPrefixPreservesPrefixPlan(t *testing.T) {
+	groups, err := partitionOrganismsByPrefix([]string{"hsa", "bac", "bbu", "ath"}, []string{"b", "a"}, ruleOrderDesc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 || groups[0].prefix != "b" || groups[1].prefix != "a" {
+		t.Fatalf("groups = %#v", groups)
+	}
+	if want := []string{"bbu", "bac"}; !reflect.DeepEqual(groups[0].organismCodes, want) {
+		t.Fatalf("b organisms = %#v, want %#v", groups[0].organismCodes, want)
+	}
+	if _, err := partitionOrganismsByPrefix([]string{"hsa"}, []string{"z"}, ruleOrderAsc); err == nil {
+		t.Fatal("unmatched prefix succeeded")
+	}
+}
+
+func TestKEGGClientTimeoutRetriesExactAttemptCount(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte("late"))
+	}))
+	defer server.Close()
+	clientHTTP := server.Client()
+	clientHTTP.Timeout = 10 * time.Millisecond
+	client := createKEGGClient(clientHTTP, 0, 3, 0)
+	if _, err := client.download(server.URL); err == nil {
+		t.Fatal("timed-out request succeeded")
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+}
+
+func TestRunFetchPathwayPrefixUsesOneCatalogAndBoundedWorkers(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var catalogRequests atomic.Int32
+	var active atomic.Int32
+	var maximum atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case "/list/genome":
+			catalogRequests.Add(1)
+			_, _ = w.Write([]byte("T1\thsa\nT2\thpy\nT3\tbbu\n"))
+		case "/list/pathway/hsa", "/list/pathway/hpy", "/list/pathway/bbu":
+			n := active.Add(1)
+			for old := maximum.Load(); n > old && !maximum.CompareAndSwap(old, n); old = maximum.Load() {
+			}
+			time.Sleep(20 * time.Millisecond)
+			active.Add(-1)
+			code := strings.TrimPrefix(r.URL.Path, "/list/pathway/")
+			_, _ = fmt.Fprintf(w, "%s00010\tpathway\n", code)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut = t.TempDir()
+	cfg.versionToken = "2026-04"
+	cfg.assetNames = []string{"list"}
+	cfg.organismPrefixes = []string{"h", "b"}
+	cfg.workersMax = 2
+	cfg.requestInterval = 0
+	cfg.requestTimeout = time.Second
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if catalogRequests.Load() != 1 {
+		t.Fatalf("catalog requests = %d, want 1", catalogRequests.Load())
+	}
+	if maximum.Load() > 2 || maximum.Load() < 2 {
+		t.Fatalf("max active = %d, want 2", maximum.Load())
+	}
+	manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != 3 {
+		t.Fatalf("manifest files = %d, want 3", len(manifest.Files))
+	}
+}
+
+func TestRunFetchPathwayCheckpointsCompletedBatchBeforeLaterFailure(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case strings.HasPrefix(r.URL.Path, "/list/pathway/"):
+			code := strings.TrimPrefix(r.URL.Path, "/list/pathway/")
+			if code == "abg" {
+				http.Error(w, "bad", http.StatusBadRequest)
+				return
+			}
+			_, _ = fmt.Fprintf(w, "%s00010\tpathway\n", code)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	codes := make([]string, 33)
+	for i := range codes {
+		codes[i] = fmt.Sprintf("a%c%c", 'a'+rune(i/26), 'a'+rune(i%26))
+	}
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames, cfg.organismCodes = []string{"list"}, codes
+	cfg.requestInterval, cfg.requestTimeout, cfg.retryMax, cfg.workersMax = 0, time.Second, 1, 4
+	errRun := runFetchPathway(&cfg)
+	if errRun == nil {
+		t.Fatal("later batch failure succeeded")
+	}
+	manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != 32 {
+		t.Fatalf("checkpoint files = %d, want 32 (run error: %v)", len(manifest.Files), errRun)
 	}
 }

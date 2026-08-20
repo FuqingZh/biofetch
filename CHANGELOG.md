@@ -7,6 +7,8 @@ All notable changes to biofetch are documented here. The project follows
 
 - Prepare the repository for a public, reproducible release.
 - Add aggregate manifest v2 migration guidance and dependency notices.
+- Add KEGG PATHWAY organism-prefix plans, per-request timeouts, bounded
+  organism workers with a shared limiter, and 32-organism manifest checkpoints.
 
 ## [0.1.0] - 2026-08-14
 

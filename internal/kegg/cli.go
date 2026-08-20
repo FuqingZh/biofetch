@@ -1,9 +1,9 @@
 package kegg
 
 import (
+	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/cliopt"
 	"github.com/FuqingZh/biofetch/internal/shared/sets"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +35,7 @@ type pathwayConfig struct {
 	ruleOrder               string
 	organismCode            string
 	organismCodes           []string
+	organismPrefixes        []string
 	pathwayIDs              []string
 	shouldFetchReference    bool
 	shouldDownloadAll       bool
@@ -43,6 +44,8 @@ type pathwayConfig struct {
 	retryMax                int
 	retryWait               time.Duration
 	requestInterval         time.Duration
+	requestTimeout          time.Duration
+	workersMax              int
 	shouldAllowInsecureTLS  bool
 	shouldDryRun            bool
 	scopeType               string
@@ -257,6 +260,12 @@ func createPathwayFetchCommand() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("request-timeout") && cfg.requestTimeout <= 0 {
+				return fmt.Errorf("request-timeout must be > 0")
+			}
+			if cmd.Flags().Changed("workers") && (cfg.workersMax < 1 || cfg.workersMax > 8) {
+				return fmt.Errorf("workers must be between 1 and 8")
+			}
 			if err := validatePathwayConfig(&cfg); err != nil {
 				return err
 			}
@@ -280,6 +289,7 @@ func createPathwayFetchCommand() *cobra.Command {
 	flags.StringVar(&cfg.versionToken, "version", cfg.versionToken, "KEGG local snapshot key (YYYY-MM), e.g. 2026-04")
 	cliopt.BindStringListFlags(flags, &cfg.assetNames, "assets", "PATHWAY assets: all|list|entry|kgml|conf|image; omit or pass all to fetch all supported assets within the selected scope")
 	cliopt.BindStringListFlags(flags, &cfg.organismCodes, "organisms", "KEGG organism codes; pass inline values, repeat the flag,")
+	cliopt.BindStringListFlags(flags, &cfg.organismPrefixes, "organism-prefix", "One-letter KEGG organism code prefixes; pass inline values, repeat the flag,")
 	cliopt.BindStringListFlags(flags, &cfg.pathwayIDs, "pathway-ids", "Pathway IDs; pass inline values, repeat the flag,")
 	flags.BoolVar(
 		&cfg.shouldFetchReference,
@@ -298,6 +308,8 @@ func createPathwayFetchCommand() *cobra.Command {
 	flags.IntVar(&cfg.retryMax, "max-attempts", cfg.retryMax, "Max retry attempts on download failures")
 	flags.DurationVar(&cfg.retryWait, "retry-wait", cfg.retryWait, "Wait between download attempts")
 	flags.DurationVar(&cfg.requestInterval, "request-interval", cfg.requestInterval, "Delay between KEGG API requests")
+	flags.DurationVar(&cfg.requestTimeout, "request-timeout", cfg.requestTimeout, "Timeout for each KEGG PATHWAY request")
+	flags.IntVar(&cfg.workersMax, "workers", cfg.workersMax, "Max concurrent organism workers (1-8)")
 	flags.BoolVar(
 		&cfg.shouldAllowInsecureTLS,
 		"insecure",
@@ -388,6 +400,8 @@ func createDefaultPathwayConfig() pathwayConfig {
 	cfg.retryMax = defaultKEGGRetryMax
 	cfg.retryWait = defaultKEGGRetryWait
 	cfg.requestInterval = defaultKEGGRequestInterval
+	cfg.requestTimeout = 60 * time.Second
+	cfg.workersMax = 1
 	cfg.ruleExisting = "skip"
 	cfg.ruleOrder = ruleOrderAsc
 	return cfg
@@ -402,6 +416,18 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	}
 	if cfg.requestInterval < 0 {
 		return fmt.Errorf("request-interval must be >= 0")
+	}
+	if cfg.requestTimeout < 0 {
+		return fmt.Errorf("request-timeout must be > 0")
+	}
+	if cfg.requestTimeout == 0 {
+		cfg.requestTimeout = 60 * time.Second
+	}
+	if cfg.workersMax == 0 {
+		cfg.workersMax = 1
+	}
+	if cfg.workersMax < 1 || cfg.workersMax > 8 {
+		return fmt.Errorf("workers must be between 1 and 8")
 	}
 	if strings.TrimSpace(cfg.dirOut) == "" {
 		return fmt.Errorf("output is required")
@@ -431,6 +457,13 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 		}
 		cfg.organismCodes = organismCodes
 	}
+	if len(cfg.organismPrefixes) > 0 {
+		prefixes, err := normalizeOrganismPrefixes(cfg.organismPrefixes)
+		if err != nil {
+			return err
+		}
+		cfg.organismPrefixes = prefixes
+	}
 	if len(cfg.pathwayIDs) > 0 {
 		pathwayIDs, err := resolvePathwayIDInputs(cfg.pathwayIDs, cfg.ruleOrder)
 		if err != nil {
@@ -449,12 +482,15 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 	if cfg.shouldDownloadAll {
 		countScope++
 	}
+	if len(cfg.organismPrefixes) > 0 {
+		countScope++
+	}
 	if countScope != 1 {
 		return fmt.Errorf(
-			"choose exactly one scope: --organisms | --all-organisms | --include-reference",
+			"choose exactly one scope: --organisms | --organism-prefix | --all-organisms | --include-reference",
 		)
 	}
-	if cfg.shouldDownloadAll {
+	if cfg.shouldDownloadAll || len(cfg.organismPrefixes) > 0 || len(cfg.organismCodes) > 1 {
 		if len(cfg.pathwayIDs) > 0 {
 			return fmt.Errorf("pathway_ids is not allowed with multi-organism download")
 		}

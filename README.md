@@ -158,6 +158,20 @@ acquired in REST batches of at most ten IDs and the default request interval is
 350 ms. The atomic dbCAN collection is the documented exception: it has no
 `--assets` option and always requires the large-download opt-in.
 
+Long KEGG PATHWAY acquisitions can be split by the first letter of the
+organism code while retaining one snapshot and one controller-owned lock:
+
+```bash
+biofetch kegg pathway fetch --output /data/kegg --organism-prefix h --assets list,entry
+biofetch kegg pathway fetch --output /data/kegg --organism-prefix a,b,c --workers 4
+biofetch kegg pathway fetch --output /data/kegg --organism-prefix-file prefixes.txt --request-timeout 60s
+```
+
+Prefixes run in input order. Organisms use 1-8 bounded workers and share the
+single process-wide request interval; the controller checkpoints
+`manifest.lock` after each 32-organism batch. Multiple processes must not write
+the same snapshot.
+
 These commands preserve raw upstream files only. Compound crosswalks,
 normalized reaction edges, motif tables, and other Parquet outputs remain
 `bioextract` responsibilities.

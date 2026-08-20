@@ -121,6 +121,26 @@ func TestNativeDurationAndListFileFlagsParse(t *testing.T) {
 	}
 }
 
+func TestKEGGPathwayShardingFlagsArePublic(t *testing.T) {
+	filePrefixes := filepath.Join(t.TempDir(), "prefixes.txt")
+	if err := os.WriteFile(filePrefixes, []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"kegg", "pathway", "fetch", "--organism-prefix", "a,b", "--organism-prefix", "c", "--organism-prefix-file", filePrefixes, "--request-timeout", "5s", "--workers", "4", "--help"},
+		{"kegg", "pathway", "fetch", "--request-timeout", "0", "--organisms", "hsa", "--output", t.TempDir()},
+		{"kegg", "pathway", "fetch", "--workers", "9", "--organisms", "hsa", "--output", t.TempDir()},
+	} {
+		err := RunCLI(args)
+		if args[len(args)-1] == "--help" && err != nil {
+			t.Fatalf("help parse failed: %v", err)
+		}
+		if args[len(args)-1] != "--help" && err == nil {
+			t.Fatalf("RunCLI(%q) succeeded", args)
+		}
+	}
+}
+
 func TestNestedOmniPathRestoreUsesExactSnapshot(t *testing.T) {
 	snapshot := t.TempDir() + "/resources/omnipath/interactions/kinaseextra/2025-08-13"
 	err := RunCLI([]string{"omnipath", "interactions", "restore", snapshot, "--dry-run"})

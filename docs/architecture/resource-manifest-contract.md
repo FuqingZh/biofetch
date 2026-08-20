@@ -136,6 +136,14 @@ lock and fails if the pinned URL serves different bytes. The upstream core set
 has no SHA/MD5 sidecar; multipart S3 ETags are remote-generation validators,
 not content hashes.
 
+KEGG PATHWAY fetch supports concurrency only within one controller process.
+Each worker owns one `raw/<organism>/` directory and returns records to the
+controller; workers never write `manifest.lock`. The controller merges current
+and existing still-present records and atomically checkpoints the unchanged
+manifest schema after every completed 32-organism batch. A completed final file
+not yet checkpointed is hashed and adopted on the next run. Independent
+processes must not write the same PATHWAY snapshot.
+
 Locking always computes SHA256 from the current file bytes; size or mtime is
 never accepted as a hash substitute. File hashing uses deterministic ordered
 parallelism controlled by `--workers`, with a conservative default of 4.
