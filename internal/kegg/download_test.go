@@ -1,8 +1,12 @@
 package kegg
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -64,6 +68,39 @@ func TestKEGGClientDownloadRetriesRequestError(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Fatalf("download attempts = %d, want %d", attempts, 2)
+	}
+}
+
+func TestKEGGClientDefaultFileDownloadFallsBackAfterHEADTransportError(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "EOF", err: io.EOF},
+		{name: "timeout", err: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			methods := make([]string, 0, 2)
+			clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				methods = append(methods, request.Method)
+				if request.Method == http.MethodHead {
+					return nil, test.err
+				}
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("ok")), Request: request}, nil
+			})}
+			fileOut := filepath.Join(t.TempDir(), "asset.dat")
+			client := createKEGGClient(clientHTTP, 0, 1, 0)
+			if err := client.downloadFile("https://example.test/asset", fileOut); err != nil {
+				t.Fatalf("default file download failed: %v", err)
+			}
+			if want := []string{http.MethodHead, http.MethodGet}; !reflect.DeepEqual(methods, want) {
+				t.Fatalf("request methods = %#v, want %#v", methods, want)
+			}
+			data, err := os.ReadFile(fileOut)
+			if err != nil || string(data) != "ok" {
+				t.Fatalf("downloaded data = %q, err %v", data, err)
+			}
+		})
 	}
 }
 

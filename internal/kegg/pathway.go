@@ -740,7 +740,7 @@ func downloadPathwayAsset(
 ) (pathwayRecord, bool, error) {
 	for attempt := 1; attempt <= clientKegg.retryMax; attempt++ {
 		logf("downloading %s", filepath.Base(fileOut))
-		shouldRetry, err := clientKegg.downloadFileOnce(urlFile, fileOut)
+		shouldRetry, err := clientKegg.downloadPathwayFileOnce(urlFile, fileOut)
 		if err != nil {
 			if shouldSkipPathwayDownloadStatus(assetName, err) {
 				logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
@@ -1296,10 +1296,18 @@ func (client *keggClient) downloadFile(urlFile string, fileOut string) error {
 }
 
 func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool, error) {
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, false)
+}
+
+func (client *keggClient) downloadPathwayFileOnce(urlFile string, fileOut string) (bool, error) {
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, true)
+}
+
+func (client *keggClient) downloadFileOnceWithProbePolicy(urlFile string, fileOut string, propagateProbeErrors bool) (bool, error) {
 	filePart := fileOut + ".part"
 	err := httpx.DownloadFileWithResumeOptions(client.clientHTTP, urlFile, filePart, nil, httpx.DownloadOptions{
 		Limiter:              client.limiter,
-		PropagateProbeErrors: true,
+		PropagateProbeErrors: propagateProbeErrors,
 	})
 	if err != nil {
 		var statusErr httpx.UnexpectedStatusError
