@@ -79,6 +79,38 @@ func TestDownloadFileWithResumeCanPropagateProbeError(t *testing.T) {
 	}
 }
 
+func TestDownloadFileWithResumeMetadataProbePolicy(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		options DownloadOptions
+		want    []string
+	}{
+		{name: "default probes", want: []string{http.MethodHead, http.MethodGet}},
+		{name: "skip probe", options: DownloadOptions{SkipMetadataProbe: true}, want: []string{http.MethodGet}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			methods := make([]string, 0, 2)
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				methods = append(methods, request.Method)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Request:    request,
+				}, nil
+			})}
+			err := DownloadFileWithResumeOptions(client, "https://example.test/asset", filepath.Join(t.TempDir(), "asset.part"), nil, test.options)
+			if err != nil {
+				t.Fatalf("DownloadFileWithResumeOptions returned error: %v", err)
+			}
+			if !slices.Equal(methods, test.want) {
+				t.Fatalf("request methods = %#v, want %#v", methods, test.want)
+			}
+		})
+	}
+}
+
 func TestDownloadFileWithResumeAppendsPartialContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodHead {

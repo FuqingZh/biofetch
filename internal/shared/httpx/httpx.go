@@ -20,6 +20,7 @@ type DownloadProgressFunc func(bytesDone int64, bytesTotal int64)
 type DownloadOptions struct {
 	Limiter              *RequestLimiter
 	PropagateProbeErrors bool
+	SkipMetadataProbe    bool
 }
 
 var chunkedDownloadMinBytes int64 = 1 << 30
@@ -212,9 +213,14 @@ func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut str
 }
 
 func DownloadFileWithResumeOptions(clientHTTP *http.Client, urlFile string, fileOut string, progress DownloadProgressFunc, options DownloadOptions) error {
-	metadata, ok, err := probeDownloadMetadata(clientHTTP, urlFile, options.Limiter, options.PropagateProbeErrors)
-	if err != nil {
-		return err
+	var metadata downloadMetadata
+	var ok bool
+	if !options.SkipMetadataProbe {
+		var err error
+		metadata, ok, err = probeDownloadMetadata(clientHTTP, urlFile, options.Limiter, options.PropagateProbeErrors)
+		if err != nil {
+			return err
+		}
 	}
 	if existingFileSize(fileOut) > 0 {
 		return downloadFileSingleResume(clientHTTP, urlFile, fileOut, progress, metadata, ok, options.Limiter)

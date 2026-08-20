@@ -746,7 +746,8 @@ func downloadPathwayAsset(
 ) (pathwayRecord, bool, error) {
 	for attempt := 1; attempt <= clientKegg.retryMax; attempt++ {
 		logf("downloading %s", filepath.Base(fileOut))
-		shouldRetry, err := clientKegg.downloadPathwayFileOnce(urlFile, fileOut, attempt < clientKegg.retryMax)
+		isFinalAttempt := attempt == clientKegg.retryMax
+		shouldRetry, err := clientKegg.downloadPathwayFileOnce(urlFile, fileOut, !isFinalAttempt, isFinalAttempt)
 		if err != nil {
 			if shouldSkipPathwayDownloadStatus(assetName, err) {
 				logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
@@ -1302,18 +1303,19 @@ func (client *keggClient) downloadFile(urlFile string, fileOut string) error {
 }
 
 func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool, error) {
-	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, false)
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, false, false)
 }
 
-func (client *keggClient) downloadPathwayFileOnce(urlFile string, fileOut string, propagateProbeErrors bool) (bool, error) {
-	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, propagateProbeErrors)
+func (client *keggClient) downloadPathwayFileOnce(urlFile string, fileOut string, propagateProbeErrors bool, skipMetadataProbe bool) (bool, error) {
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, propagateProbeErrors, skipMetadataProbe)
 }
 
-func (client *keggClient) downloadFileOnceWithProbePolicy(urlFile string, fileOut string, propagateProbeErrors bool) (bool, error) {
+func (client *keggClient) downloadFileOnceWithProbePolicy(urlFile string, fileOut string, propagateProbeErrors bool, skipMetadataProbe bool) (bool, error) {
 	filePart := fileOut + ".part"
 	err := httpx.DownloadFileWithResumeOptions(client.clientHTTP, urlFile, filePart, nil, httpx.DownloadOptions{
 		Limiter:              client.limiter,
 		PropagateProbeErrors: propagateProbeErrors,
+		SkipMetadataProbe:    skipMetadataProbe,
 	})
 	if err != nil {
 		var statusErr httpx.UnexpectedStatusError
