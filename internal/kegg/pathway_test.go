@@ -1600,20 +1600,22 @@ func TestPathwayAssetSingleAttemptTimeoutUsesOneRequest(t *testing.T) {
 	}
 }
 
-func TestPathwayAssetFinalGETResumesExistingPartial(t *testing.T) {
+func TestPathwayAssetFinalGETDiscardsExistingPartial(t *testing.T) {
 	methods := make([]string, 0, 1)
 	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		methods = append(methods, request.Method)
-		if got := request.Header.Get("Range"); got != "bytes=5-" {
-			t.Fatalf("Range = %q, want bytes=5-", got)
+		if got := request.Header.Get("Range"); got != "" {
+			t.Fatalf("Range = %q, want empty", got)
+		}
+		if got := request.Header.Get("If-Range"); got != "" {
+			t.Fatalf("If-Range = %q, want empty", got)
 		}
 		return &http.Response{
-			StatusCode:    http.StatusPartialContent,
-			Status:        "206 Partial Content",
-			Header:        http.Header{"Content-Range": []string{"bytes 5-9/10"}},
-			ContentLength: 5,
-			Body:          io.NopCloser(strings.NewReader("bravo")),
-			Request:       request,
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("replacement")),
+			Request:    request,
 		}, nil
 	})}
 	client := createKEGGClient(clientHTTP, 0, 1, 0)
@@ -1630,55 +1632,20 @@ func TestPathwayAssetFinalGETResumesExistingPartial(t *testing.T) {
 		t.Fatalf("request methods = %#v, want %#v", methods, want)
 	}
 	data, err := os.ReadFile(fileOut)
-	if err != nil || string(data) != "alphabravo" {
-		t.Fatalf("completed file = %q, err %v", data, err)
+	if err != nil || string(data) != "replacement" {
+		t.Fatalf("completed file = %q, err %v, want replacement", data, err)
 	}
 }
 
-func TestPathwayAssetFinalGETRejectsIncompleteResume(t *testing.T) {
-	var requests atomic.Int32
+func TestPathwayAssetSecondAttemptDiscardsExistingPartial(t *testing.T) {
+	methods := make([]string, 0, 2)
 	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		if got := request.Header.Get("Range"); got != "bytes=5-" {
-			t.Fatalf("Range = %q, want bytes=5-", got)
+		methods = append(methods, request.Method)
+		if request.Method == http.MethodHead {
+			return nil, context.DeadlineExceeded
 		}
-		return &http.Response{
-			StatusCode:    http.StatusPartialContent,
-			Status:        "206 Partial Content",
-			Header:        http.Header{"Content-Range": []string{"bytes 5-14/15"}},
-			ContentLength: 5,
-			Body:          io.NopCloser(strings.NewReader("bravo")),
-			Request:       request,
-		}, nil
-	})}
-	client := createKEGGClient(clientHTTP, 0, 1, 0)
-	fileOut := filepath.Join(t.TempDir(), "hsa00010.txt")
-	filePart := fileOut + ".part"
-	if err := os.WriteFile(filePart, []byte("alpha"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, ok, err := downloadPathwayAsset(client, fileOut, "raw/hsa/hsa00010.txt", "hsa00010", "pathway.entry", "https://example.test/get/hsa00010")
-	if err != nil || ok {
-		t.Fatalf("downloadPathwayAsset = ok %v, err %v, want bounded short-read result", ok, err)
-	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("request count = %d, want 1", got)
-	}
-	if _, statErr := os.Stat(fileOut); !os.IsNotExist(statErr) {
-		t.Fatalf("final file exists or stat failed: %v", statErr)
-	}
-	data, readErr := os.ReadFile(filePart)
-	if readErr != nil || string(data) != "alpha" {
-		t.Fatalf("partial file = %q, err %v; want unchanged alpha", data, readErr)
-	}
-}
-
-func TestPathwayAssetFinalGETRangeIgnoredDoesNotRestartWithinAttempt(t *testing.T) {
-	var requests atomic.Int32
-	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		if got := request.Header.Get("Range"); got != "bytes=5-" {
-			t.Fatalf("Range = %q, want bytes=5-", got)
+		if got := request.Header.Get("Range"); got != "" {
+			t.Fatalf("Range = %q, want empty", got)
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -1688,9 +1655,37 @@ func TestPathwayAssetFinalGETRangeIgnoredDoesNotRestartWithinAttempt(t *testing.
 			Request:    request,
 		}, nil
 	})}
-	client := createKEGGClient(clientHTTP, 0, 1, 0)
+	client := createKEGGClient(clientHTTP, 0, 2, 0)
 	fileOut := filepath.Join(t.TempDir(), "hsa00010.txt")
 	if err := os.WriteFile(fileOut+".part", []byte("alpha"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err := downloadPathwayAsset(client, fileOut, "raw/hsa/hsa00010.txt", "hsa00010", "pathway.entry", "https://example.test/get/hsa00010")
+	if err != nil || !ok {
+		t.Fatalf("downloadPathwayAsset = ok %v, err %v", ok, err)
+	}
+	if want := []string{http.MethodHead, http.MethodGet}; !reflect.DeepEqual(methods, want) {
+		t.Fatalf("request methods = %#v, want %#v", methods, want)
+	}
+	data, err := os.ReadFile(fileOut)
+	if err != nil || string(data) != "replacement" {
+		t.Fatalf("completed file = %q, err %v, want replacement", data, err)
+	}
+}
+
+func TestPathwayAssetFinalGETFailureRemovesExistingPartial(t *testing.T) {
+	var requests atomic.Int32
+	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		if got := request.Header.Get("Range"); got != "" {
+			t.Fatalf("Range = %q, want empty", got)
+		}
+		return nil, context.DeadlineExceeded
+	})}
+	client := createKEGGClient(clientHTTP, 0, 1, 0)
+	fileOut := filepath.Join(t.TempDir(), "hsa00010.txt")
+	filePart := fileOut + ".part"
+	if err := os.WriteFile(filePart, []byte("alpha"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, ok, err := downloadPathwayAsset(client, fileOut, "raw/hsa/hsa00010.txt", "hsa00010", "pathway.entry", "https://example.test/get/hsa00010")
@@ -1699,6 +1694,12 @@ func TestPathwayAssetFinalGETRangeIgnoredDoesNotRestartWithinAttempt(t *testing.
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("request count = %d, want 1", got)
+	}
+	if _, statErr := os.Stat(fileOut); !os.IsNotExist(statErr) {
+		t.Fatalf("final file exists or stat failed: %v", statErr)
+	}
+	if _, statErr := os.Stat(filePart); !os.IsNotExist(statErr) {
+		t.Fatalf("partial file exists or stat failed: %v", statErr)
 	}
 }
 

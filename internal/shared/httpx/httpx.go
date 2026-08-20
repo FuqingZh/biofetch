@@ -218,7 +218,11 @@ func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut str
 func DownloadFileWithResumeOptions(clientHTTP *http.Client, urlFile string, fileOut string, progress DownloadProgressFunc, options DownloadOptions) error {
 	var metadata downloadMetadata
 	var ok bool
-	if !options.SkipMetadataProbe {
+	if options.SkipMetadataProbe {
+		if err := removeDownloadScratch(fileOut); err != nil {
+			return err
+		}
+	} else {
 		var err error
 		metadata, ok, err = probeDownloadMetadata(clientHTTP, urlFile, options.Limiter, options.PropagateProbeErrors)
 		if err != nil {
@@ -284,6 +288,8 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 			return fmt.Errorf("remove stale partial %s: %w", fileOut, err)
 		}
 		return RangeIgnoredError{URL: urlFile}
+	case response.StatusCode == http.StatusPartialContent:
+		return fmt.Errorf("request %s: unsolicited partial response %s", urlFile, response.Status)
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		shouldAppend = false
 	default:
@@ -340,6 +346,22 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 			}
 		}
 		return errWrite
+	}
+	return nil
+}
+
+func removeDownloadScratch(fileOut string) error {
+	for _, pathScratch := range []string{fileOut, fileOut + ".parts"} {
+		_, err := os.Lstat(pathScratch)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect unverified download scratch %s: %w", pathScratch, err)
+		}
+		if err := os.RemoveAll(pathScratch); err != nil {
+			return fmt.Errorf("remove unverified download scratch %s: %w", pathScratch, err)
+		}
 	}
 	return nil
 }

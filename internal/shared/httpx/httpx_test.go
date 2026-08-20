@@ -112,35 +112,139 @@ func TestDownloadFileWithResumeMetadataProbePolicy(t *testing.T) {
 	}
 }
 
-func TestDownloadFileWithResumeSkipProbeRejectsIncompleteOpenEndedRange(t *testing.T) {
+func TestDownloadFileWithResumeSkipProbeDiscardsUnverifiedPartial(t *testing.T) {
+	var requests atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if got := request.Header.Get("Range"); got != "bytes=5-" {
-			t.Fatalf("Range = %q, want bytes=5-", got)
+		requests.Add(1)
+		if got := request.Header.Get("Range"); got != "" {
+			t.Fatalf("Range = %q, want empty", got)
+		}
+		if got := request.Header.Get("If-Range"); got != "" {
+			t.Fatalf("If-Range = %q, want empty", got)
 		}
 		return &http.Response{
-			StatusCode:    http.StatusPartialContent,
-			Status:        "206 Partial Content",
-			Header:        http.Header{"Content-Range": []string{"bytes 5-9/15"}},
-			ContentLength: 5,
-			Body:          io.NopCloser(strings.NewReader("bravo")),
-			Request:       request,
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("replacement")),
+			Request:    request,
 		}, nil
 	})}
 	fileOut := filepath.Join(t.TempDir(), "asset.part")
 	if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	dirParts := fileOut + ".parts"
+	if err := os.MkdirAll(dirParts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirParts, "chunk"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
-	if err == nil || !strings.Contains(err.Error(), "want final byte 14") {
-		t.Fatalf("error = %v, want incomplete Content-Range error", err)
+	if err != nil {
+		t.Fatalf("DownloadFileWithResumeOptions returned error: %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1", got)
 	}
 	data, readErr := os.ReadFile(fileOut)
-	if readErr != nil || string(data) != "alpha" {
-		t.Fatalf("partial file = %q, err %v; want unchanged alpha", data, readErr)
+	if readErr != nil || string(data) != "replacement" {
+		t.Fatalf("file = %q, err %v; want replacement", data, readErr)
+	}
+	if _, err := os.Stat(dirParts); !os.IsNotExist(err) {
+		t.Fatalf("chunk workspace exists or stat failed: %v", err)
 	}
 }
 
-func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T) {
+func TestDownloadFileWithResumeSkipProbeCleanupFailureMakesNoRequest(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("unexpected request")
+	})}
+	dirOut := t.TempDir()
+	fileOut := filepath.Join(dirOut, "asset.part")
+	if err := os.MkdirAll(fileOut+".parts", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dirOut, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dirOut, 0o755) })
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+	if err == nil || !strings.Contains(err.Error(), "remove unverified download scratch") {
+		t.Fatalf("error = %v, want cleanup failure", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("request count = %d, want 0", got)
+	}
+}
+
+func TestDownloadFileWithResumeSkipProbeRejectsUnsolicitedPartialResponse(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return &http.Response{
+			StatusCode:    http.StatusPartialContent,
+			Status:        "206 Partial Content",
+			Header:        http.Header{"Content-Range": []string{"bytes 0-1/2"}},
+			ContentLength: 2,
+			Body:          io.NopCloser(strings.NewReader("ok")),
+			Request:       request,
+		}, nil
+	})}
+	fileOut := filepath.Join(t.TempDir(), "asset.part")
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
+	if err == nil || !strings.Contains(err.Error(), "unsolicited partial response") {
+		t.Fatalf("error = %v, want unsolicited partial response", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1", got)
+	}
+	if _, err := os.Stat(fileOut); !os.IsNotExist(err) {
+		t.Fatalf("output exists or stat failed: %v", err)
+	}
+}
+
+func TestDownloadFileWithResumePermissiveFallbackValidatesOpenEndedRangeHeader(t *testing.T) {
+	for _, contentRange := range []string{"bytes 5-9/15", "bytes 5-14/*"} {
+		t.Run(strings.ReplaceAll(contentRange, "/", "_"), func(t *testing.T) {
+			methods := make([]string, 0, 2)
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				methods = append(methods, request.Method)
+				if request.Method == http.MethodHead {
+					return nil, context.DeadlineExceeded
+				}
+				return &http.Response{
+					StatusCode:    http.StatusPartialContent,
+					Status:        "206 Partial Content",
+					Header:        http.Header{"Content-Range": []string{contentRange}},
+					ContentLength: 5,
+					Body:          io.NopCloser(strings.NewReader("bravo")),
+					Request:       request,
+				}, nil
+			})}
+			fileOut := filepath.Join(t.TempDir(), "asset.part")
+			if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := DownloadFileWithResume(client, "https://example.test/asset", fileOut, nil)
+			if err == nil || !strings.Contains(err.Error(), "Content-Range") {
+				t.Fatalf("error = %v, want Content-Range failure", err)
+			}
+			if want := []string{http.MethodHead, http.MethodGet}; !slices.Equal(methods, want) {
+				t.Fatalf("request methods = %#v, want %#v", methods, want)
+			}
+			data, readErr := os.ReadFile(fileOut)
+			if readErr != nil || string(data) != "alpha" {
+				t.Fatalf("partial file = %q, err %v; want unchanged alpha", data, readErr)
+			}
+		})
+	}
+}
+
+func TestDownloadFileWithResumePermissiveFallbackValidatesOpenEndedRangeBody(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		body          string
@@ -152,10 +256,13 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 		{name: "complete", body: "bravo12345"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var requests atomic.Int32
 			body := &countingReadCloser{Reader: strings.NewReader(test.body)}
+			methods := make([]string, 0, 2)
 			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				requests.Add(1)
+				methods = append(methods, request.Method)
+				if request.Method == http.MethodHead {
+					return nil, context.DeadlineExceeded
+				}
 				return &http.Response{
 					StatusCode:    http.StatusPartialContent,
 					Status:        "206 Partial Content",
@@ -169,9 +276,9 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 			if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, func(int64, int64) {}, DownloadOptions{SkipMetadataProbe: true})
+			err := DownloadFileWithResume(client, "https://example.test/asset", fileOut, func(int64, int64) {})
 			if test.wantError && err == nil {
-				t.Fatal("incomplete body succeeded")
+				t.Fatal("invalid body succeeded")
 			}
 			if !test.wantError && err != nil {
 				t.Fatalf("complete body failed: %v", err)
@@ -179,54 +286,21 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 			if test.wantShortRead && !errors.Is(err, io.ErrUnexpectedEOF) {
 				t.Fatalf("short body error = %v, want io.ErrUnexpectedEOF", err)
 			}
-			if got := requests.Load(); got != 1 {
-				t.Fatalf("request count = %d, want 1", got)
+			if want := []string{http.MethodHead, http.MethodGet}; !slices.Equal(methods, want) {
+				t.Fatalf("request methods = %#v, want %#v", methods, want)
 			}
 			if body.bytesRead > 11 {
-				t.Fatalf("body bytes read = %d, want at most expected+1 (11)", body.bytesRead)
+				t.Fatalf("body bytes read = %d, want at most 11", body.bytesRead)
 			}
 			data, readErr := os.ReadFile(fileOut)
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
 			want := "alphabravo12345"
 			if test.wantError {
 				want = "alpha"
 			}
-			if string(data) != want {
-				t.Fatalf("file content = %q, want %q", data, want)
+			if readErr != nil || string(data) != want {
+				t.Fatalf("file = %q, err %v; want %q", data, readErr, want)
 			}
 		})
-	}
-}
-
-func TestDownloadFileWithResumeSkipProbeRejectsUnknownRangeTotal(t *testing.T) {
-	var requests atomic.Int32
-	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		return &http.Response{
-			StatusCode:    http.StatusPartialContent,
-			Status:        "206 Partial Content",
-			Header:        http.Header{"Content-Range": []string{"bytes 5-14/*"}},
-			ContentLength: 10,
-			Body:          io.NopCloser(strings.NewReader("bravo12345")),
-			Request:       request,
-		}, nil
-	})}
-	fileOut := filepath.Join(t.TempDir(), "asset.part")
-	if err := os.WriteFile(fileOut, []byte("alpha"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", fileOut, nil, DownloadOptions{SkipMetadataProbe: true})
-	if err == nil || !strings.Contains(err.Error(), "invalid Content-Range") {
-		t.Fatalf("error = %v, want invalid Content-Range", err)
-	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("request count = %d, want 1", got)
-	}
-	data, readErr := os.ReadFile(fileOut)
-	if readErr != nil || string(data) != "alpha" {
-		t.Fatalf("partial file = %q, err %v; want unchanged alpha", data, readErr)
 	}
 }
 
