@@ -148,11 +148,12 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 		wantShortRead bool
 	}{
 		{name: "short", body: "bravo", wantError: true, wantShortRead: true},
-		{name: "long", body: "bravo123456", wantError: true},
+		{name: "long", body: strings.Repeat("x", 1<<20), wantError: true},
 		{name: "complete", body: "bravo12345"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
+			body := &countingReadCloser{Reader: strings.NewReader(test.body)}
 			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				requests.Add(1)
 				return &http.Response{
@@ -160,7 +161,7 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 					Status:        "206 Partial Content",
 					Header:        http.Header{"Content-Range": []string{"bytes 5-14/15"}},
 					ContentLength: -1,
-					Body:          io.NopCloser(strings.NewReader(test.body)),
+					Body:          body,
 					Request:       request,
 				}, nil
 			})}
@@ -180,6 +181,9 @@ func TestDownloadFileWithResumeSkipProbeValidatesOpenEndedRangeBody(t *testing.T
 			}
 			if got := requests.Load(); got != 1 {
 				t.Fatalf("request count = %d, want 1", got)
+			}
+			if body.bytesRead > 11 {
+				t.Fatalf("body bytes read = %d, want at most expected+1 (11)", body.bytesRead)
 			}
 			data, readErr := os.ReadFile(fileOut)
 			if readErr != nil {

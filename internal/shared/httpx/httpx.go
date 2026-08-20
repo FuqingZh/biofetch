@@ -289,6 +289,12 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	default:
 		return unexpectedStatus(response, urlFile)
 	}
+	if shouldAppend && response.ContentLength >= 0 && response.ContentLength != expectedBodyBytes {
+		if response.ContentLength < expectedBodyBytes {
+			return fmt.Errorf("request %s: response Content-Length = %d, want %d: %w", urlFile, response.ContentLength, expectedBodyBytes, io.ErrUnexpectedEOF)
+		}
+		return fmt.Errorf("request %s: response Content-Length = %d, want %d", urlFile, response.ContentLength, expectedBodyBytes)
+	}
 
 	flagFile := os.O_CREATE | os.O_WRONLY
 	if shouldAppend {
@@ -302,6 +308,9 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	}
 
 	var reader io.Reader = response.Body
+	if shouldAppend {
+		reader = io.LimitReader(reader, expectedBodyBytes+1)
+	}
 	if progress != nil {
 		reader = &progressReader{
 			reader:     response.Body,
