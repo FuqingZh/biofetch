@@ -1,16 +1,20 @@
 package kegg
 
 import (
-	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"github.com/FuqingZh/biofetch/internal/shared/httpx"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -369,7 +373,7 @@ func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T)
 			clientHTTP := &http.Client{
 				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 					if request.Method == http.MethodHead {
-						return nil, io.EOF
+						return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 7, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 					}
 					countGET.Add(1)
 					return &http.Response{
@@ -416,7 +420,7 @@ func TestFetchPathwayEntryExhaustsTransientRetriesAndContinues(t *testing.T) {
 	clientHTTP := &http.Client{
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.Method == http.MethodHead {
-				return nil, io.EOF
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 7, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 			}
 			countGET.Add(1)
 			return &http.Response{
@@ -457,7 +461,7 @@ func TestFetchPathwayEntryExhaustsStatus403ThenTransientErrorAndContinues(t *tes
 	clientHTTP := &http.Client{
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.Method == http.MethodHead {
-				return nil, io.EOF
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 7, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 			}
 			if countGET.Add(1) < 3 {
 				return &http.Response{
@@ -969,8 +973,8 @@ func TestShouldSkipPathwayScopeListError(t *testing.T) {
 	if shouldSkipPathwayScopeListError(&pathwayConfig{shouldFetchReference: true}, errForbidden) {
 		t.Fatal("reference 403 should not be skipped")
 	}
-	if shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errServer) {
-		t.Fatal("organism 503 should not be skipped")
+	if !shouldSkipPathwayScopeListError(&pathwayConfig{organismCode: "sro"}, errServer) {
+		t.Fatal("organism 503 after retry exhaustion should be skipped")
 	}
 }
 
@@ -1091,6 +1095,17 @@ func TestValidatePathwayConfigResolvesPathwayIDsAtFile(t *testing.T) {
 	}
 }
 
+func TestValidatePathwayConfigAllowsTargetedIDsWithExplicitOrganisms(t *testing.T) {
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut = "/tmp/kegg"
+	cfg.versionToken = "2026-04"
+	cfg.organismCodes = []string{"hsa", "mmu"}
+	cfg.pathwayIDs = []string{"hsa00010"}
+	if err := validatePathwayConfig(&cfg); err != nil {
+		t.Fatalf("explicit multi-organism targeted IDs rejected: %v", err)
+	}
+}
+
 func TestReadExistingPathwayManifestBackfillsReleaseRange(t *testing.T) {
 	dirTemp := t.TempDir()
 	fileManifest := filepath.Join(dirTemp, "manifest.lock")
@@ -1115,5 +1130,562 @@ func TestReadExistingPathwayManifestBackfillsReleaseRange(t *testing.T) {
 	}
 	if manifestRead.SourceReleaseStart != "118.0+/04-01" || manifestRead.SourceReleaseEnd != "118.0+/04-01" {
 		t.Fatalf("manifestRead = %#v", manifestRead)
+	}
+}
+
+func TestNormalizeOrganismPrefixesPreservesFirstSeenOrder(t *testing.T) {
+	got, err := normalizeOrganismPrefixes([]string{" B,a ", "b", "c,a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"b", "a", "c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefixes = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeOrganismPrefixesRejectsInvalidTokens(t *testing.T) {
+	for _, value := range []string{"", "ab", "1", "é"} {
+		if _, err := normalizeOrganismPrefixes([]string{value}); err == nil {
+			t.Fatalf("normalizeOrganismPrefixes(%q) succeeded", value)
+		}
+	}
+}
+
+func TestPartitionOrganismsByPrefixPreservesPrefixPlan(t *testing.T) {
+	groups, err := partitionOrganismsByPrefix([]string{"hsa", "bac", "bbu", "ath"}, []string{"b", "a"}, ruleOrderDesc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 || groups[0].prefix != "b" || groups[1].prefix != "a" {
+		t.Fatalf("groups = %#v", groups)
+	}
+	if want := []string{"bbu", "bac"}; !reflect.DeepEqual(groups[0].organismCodes, want) {
+		t.Fatalf("b organisms = %#v, want %#v", groups[0].organismCodes, want)
+	}
+	if _, err := partitionOrganismsByPrefix([]string{"hsa"}, []string{"z"}, ruleOrderAsc); err == nil {
+		t.Fatal("unmatched prefix succeeded")
+	}
+}
+
+func TestKEGGClientTimeoutRetriesExactAttemptCount(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte("late"))
+	}))
+	defer server.Close()
+	clientHTTP := server.Client()
+	clientHTTP.Timeout = 10 * time.Millisecond
+	client := createKEGGClient(clientHTTP, 0, 3, 0)
+	if _, err := client.download(server.URL); err == nil {
+		t.Fatal("timed-out request succeeded")
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+}
+
+func TestRunFetchPathwayPrefixUsesOneCatalogAndBoundedWorkers(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var catalogRequests atomic.Int32
+	var active atomic.Int32
+	var maximum atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case "/list/genome":
+			catalogRequests.Add(1)
+			_, _ = w.Write([]byte("T1\thsa\nT2\thpy\nT3\tbbu\n"))
+		case "/list/pathway/hsa", "/list/pathway/hpy", "/list/pathway/bbu":
+			n := active.Add(1)
+			for old := maximum.Load(); n > old && !maximum.CompareAndSwap(old, n); old = maximum.Load() {
+			}
+			time.Sleep(20 * time.Millisecond)
+			active.Add(-1)
+			code := strings.TrimPrefix(r.URL.Path, "/list/pathway/")
+			_, _ = fmt.Fprintf(w, "%s00010\tpathway\n", code)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut = t.TempDir()
+	cfg.versionToken = "2026-04"
+	cfg.assetNames = []string{"list"}
+	cfg.organismPrefixes = []string{"h", "b"}
+	cfg.workersMax = 2
+	cfg.requestInterval = 0
+	cfg.requestTimeout = time.Second
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if catalogRequests.Load() != 1 {
+		t.Fatalf("catalog requests = %d, want 1", catalogRequests.Load())
+	}
+	if maximum.Load() > 2 || maximum.Load() < 2 {
+		t.Fatalf("max active = %d, want 2", maximum.Load())
+	}
+	dataManifest, err := os.ReadFile(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest manifestFile
+	if err := toml.Unmarshal(dataManifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != 3 {
+		t.Fatalf("manifest files = %d, want 3", len(manifest.Files))
+	}
+}
+
+func TestRunFetchPathwayCheckpointsCompletedBatchBeforeLaterFailure(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var infoRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/info/pathway":
+			if infoRequests.Add(1) == 1 {
+				_, _ = w.Write([]byte("pathway Release 1\n"))
+			} else {
+				_, _ = w.Write([]byte("pathway Release 2\n"))
+			}
+		case strings.HasPrefix(r.URL.Path, "/list/pathway/"):
+			code := strings.TrimPrefix(r.URL.Path, "/list/pathway/")
+			if code == "abg" {
+				http.Error(w, "bad", http.StatusBadRequest)
+				return
+			}
+			_, _ = fmt.Fprintf(w, "%s00010\tpathway\n", code)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	codes := make([]string, 33)
+	for i := range codes {
+		codes[i] = fmt.Sprintf("a%c%c", 'a'+rune(i/26), 'a'+rune(i%26))
+	}
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames, cfg.organismCodes = []string{"list"}, codes
+	cfg.requestInterval, cfg.requestTimeout, cfg.retryMax, cfg.workersMax = 0, time.Second, 1, 4
+	errRun := runFetchPathway(&cfg)
+	if errRun == nil {
+		t.Fatal("later batch failure succeeded")
+	}
+	manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != 32 {
+		t.Fatalf("checkpoint files = %d, want 32 (run error: %v)", len(manifest.Files), errRun)
+	}
+	if manifest.SourceReleaseStart != "1" || manifest.SourceReleaseEnd != "2" {
+		t.Fatalf("checkpoint release range = %q..%q, want 1..2", manifest.SourceReleaseStart, manifest.SourceReleaseEnd)
+	}
+}
+
+func TestRunFetchPathwayCheckpointLeavesFailedEndMetadataUnclaimed(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var infoRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/info/pathway":
+			if infoRequests.Add(1) == 1 {
+				_, _ = w.Write([]byte("pathway Release 1\n"))
+				return
+			}
+			http.Error(w, "unavailable", http.StatusBadRequest)
+		case "/list/genome":
+			_, _ = w.Write([]byte("T1\taaa\nT2\tbba\n"))
+		case "/list/pathway/aaa":
+			_, _ = w.Write([]byte("aaa00010\tpathway\n"))
+		case "/list/pathway/bba":
+			http.Error(w, "fatal", http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames, cfg.organismPrefixes = []string{"list"}, []string{"a", "b"}
+	cfg.retryMax, cfg.requestInterval, cfg.workersMax = 1, 0, 1
+	if err := runFetchPathway(&cfg); err == nil {
+		t.Fatal("later prefix failure succeeded")
+	}
+	dataManifest, err := os.ReadFile(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest manifestFile
+	if err := toml.Unmarshal(dataManifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SourceReleaseStart != "1" || manifest.SourceReleaseEnd != "" {
+		t.Fatalf("checkpoint release range = %q..%q, want 1 with unclaimed end", manifest.SourceReleaseStart, manifest.SourceReleaseEnd)
+	}
+}
+
+func TestPathwayPrefixPreflightCreatesNoOutputOrLogs(t *testing.T) {
+	t.Run("scope conflict", func(t *testing.T) {
+		dirOut := filepath.Join(t.TempDir(), "out")
+		err := RunCLI([]string{"pathway", "fetch", "--output", dirOut, "--version", "2026-04", "--organisms", "hsa", "--organism-prefix", "h"})
+		if err == nil {
+			t.Fatal("scope conflict succeeded")
+		}
+		assertPathwayOutputAbsent(t, dirOut)
+	})
+
+	for _, test := range []struct {
+		name          string
+		prefix        string
+		catalogStatus int
+	}{
+		{name: "catalog failure", prefix: "h", catalogStatus: http.StatusServiceUnavailable},
+		{name: "unmatched prefix", prefix: "z", catalogStatus: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			oldBaseURL := baseURL
+			defer func() { baseURL = oldBaseURL }()
+			requestOrder := make([]string, 0, 2)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestOrder = append(requestOrder, r.URL.Path)
+				switch r.URL.Path {
+				case "/info/pathway":
+					_, _ = w.Write([]byte("pathway Release 1\n"))
+				case "/list/genome":
+					if test.catalogStatus != http.StatusOK {
+						http.Error(w, "unavailable", test.catalogStatus)
+						return
+					}
+					_, _ = w.Write([]byte("T1\thsa\n"))
+				default:
+					t.Fatalf("unexpected preflight request: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			baseURL = server.URL
+			dirOut := filepath.Join(t.TempDir(), "out")
+			cfg := createDefaultPathwayConfig()
+			cfg.dirOut, cfg.versionToken = dirOut, "2026-04"
+			cfg.assetNames, cfg.organismPrefixes = []string{"list"}, []string{test.prefix}
+			cfg.retryMax, cfg.requestInterval = 1, 0
+			if err := runFetchPathway(&cfg); err == nil {
+				t.Fatal("prefix preflight succeeded")
+			}
+			if want := []string{"/info/pathway", "/list/genome"}; !reflect.DeepEqual(requestOrder, want) {
+				t.Fatalf("preflight request order = %#v, want %#v", requestOrder, want)
+			}
+			assertPathwayOutputAbsent(t, dirOut)
+		})
+	}
+}
+
+func assertPathwayOutputAbsent(t *testing.T, dirOut string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dirOut, "pathway")); !os.IsNotExist(err) {
+		t.Fatalf("PATHWAY output/log directory exists or stat failed: %v", err)
+	}
+}
+
+func TestRunFetchPathwayAllSkippedPrefixDoesNotClaimRequestedScope(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/list/genome":
+			_, _ = w.Write([]byte("T1\taaa\nT2\taab\nT3\tbba\n"))
+		case "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case "/list/pathway/aaa", "/list/pathway/aab":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	for _, prefixes := range [][]string{{"a"}, {"a", "b"}} {
+		cfg := createDefaultPathwayConfig()
+		cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+		cfg.assetNames, cfg.organismPrefixes = []string{"list"}, prefixes
+		cfg.requestInterval = 0
+		if err := runFetchPathway(&cfg); err != nil {
+			t.Fatal(err)
+		}
+		manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(manifest.Files) != 0 {
+			t.Fatalf("prefixes=%v files = %#v, want empty", prefixes, manifest.Files)
+		}
+		if manifest.Scope.Type != "organisms" || manifest.Scope.Value != "" {
+			t.Fatalf("prefixes=%v empty scope = %#v, want organisms with empty value", prefixes, manifest.Scope)
+		}
+	}
+}
+
+func TestKEGGClientSharedLimiterSpacesWorkersAndRetries(t *testing.T) {
+	const interval = 15 * time.Millisecond
+	var mutex sync.Mutex
+	attempts := make(map[string]int)
+	starts := make([]time.Time, 0, 8)
+	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		mutex.Lock()
+		starts = append(starts, time.Now())
+		attempts[request.URL.Path]++
+		attempt := attempts[request.URL.Path]
+		mutex.Unlock()
+		statusCode, status, body := http.StatusOK, "200 OK", "ok"
+		if attempt == 1 {
+			statusCode, status, body = http.StatusServiceUnavailable, "503 Service Unavailable", "retry"
+		}
+		return &http.Response{StatusCode: statusCode, Status: status, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})}
+	client := createKEGGClient(clientHTTP, interval, 2, 0)
+	var group sync.WaitGroup
+	errors := make(chan error, 4)
+	for index := range 4 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			_, err := client.download(fmt.Sprintf("https://example.test/task/%d", index))
+			errors <- err
+		}()
+	}
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	if len(starts) != 8 {
+		t.Fatalf("request starts = %d, want 8", len(starts))
+	}
+	for index := 1; index < len(starts); index++ {
+		if gap := starts[index].Sub(starts[index-1]); gap < interval-2*time.Millisecond {
+			t.Fatalf("request gap %d = %s, want at least %s", index, gap, interval-2*time.Millisecond)
+		}
+	}
+}
+
+func TestPathwayAssetHEADTimeoutConsumesOuterAttempt(t *testing.T) {
+	var mutex sync.Mutex
+	methods := make([]string, 0, 3)
+	headAttempts := 0
+	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		mutex.Lock()
+		methods = append(methods, request.Method)
+		if request.Method == http.MethodHead {
+			headAttempts++
+			attempt := headAttempts
+			mutex.Unlock()
+			if attempt == 1 {
+				return nil, context.DeadlineExceeded
+			}
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 2, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+		}
+		mutex.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 2, Body: io.NopCloser(strings.NewReader("ok")), Request: request}, nil
+	})}
+	client := createKEGGClient(clientHTTP, 0, 2, 0)
+	fileOut := filepath.Join(t.TempDir(), "hsa00010.txt")
+	_, ok, err := downloadPathwayAsset(client, fileOut, "raw/hsa/hsa00010.txt", "hsa00010", "pathway.entry", "https://example.test/get/hsa00010")
+	if err != nil || !ok {
+		t.Fatalf("downloadPathwayAsset = ok %v, err %v", ok, err)
+	}
+	if want := []string{http.MethodHead, http.MethodHead, http.MethodGet}; !reflect.DeepEqual(methods, want) {
+		t.Fatalf("request methods = %#v, want %#v", methods, want)
+	}
+}
+
+func TestMapPathwayScopesOrderedStopsUndispatchedAfterConcurrentFatalError(t *testing.T) {
+	secondStarted := make(chan struct{})
+	fatalReturned := make(chan struct{})
+	var laterCalls atomic.Int32
+	_, err := mapPathwayScopesOrdered([]string{"fatal", "running", "later-1", "later-2"}, 2, func(scopeKey string) (pathwayScopeResult, error) {
+		switch scopeKey {
+		case "fatal":
+			<-secondStarted
+			close(fatalReturned)
+			return pathwayScopeResult{}, errors.New("fatal")
+		case "running":
+			close(secondStarted)
+			<-fatalReturned
+			time.Sleep(10 * time.Millisecond)
+			return pathwayScopeResult{}, nil
+		default:
+			laterCalls.Add(1)
+			return pathwayScopeResult{}, nil
+		}
+	})
+	if err == nil || err.Error() != "fatal" {
+		t.Fatalf("map error = %v, want fatal", err)
+	}
+	if got := laterCalls.Load(); got != 0 {
+		t.Fatalf("undispatched scope calls = %d, want 0", got)
+	}
+}
+
+func TestRunFetchPathwayWorkersProduceEquivalentManifests(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	codes := []string{"aaa", "aab", "aac", "aad", "aae", "aaf", "aag", "aah"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case strings.HasPrefix(r.URL.Path, "/list/pathway/"):
+			code := strings.TrimPrefix(r.URL.Path, "/list/pathway/")
+			_, _ = fmt.Fprintf(w, "%s00010\tpathway\n", code)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	var expected manifestFile
+	for _, workers := range []int{1, 4, 8} {
+		cfg := createDefaultPathwayConfig()
+		cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+		cfg.assetNames, cfg.organismCodes = []string{"list"}, append([]string(nil), codes...)
+		cfg.workersMax, cfg.requestInterval = workers, 0
+		if err := runFetchPathway(&cfg); err != nil {
+			t.Fatal(err)
+		}
+		manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest.DownloadedAt = ""
+		if workers == 1 {
+			expected = manifest
+			continue
+		}
+		if !reflect.DeepEqual(manifest, expected) {
+			t.Fatalf("workers=%d manifest differs from workers=1", workers)
+		}
+	}
+}
+
+func TestRunFetchPathwayFatalErrorStopsUndispatchedScopes(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var listRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/info/pathway" {
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+			return
+		}
+		listRequests.Add(1)
+		http.Error(w, "fatal", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames = []string{"list"}
+	cfg.organismCodes = []string{"aaa", "aab", "aac", "aad"}
+	cfg.workersMax, cfg.retryMax, cfg.requestInterval = 1, 1, 0
+	if err := runFetchPathway(&cfg); err == nil {
+		t.Fatal("fatal scope succeeded")
+	}
+	if got := listRequests.Load(); got != 1 {
+		t.Fatalf("dispatched scope requests = %d, want 1", got)
+	}
+}
+
+func TestRunFetchPathwayCheckpointsPrefixBeforeNextPrefixFailure(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/list/genome":
+			_, _ = w.Write([]byte("T1\taaa\nT2\tbba\n"))
+		case "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case "/list/pathway/aaa":
+			_, _ = w.Write([]byte("aaa00010\tpathway\n"))
+		case "/list/pathway/bba":
+			http.Error(w, "fatal", http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames, cfg.organismPrefixes = []string{"list"}, []string{"a", "b"}
+	cfg.retryMax, cfg.requestInterval = 1, 0
+	if err := runFetchPathway(&cfg); err == nil {
+		t.Fatal("second prefix failure succeeded")
+	}
+	manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/aaa/pathway.list.tsv" {
+		t.Fatalf("prefix checkpoint files = %#v", manifest.Files)
+	}
+}
+
+func TestRunFetchPathwayAdoptsFinalFileMissingFromCheckpoint(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var entryRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/info/pathway":
+			_, _ = w.Write([]byte("pathway Release 1\n"))
+		case "/list/pathway/hsa":
+			_, _ = w.Write([]byte("hsa00010\tpathway\n"))
+		case "/get/hsa00010":
+			entryRequests.Add(1)
+			_, _ = w.Write([]byte("unexpected download"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	dirOut := t.TempDir()
+	fileFinal := filepath.Join(dirOut, "pathway", "2026-04", "raw", "hsa", "hsa00010.txt")
+	if err := os.MkdirAll(filepath.Dir(fileFinal), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileFinal, []byte("completed before checkpoint"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = dirOut, "2026-04"
+	cfg.assetNames, cfg.organismCodes = []string{"entry"}, []string{"hsa"}
+	cfg.requestInterval = 0
+	if err := runFetchPathway(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if entryRequests.Load() != 0 {
+		t.Fatalf("entry requests = %d, want 0", entryRequests.Load())
+	}
+	manifest, err := readExistingPathwayManifest(filepath.Join(dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "raw/hsa/hsa00010.txt" {
+		t.Fatalf("adopted files = %#v", manifest.Files)
 	}
 }

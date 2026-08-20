@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -119,17 +121,23 @@ type manifestAsset struct {
 func runFetchPathway(cfg *pathwayConfig) error {
 	timeStarted := time.Now()
 	clientHTTP := createHTTPClient(cfg.shouldAllowInsecureTLS)
+	clientHTTP.Timeout = cfg.requestTimeout
 	clientKegg := createKEGGClient(clientHTTP, cfg.requestInterval, cfg.retryMax, cfg.retryWait)
 
 	if strings.TrimSpace(cfg.versionToken) == "" {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
+	cfg.preserveUnobservedEnd = true
 	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
 	if err != nil {
 		logf("warning: KEGG pathway info metadata unavailable: %v", err)
 	} else {
 		cfg.applyKEGGInfoMetadataStart(metadataStart)
+	}
+	scopeGroups, err := resolvePathwayScopeGroups(clientKegg, cfg)
+	if err != nil {
+		return err
 	}
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, filepath.Join(cfg.dirOut, "pathway", cfg.versionToken))
 	if err != nil {
@@ -137,10 +145,6 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	}
 	defer closeRun()
 
-	scopeKeys, err := resolvePathwayScopeKeys(clientKegg, cfg)
-	if err != nil {
-		return err
-	}
 	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
@@ -165,22 +169,46 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	records := make([]pathwayRecord, 0)
 	statsPlanning := pathwayLocalPlanningStats{}
 	countPathways := 0
-	batchesScope := chunkStrings(scopeKeys, keggPathwayScopeBatchSize)
-	for indexBatch, batchScopeKeys := range batchesScope {
-		logf("batch %d/%d: scopes=%d", indexBatch+1, len(batchesScope), len(batchScopeKeys))
-		for _, scopeKey := range batchScopeKeys {
-			recordsScope, countScopePathways, statsScope, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey, reuseIndex)
+	countScopes := 0
+	for _, group := range scopeGroups {
+		completed, skipped := 0, 0
+		batchesScope := chunkStrings(group.organismCodes, keggPathwayScopeBatchSize)
+		for indexBatch, batchScopeKeys := range batchesScope {
+			logf("batch %d/%d: scopes=%d", indexBatch+1, len(batchesScope), len(batchScopeKeys))
+			results, err := mapPathwayScopesOrdered(batchScopeKeys, cfg.workersMax, func(scopeKey string) (pathwayScopeResult, error) {
+				recordsScope, countScopePathways, statsScope, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey, reuseIndex)
+				return pathwayScopeResult{records: recordsScope, pathwayCount: countScopePathways, stats: statsScope}, err
+			})
 			if err != nil {
 				return err
 			}
-			records = append(records, recordsScope...)
-			statsPlanning.add(statsScope)
-			countPathways += countScopePathways
+			for _, result := range results {
+				records = append(records, result.records...)
+				statsPlanning.add(result.stats)
+				countPathways += result.pathwayCount
+				if result.pathwayCount == 0 && len(result.records) == 0 {
+					skipped++
+				} else {
+					completed++
+				}
+			}
+			countScopes += len(batchScopeKeys)
+			if !cfg.shouldDryRun {
+				var recordsComplete []pathwayRecord
+				recordsComplete, err = checkpointPathwayManifest(clientKegg, fileManifest, dirVersion, cfg, records)
+				if err != nil {
+					return err
+				}
+				records = recordsComplete
+			}
+		}
+		if group.prefix != "" {
+			logf("prefix %s: matched=%d completed=%d skipped=%d", group.prefix, len(group.organismCodes), completed, skipped)
 		}
 	}
 
 	if cfg.shouldDryRun {
-		logf("[dry-run] done (scopes=%d)", len(scopeKeys))
+		logf("[dry-run] done (scopes=%d)", countScopes)
 		return nil
 	}
 
@@ -188,25 +216,23 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		if records[i].PathwayID != records[j].PathwayID {
 			return records[i].PathwayID < records[j].PathwayID
 		}
-		return records[i].Asset < records[j].Asset
+		if records[i].Asset != records[j].Asset {
+			return records[i].Asset < records[j].Asset
+		}
+		return records[i].PathRel < records[j].PathRel
 	})
 
 	recordsComplete, err := buildCompletePathwayRecords(fileManifest, dirVersion, records)
 	if err != nil {
 		return err
 	}
-	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
-	if err != nil {
-		logf("warning: KEGG pathway info metadata unavailable after download: %v", err)
-	} else {
-		cfg.applyKEGGInfoMetadataEnd(metadataEnd)
-	}
+	refreshPathwayEndMetadata(clientKegg, cfg)
 
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return err
 	}
 
-	logf("done (files=%d, pathways=%d, scopes=%d)", len(recordsComplete), countPathways, len(scopeKeys))
+	logf("done (files=%d, pathways=%d, scopes=%d)", len(recordsComplete), countPathways, countScopes)
 	if statsPlanning.expectedAssets > 0 {
 		logf(
 			"local planning: expected=%d reused_manifest=%d rebuilt_hash=%d scheduled_download=%d skipped_entry=%d elapsed=%s",
@@ -220,6 +246,137 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	}
 	logf("manifest written: %s", fileManifest)
 	return nil
+}
+
+type pathwayScopeResult struct {
+	records      []pathwayRecord
+	pathwayCount int
+	stats        pathwayLocalPlanningStats
+}
+
+type pathwayScopeTask struct {
+	index    int
+	scopeKey string
+}
+
+type pathwayScopeIndexedResult struct {
+	index  int
+	result pathwayScopeResult
+	err    error
+}
+
+func mapPathwayScopesOrdered(
+	scopeKeys []string,
+	workersMax int,
+	mapScope func(string) (pathwayScopeResult, error),
+) ([]pathwayScopeResult, error) {
+	if len(scopeKeys) == 0 {
+		return []pathwayScopeResult{}, nil
+	}
+	workers := workersMax
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(scopeKeys) {
+		workers = len(scopeKeys)
+	}
+
+	tasks := make(chan pathwayScopeTask)
+	results := make(chan pathwayScopeIndexedResult, len(scopeKeys))
+	canceled := make(chan struct{})
+	var cancelOnce sync.Once
+	var shouldCancel atomic.Bool
+	var workersGroup sync.WaitGroup
+	workersGroup.Add(workers)
+	for range workers {
+		go func() {
+			defer workersGroup.Done()
+			for {
+				select {
+				case <-canceled:
+					return
+				default:
+				}
+				select {
+				case <-canceled:
+					return
+				case task, ok := <-tasks:
+					if !ok {
+						return
+					}
+					if shouldCancel.Load() {
+						return
+					}
+					result, err := mapScope(task.scopeKey)
+					if err != nil {
+						shouldCancel.Store(true)
+						cancelOnce.Do(func() { close(canceled) })
+					}
+					results <- pathwayScopeIndexedResult{index: task.index, result: result, err: err}
+					if err != nil {
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(tasks)
+		for index, scopeKey := range scopeKeys {
+			if shouldCancel.Load() {
+				return
+			}
+			select {
+			case <-canceled:
+				return
+			case tasks <- pathwayScopeTask{index: index, scopeKey: scopeKey}:
+			}
+		}
+	}()
+	go func() {
+		workersGroup.Wait()
+		close(results)
+	}()
+
+	ordered := make([]pathwayScopeResult, len(scopeKeys))
+	var firstError error
+	for indexed := range results {
+		if indexed.err != nil {
+			if firstError == nil {
+				firstError = indexed.err
+			}
+			continue
+		}
+		ordered[indexed.index] = indexed.result
+	}
+	if firstError != nil {
+		return nil, firstError
+	}
+	return ordered, nil
+}
+
+func checkpointPathwayManifest(clientKegg *keggClient, fileManifest, dirVersion string, cfg *pathwayConfig, records []pathwayRecord) ([]pathwayRecord, error) {
+	recordsComplete, err := buildCompletePathwayRecords(fileManifest, dirVersion, records)
+	if err != nil {
+		return nil, err
+	}
+	refreshPathwayEndMetadata(clientKegg, cfg)
+	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
+		return nil, err
+	}
+	return recordsComplete, nil
+}
+
+func refreshPathwayEndMetadata(clientKegg *keggClient, cfg *pathwayConfig) {
+	cfg.sourceReleaseEnd = ""
+	cfg.sourceLastUpdateEnd = ""
+	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
+	if err != nil {
+		logf("warning: KEGG pathway info metadata unavailable after download: %v", err)
+		return
+	}
+	cfg.applyKEGGInfoMetadataEnd(metadataEnd)
 }
 
 func resolvePathwayIDs(
@@ -255,8 +412,13 @@ func shouldSkipPathwayScopeListError(cfg *pathwayConfig, err error) bool {
 	if cfg.shouldFetchReference {
 		return false
 	}
-	return httpx.IsUnexpectedStatus(err, http.StatusForbidden) ||
-		httpx.IsUnexpectedStatus(err, http.StatusNotFound)
+	var statusErr httpx.UnexpectedStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Code == http.StatusForbidden ||
+			statusErr.Code == http.StatusNotFound ||
+			isRetryableKEGGStatus(statusErr.Code)
+	}
+	return isRetryableKEGGError(err)
 }
 
 func resolvePathwayScopeKeys(clientKegg *keggClient, cfg *pathwayConfig) ([]string, error) {
@@ -286,6 +448,21 @@ func resolvePathwayScopeKeys(clientKegg *keggClient, cfg *pathwayConfig) ([]stri
 	default:
 		return nil, fmt.Errorf("no pathway scope configured")
 	}
+}
+
+func resolvePathwayScopeGroups(clientKegg *keggClient, cfg *pathwayConfig) ([]pathwayPrefixGroup, error) {
+	if len(cfg.organismPrefixes) > 0 {
+		codes, err := resolveKEGGOrganismCodes(clientKegg, ruleOrderInput)
+		if err != nil {
+			return nil, err
+		}
+		return partitionOrganismsByPrefix(codes, cfg.organismPrefixes, cfg.ruleOrder)
+	}
+	keys, err := resolvePathwayScopeKeys(clientKegg, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return []pathwayPrefixGroup{{organismCodes: keys}}, nil
 }
 
 func fetchPathwayScope(
@@ -563,7 +740,7 @@ func downloadPathwayAsset(
 ) (pathwayRecord, bool, error) {
 	for attempt := 1; attempt <= clientKegg.retryMax; attempt++ {
 		logf("downloading %s", filepath.Base(fileOut))
-		shouldRetry, err := clientKegg.downloadFileOnce(urlFile, fileOut)
+		shouldRetry, err := clientKegg.downloadPathwayFileOnce(urlFile, fileOut)
 		if err != nil {
 			if shouldSkipPathwayDownloadStatus(assetName, err) {
 				logf("unavailable %s (%s), skipping", filepath.Base(fileOut), urlFile)
@@ -871,7 +1048,10 @@ func buildCompletePathwayRecords(
 		if records[i].PathwayID != records[j].PathwayID {
 			return records[i].PathwayID < records[j].PathwayID
 		}
-		return records[i].Asset < records[j].Asset
+		if records[i].Asset != records[j].Asset {
+			return records[i].Asset < records[j].Asset
+		}
+		return records[i].PathRel < records[j].PathRel
 	})
 	return records, nil
 }
@@ -915,6 +1095,14 @@ func buildManifestFile(
 		cfg.sourceLastUpdateStart,
 		cfg.sourceLastUpdateEnd,
 	)
+	if cfg.preserveUnobservedEnd {
+		if cfg.sourceReleaseEnd == "" {
+			sourceReleaseEnd = ""
+		}
+		if cfg.sourceLastUpdateEnd == "" {
+			sourceLastUpdateEnd = ""
+		}
+	}
 	mapRecordsByPathway := make(map[string][]pathwayRecord)
 	pathwayIDs := make([]string, 0)
 	for _, record := range records {
@@ -1031,11 +1219,10 @@ func derivePathwayScopeFromPath(pathRel string) string {
 }
 
 type keggClient struct {
-	clientHTTP      *http.Client
-	requestInterval time.Duration
-	retryMax        int
-	retryWait       time.Duration
-	timeLastRequest time.Time
+	clientHTTP *http.Client
+	limiter    *httpx.RequestLimiter
+	retryMax   int
+	retryWait  time.Duration
 }
 
 func createKEGGClient(
@@ -1051,10 +1238,10 @@ func createKEGGClient(
 		retryWait = 0
 	}
 	return &keggClient{
-		clientHTTP:      clientHTTP,
-		requestInterval: requestInterval,
-		retryMax:        retryMax,
-		retryWait:       retryWait,
+		clientHTTP: clientHTTP,
+		limiter:    httpx.NewRequestLimiter(requestInterval),
+		retryMax:   retryMax,
+		retryWait:  retryWait,
 	}
 }
 
@@ -1109,15 +1296,19 @@ func (client *keggClient) downloadFile(urlFile string, fileOut string) error {
 }
 
 func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool, error) {
-	if client.requestInterval > 0 && !client.timeLastRequest.IsZero() {
-		wait := client.requestInterval - time.Since(client.timeLastRequest)
-		if wait > 0 {
-			time.Sleep(wait)
-		}
-	}
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, false)
+}
+
+func (client *keggClient) downloadPathwayFileOnce(urlFile string, fileOut string) (bool, error) {
+	return client.downloadFileOnceWithProbePolicy(urlFile, fileOut, true)
+}
+
+func (client *keggClient) downloadFileOnceWithProbePolicy(urlFile string, fileOut string, propagateProbeErrors bool) (bool, error) {
 	filePart := fileOut + ".part"
-	err := httpx.DownloadFileWithResume(client.clientHTTP, urlFile, filePart, nil)
-	client.timeLastRequest = time.Now()
+	err := httpx.DownloadFileWithResumeOptions(client.clientHTTP, urlFile, filePart, nil, httpx.DownloadOptions{
+		Limiter:              client.limiter,
+		PropagateProbeErrors: propagateProbeErrors,
+	})
 	if err != nil {
 		var statusErr httpx.UnexpectedStatusError
 		if errors.As(err, &statusErr) {
@@ -1136,15 +1327,8 @@ func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool
 }
 
 func (client *keggClient) downloadOnce(urlFile string) ([]byte, bool, error) {
-	if client.requestInterval > 0 && !client.timeLastRequest.IsZero() {
-		wait := client.requestInterval - time.Since(client.timeLastRequest)
-		if wait > 0 {
-			time.Sleep(wait)
-		}
-	}
-
+	client.limiter.Wait()
 	response, err := client.clientHTTP.Get(urlFile)
-	client.timeLastRequest = time.Now()
 	if err != nil {
 		return nil, isRetryableKEGGError(err), fmt.Errorf("request %s: %w", urlFile, err)
 	}

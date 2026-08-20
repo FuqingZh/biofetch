@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,24 @@ func TestRequestLimiterWaitSpacesConcurrentCalls(t *testing.T) {
 		if delta < 15*time.Millisecond {
 			t.Fatalf("delta[%d] = %s, want >= 15ms", index, delta)
 		}
+	}
+}
+
+func TestDownloadFileWithResumeCanPropagateProbeError(t *testing.T) {
+	methods := make([]string, 0, 1)
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		methods = append(methods, request.Method)
+		if request.Method == http.MethodHead {
+			return nil, context.DeadlineExceeded
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("unexpected")), Request: request}, nil
+	})}
+	err := DownloadFileWithResumeOptions(client, "https://example.test/asset", filepath.Join(t.TempDir(), "asset.part"), nil, DownloadOptions{PropagateProbeErrors: true})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("strict probe error = %v, want deadline exceeded", err)
+	}
+	if want := []string{http.MethodHead}; !slices.Equal(methods, want) {
+		t.Fatalf("request methods = %#v, want %#v", methods, want)
 	}
 }
 
