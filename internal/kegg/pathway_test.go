@@ -2,6 +2,7 @@ package kegg
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"github.com/FuqingZh/biofetch/internal/shared/httpx"
@@ -372,7 +373,7 @@ func TestFetchPathwaySideAssetExhaustsTransientRetriesAndContinues(t *testing.T)
 			clientHTTP := &http.Client{
 				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 					if request.Method == http.MethodHead {
-						return nil, io.EOF
+						return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 7, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 					}
 					countGET.Add(1)
 					return &http.Response{
@@ -419,7 +420,7 @@ func TestFetchPathwayEntryExhaustsTransientRetriesAndContinues(t *testing.T) {
 	clientHTTP := &http.Client{
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.Method == http.MethodHead {
-				return nil, io.EOF
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 7, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 			}
 			countGET.Add(1)
 			return &http.Response{
@@ -460,7 +461,7 @@ func TestFetchPathwayEntryExhaustsStatus403ThenTransientErrorAndContinues(t *tes
 	clientHTTP := &http.Client{
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.Method == http.MethodHead {
-				return nil, io.EOF
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 7, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 			}
 			if countGET.Add(1) < 3 {
 				return &http.Response{
@@ -1094,6 +1095,17 @@ func TestValidatePathwayConfigResolvesPathwayIDsAtFile(t *testing.T) {
 	}
 }
 
+func TestValidatePathwayConfigAllowsTargetedIDsWithExplicitOrganisms(t *testing.T) {
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut = "/tmp/kegg"
+	cfg.versionToken = "2026-04"
+	cfg.organismCodes = []string{"hsa", "mmu"}
+	cfg.pathwayIDs = []string{"hsa00010"}
+	if err := validatePathwayConfig(&cfg); err != nil {
+		t.Fatalf("explicit multi-organism targeted IDs rejected: %v", err)
+	}
+}
+
 func TestReadExistingPathwayManifestBackfillsReleaseRange(t *testing.T) {
 	dirTemp := t.TempDir()
 	fileManifest := filepath.Join(dirTemp, "manifest.lock")
@@ -1290,15 +1302,21 @@ func TestPathwayPrefixPreflightCreatesNoOutputOrLogs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			oldBaseURL := baseURL
 			defer func() { baseURL = oldBaseURL }()
+			requestOrder := make([]string, 0, 2)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/list/genome" {
+				requestOrder = append(requestOrder, r.URL.Path)
+				switch r.URL.Path {
+				case "/info/pathway":
+					_, _ = w.Write([]byte("pathway Release 1\n"))
+				case "/list/genome":
+					if test.catalogStatus != http.StatusOK {
+						http.Error(w, "unavailable", test.catalogStatus)
+						return
+					}
+					_, _ = w.Write([]byte("T1\thsa\n"))
+				default:
 					t.Fatalf("unexpected preflight request: %s", r.URL.Path)
 				}
-				if test.catalogStatus != http.StatusOK {
-					http.Error(w, "unavailable", test.catalogStatus)
-					return
-				}
-				_, _ = w.Write([]byte("T1\thsa\n"))
 			}))
 			defer server.Close()
 			baseURL = server.URL
@@ -1309,6 +1327,9 @@ func TestPathwayPrefixPreflightCreatesNoOutputOrLogs(t *testing.T) {
 			cfg.retryMax, cfg.requestInterval = 1, 0
 			if err := runFetchPathway(&cfg); err == nil {
 				t.Fatal("prefix preflight succeeded")
+			}
+			if want := []string{"/info/pathway", "/list/genome"}; !reflect.DeepEqual(requestOrder, want) {
+				t.Fatalf("preflight request order = %#v, want %#v", requestOrder, want)
 			}
 			assertPathwayOutputAbsent(t, dirOut)
 		})
@@ -1403,6 +1424,64 @@ func TestKEGGClientSharedLimiterSpacesWorkersAndRetries(t *testing.T) {
 		if gap := starts[index].Sub(starts[index-1]); gap < interval-2*time.Millisecond {
 			t.Fatalf("request gap %d = %s, want at least %s", index, gap, interval-2*time.Millisecond)
 		}
+	}
+}
+
+func TestPathwayAssetHEADTimeoutConsumesOuterAttempt(t *testing.T) {
+	var mutex sync.Mutex
+	methods := make([]string, 0, 3)
+	headAttempts := 0
+	clientHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		mutex.Lock()
+		methods = append(methods, request.Method)
+		if request.Method == http.MethodHead {
+			headAttempts++
+			attempt := headAttempts
+			mutex.Unlock()
+			if attempt == 1 {
+				return nil, context.DeadlineExceeded
+			}
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 2, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+		}
+		mutex.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", ContentLength: 2, Body: io.NopCloser(strings.NewReader("ok")), Request: request}, nil
+	})}
+	client := createKEGGClient(clientHTTP, 0, 2, 0)
+	fileOut := filepath.Join(t.TempDir(), "hsa00010.txt")
+	_, ok, err := downloadPathwayAsset(client, fileOut, "raw/hsa/hsa00010.txt", "hsa00010", "pathway.entry", "https://example.test/get/hsa00010")
+	if err != nil || !ok {
+		t.Fatalf("downloadPathwayAsset = ok %v, err %v", ok, err)
+	}
+	if want := []string{http.MethodHead, http.MethodHead, http.MethodGet}; !reflect.DeepEqual(methods, want) {
+		t.Fatalf("request methods = %#v, want %#v", methods, want)
+	}
+}
+
+func TestMapPathwayScopesOrderedStopsUndispatchedAfterConcurrentFatalError(t *testing.T) {
+	secondStarted := make(chan struct{})
+	fatalReturned := make(chan struct{})
+	var laterCalls atomic.Int32
+	_, err := mapPathwayScopesOrdered([]string{"fatal", "running", "later-1", "later-2"}, 2, func(scopeKey string) (pathwayScopeResult, error) {
+		switch scopeKey {
+		case "fatal":
+			<-secondStarted
+			close(fatalReturned)
+			return pathwayScopeResult{}, errors.New("fatal")
+		case "running":
+			close(secondStarted)
+			<-fatalReturned
+			time.Sleep(10 * time.Millisecond)
+			return pathwayScopeResult{}, nil
+		default:
+			laterCalls.Add(1)
+			return pathwayScopeResult{}, nil
+		}
+	})
+	if err == nil || err.Error() != "fatal" {
+		t.Fatalf("map error = %v, want fatal", err)
+	}
+	if got := laterCalls.Load(); got != 0 {
+		t.Fatalf("undispatched scope calls = %d, want 0", got)
 	}
 }
 

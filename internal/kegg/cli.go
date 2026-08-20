@@ -490,7 +490,7 @@ func validatePathwayConfig(cfg *pathwayConfig) error {
 			"choose exactly one scope: --organisms | --organism-prefix | --all-organisms | --include-reference",
 		)
 	}
-	if cfg.shouldDownloadAll || len(cfg.organismPrefixes) > 0 || len(cfg.organismCodes) > 1 {
+	if cfg.shouldDownloadAll || len(cfg.organismPrefixes) > 0 {
 		if len(cfg.pathwayIDs) > 0 {
 			return fmt.Errorf("pathway_ids is not allowed with multi-organism download")
 		}

@@ -18,7 +18,8 @@ import (
 type DownloadProgressFunc func(bytesDone int64, bytesTotal int64)
 
 type DownloadOptions struct {
-	Limiter *RequestLimiter
+	Limiter              *RequestLimiter
+	PropagateProbeErrors bool
 }
 
 var chunkedDownloadMinBytes int64 = 1 << 30
@@ -211,7 +212,7 @@ func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut str
 }
 
 func DownloadFileWithResumeOptions(clientHTTP *http.Client, urlFile string, fileOut string, progress DownloadProgressFunc, options DownloadOptions) error {
-	metadata, ok, err := probeDownloadMetadata(clientHTTP, urlFile, options.Limiter)
+	metadata, ok, err := probeDownloadMetadata(clientHTTP, urlFile, options.Limiter, options.PropagateProbeErrors)
 	if err != nil {
 		return err
 	}
@@ -324,13 +325,19 @@ func (metadata downloadMetadata) ifRangeValidator() string {
 	return strings.TrimSpace(metadata.LastModified)
 }
 
-func probeDownloadMetadata(clientHTTP *http.Client, urlFile string, limiter *RequestLimiter) (downloadMetadata, bool, error) {
+func probeDownloadMetadata(clientHTTP *http.Client, urlFile string, limiter *RequestLimiter, propagateErrors bool) (downloadMetadata, bool, error) {
 	request, err := http.NewRequest(http.MethodHead, urlFile, nil)
 	if err != nil {
+		if propagateErrors {
+			return downloadMetadata{}, false, fmt.Errorf("create metadata request %s: %w", urlFile, err)
+		}
 		return downloadMetadata{}, false, nil
 	}
 	response, err := doRequest(clientHTTP, request, limiter)
 	if err != nil {
+		if propagateErrors {
+			return downloadMetadata{}, false, fmt.Errorf("request metadata %s: %w", urlFile, err)
+		}
 		return downloadMetadata{}, false, nil
 	}
 	_ = response.Body.Close()
@@ -360,11 +367,11 @@ func probeDownloadMetadata(clientHTTP *http.Client, urlFile string, limiter *Req
 		return metadata, true, nil
 	}
 	var probeErr error
-	metadata.SupportsRange, probeErr = probeRangeSupport(clientHTTP, urlFile, metadata, limiter)
+	metadata.SupportsRange, probeErr = probeRangeSupport(clientHTTP, urlFile, metadata, limiter, propagateErrors)
 	return metadata, true, probeErr
 }
 
-func probeRangeSupport(clientHTTP *http.Client, urlFile string, metadata downloadMetadata, limiter *RequestLimiter) (bool, error) {
+func probeRangeSupport(clientHTTP *http.Client, urlFile string, metadata downloadMetadata, limiter *RequestLimiter, propagateErrors bool) (bool, error) {
 	request, err := http.NewRequest(http.MethodGet, urlFile, nil)
 	if err != nil {
 		return false, nil
@@ -372,6 +379,9 @@ func probeRangeSupport(clientHTTP *http.Client, urlFile string, metadata downloa
 	request.Header.Set("Range", "bytes=0-0")
 	response, err := doRequest(clientHTTP, request, limiter)
 	if err != nil {
+		if propagateErrors {
+			return false, fmt.Errorf("probe Range support for %s: %w", urlFile, err)
+		}
 		return false, nil
 	}
 	defer response.Body.Close()

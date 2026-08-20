@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -126,15 +128,15 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
-	scopeGroups, err := resolvePathwayScopeGroups(clientKegg, cfg)
-	if err != nil {
-		return err
-	}
 	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
 	if err != nil {
 		logf("warning: KEGG pathway info metadata unavailable: %v", err)
 	} else {
 		cfg.applyKEGGInfoMetadataStart(metadataStart)
+	}
+	scopeGroups, err := resolvePathwayScopeGroups(clientKegg, cfg)
+	if err != nil {
+		return err
 	}
 	_, closeRun, err := logx.StartVersionedRun("biofetch kegg", "fetch", cfg.dirLogs, filepath.Join(cfg.dirOut, "pathway", cfg.versionToken))
 	if err != nil {
@@ -172,7 +174,7 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		batchesScope := chunkStrings(group.organismCodes, keggPathwayScopeBatchSize)
 		for indexBatch, batchScopeKeys := range batchesScope {
 			logf("batch %d/%d: scopes=%d", indexBatch+1, len(batchesScope), len(batchScopeKeys))
-			results, err := parallel.MapOrderedWithWorkers(batchScopeKeys, cfg.workersMax, func(scopeKey string) (pathwayScopeResult, error) {
+			results, err := mapPathwayScopesOrdered(batchScopeKeys, cfg.workersMax, func(scopeKey string) (pathwayScopeResult, error) {
 				recordsScope, countScopePathways, statsScope, err := fetchPathwayScope(clientKegg, cfg, dirVersion, scopeKey, reuseIndex)
 				return pathwayScopeResult{records: recordsScope, pathwayCount: countScopePathways, stats: statsScope}, err
 			})
@@ -254,6 +256,108 @@ type pathwayScopeResult struct {
 	records      []pathwayRecord
 	pathwayCount int
 	stats        pathwayLocalPlanningStats
+}
+
+type pathwayScopeTask struct {
+	index    int
+	scopeKey string
+}
+
+type pathwayScopeIndexedResult struct {
+	index  int
+	result pathwayScopeResult
+	err    error
+}
+
+func mapPathwayScopesOrdered(
+	scopeKeys []string,
+	workersMax int,
+	mapScope func(string) (pathwayScopeResult, error),
+) ([]pathwayScopeResult, error) {
+	if len(scopeKeys) == 0 {
+		return []pathwayScopeResult{}, nil
+	}
+	workers := workersMax
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(scopeKeys) {
+		workers = len(scopeKeys)
+	}
+
+	tasks := make(chan pathwayScopeTask)
+	results := make(chan pathwayScopeIndexedResult, len(scopeKeys))
+	canceled := make(chan struct{})
+	var cancelOnce sync.Once
+	var shouldCancel atomic.Bool
+	var workersGroup sync.WaitGroup
+	workersGroup.Add(workers)
+	for range workers {
+		go func() {
+			defer workersGroup.Done()
+			for {
+				select {
+				case <-canceled:
+					return
+				default:
+				}
+				select {
+				case <-canceled:
+					return
+				case task, ok := <-tasks:
+					if !ok {
+						return
+					}
+					if shouldCancel.Load() {
+						return
+					}
+					result, err := mapScope(task.scopeKey)
+					if err != nil {
+						shouldCancel.Store(true)
+						cancelOnce.Do(func() { close(canceled) })
+					}
+					results <- pathwayScopeIndexedResult{index: task.index, result: result, err: err}
+					if err != nil {
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(tasks)
+		for index, scopeKey := range scopeKeys {
+			if shouldCancel.Load() {
+				return
+			}
+			select {
+			case <-canceled:
+				return
+			case tasks <- pathwayScopeTask{index: index, scopeKey: scopeKey}:
+			}
+		}
+	}()
+	go func() {
+		workersGroup.Wait()
+		close(results)
+	}()
+
+	ordered := make([]pathwayScopeResult, len(scopeKeys))
+	var firstError error
+	for indexed := range results {
+		if indexed.err != nil {
+			if firstError == nil {
+				firstError = indexed.err
+			}
+			continue
+		}
+		ordered[indexed.index] = indexed.result
+	}
+	if firstError != nil {
+		return nil, firstError
+	}
+	return ordered, nil
 }
 
 func checkpointPathwayManifest(fileManifest, dirVersion string, cfg *pathwayConfig, records []pathwayRecord) ([]pathwayRecord, error) {
@@ -1177,7 +1281,10 @@ func (client *keggClient) downloadFile(urlFile string, fileOut string) error {
 
 func (client *keggClient) downloadFileOnce(urlFile string, fileOut string) (bool, error) {
 	filePart := fileOut + ".part"
-	err := httpx.DownloadFileWithResumeOptions(client.clientHTTP, urlFile, filePart, nil, httpx.DownloadOptions{Limiter: client.limiter})
+	err := httpx.DownloadFileWithResumeOptions(client.clientHTTP, urlFile, filePart, nil, httpx.DownloadOptions{
+		Limiter:              client.limiter,
+		PropagateProbeErrors: true,
+	})
 	if err != nil {
 		var statusErr httpx.UnexpectedStatusError
 		if errors.As(err, &statusErr) {
