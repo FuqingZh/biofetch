@@ -126,6 +126,10 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
+	scopeGroups, err := resolvePathwayScopeGroups(clientKegg, cfg)
+	if err != nil {
+		return err
+	}
 	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
 	if err != nil {
 		logf("warning: KEGG pathway info metadata unavailable: %v", err)
@@ -138,10 +142,6 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	}
 	defer closeRun()
 
-	scopeGroups, err := resolvePathwayScopeGroups(clientKegg, cfg)
-	if err != nil {
-		return err
-	}
 	dirVersion := filepath.Join(cfg.dirOut, "pathway", cfg.versionToken)
 	fileManifest := filepath.Join(dirVersion, "manifest.lock")
 
@@ -344,7 +344,6 @@ func resolvePathwayScopeGroups(clientKegg *keggClient, cfg *pathwayConfig) ([]pa
 		if err != nil {
 			return nil, err
 		}
-		cfg.scopeType, cfg.scopeValue = "organisms", strings.Join(cfg.organismPrefixes, ",")
 		return partitionOrganismsByPrefix(codes, cfg.organismPrefixes, cfg.ruleOrder)
 	}
 	keys, err := resolvePathwayScopeKeys(clientKegg, cfg)
