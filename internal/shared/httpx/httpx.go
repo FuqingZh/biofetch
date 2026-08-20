@@ -20,11 +20,14 @@ type DownloadProgressFunc func(bytesDone int64, bytesTotal int64)
 type DownloadOptions struct {
 	Limiter              *RequestLimiter
 	PropagateProbeErrors bool
+	SkipMetadataProbe    bool
 }
 
 var chunkedDownloadMinBytes int64 = 1 << 30
 var chunkSizeBytes int64 = 256 << 20
 var chunkWorkersMax = 4
+var removeDownloadScratchFile = os.Remove
+var removeAllDownloadScratch = os.RemoveAll
 
 type UnexpectedStatusError struct {
 	URL         string
@@ -92,35 +95,38 @@ func retryAfterDuration(value string, now time.Time) time.Duration {
 	return instant.Sub(now)
 }
 
-func validateContentRange(value string, expectedStart int64, expectedEnd int64, expectedTotal int64, requireTotal bool) error {
+func validateContentRange(value string, expectedStart int64, expectedEnd int64, expectedTotal int64, requireTotal bool) (int64, error) {
 	value = strings.TrimSpace(value)
 	if !strings.HasPrefix(value, "bytes ") {
-		return fmt.Errorf("invalid Content-Range %q", value)
+		return 0, fmt.Errorf("invalid Content-Range %q", value)
 	}
 	parts := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid Content-Range %q", value)
+		return 0, fmt.Errorf("invalid Content-Range %q", value)
 	}
 	bounds := strings.Split(parts[0], "-")
 	if len(bounds) != 2 {
-		return fmt.Errorf("invalid Content-Range %q", value)
+		return 0, fmt.Errorf("invalid Content-Range %q", value)
 	}
 	start, errStart := strconv.ParseInt(bounds[0], 10, 64)
 	end, errEnd := strconv.ParseInt(bounds[1], 10, 64)
 	total, errTotal := strconv.ParseInt(parts[1], 10, 64)
 	if errStart != nil || errEnd != nil || errTotal != nil || start < 0 || end < start || total <= end {
-		return fmt.Errorf("invalid Content-Range %q", value)
+		return 0, fmt.Errorf("invalid Content-Range %q", value)
 	}
 	if start != expectedStart {
-		return fmt.Errorf("Content-Range start = %d, want %d", start, expectedStart)
+		return 0, fmt.Errorf("Content-Range start = %d, want %d", start, expectedStart)
 	}
 	if expectedEnd >= 0 && end != expectedEnd {
-		return fmt.Errorf("Content-Range end = %d, want %d", end, expectedEnd)
+		return 0, fmt.Errorf("Content-Range end = %d, want %d", end, expectedEnd)
+	}
+	if expectedEnd < 0 && end != total-1 {
+		return 0, fmt.Errorf("Content-Range end = %d, want final byte %d", end, total-1)
 	}
 	if requireTotal && expectedTotal > 0 && total != expectedTotal {
-		return fmt.Errorf("Content-Range total = %d, want %d", total, expectedTotal)
+		return 0, fmt.Errorf("Content-Range total = %d, want %d", total, expectedTotal)
 	}
-	return nil
+	return end - start + 1, nil
 }
 
 type RequestLimiter struct {
@@ -212,9 +218,18 @@ func DownloadFileWithResume(clientHTTP *http.Client, urlFile string, fileOut str
 }
 
 func DownloadFileWithResumeOptions(clientHTTP *http.Client, urlFile string, fileOut string, progress DownloadProgressFunc, options DownloadOptions) error {
-	metadata, ok, err := probeDownloadMetadata(clientHTTP, urlFile, options.Limiter, options.PropagateProbeErrors)
-	if err != nil {
-		return err
+	var metadata downloadMetadata
+	var ok bool
+	if options.SkipMetadataProbe {
+		if err := removeDownloadScratch(fileOut); err != nil {
+			return err
+		}
+	} else {
+		var err error
+		metadata, ok, err = probeDownloadMetadata(clientHTTP, urlFile, options.Limiter, options.PropagateProbeErrors)
+		if err != nil {
+			return err
+		}
 	}
 	if existingFileSize(fileOut) > 0 {
 		return downloadFileSingleResume(clientHTTP, urlFile, fileOut, progress, metadata, ok, options.Limiter)
@@ -245,6 +260,7 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	defer response.Body.Close()
 
 	shouldAppend := false
+	expectedBodyBytes := int64(-1)
 	bytesDoneStart := int64(0)
 	bytesTotal := response.ContentLength
 	switch {
@@ -253,7 +269,9 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 		if hasMetadata {
 			expectedEnd = metadata.ContentLength - 1
 		}
-		if err := validateContentRange(response.Header.Get("Content-Range"), bytesExisting, expectedEnd, metadata.ContentLength, hasMetadata); err != nil {
+		var err error
+		expectedBodyBytes, err = validateContentRange(response.Header.Get("Content-Range"), bytesExisting, expectedEnd, metadata.ContentLength, hasMetadata)
+		if err != nil {
 			return fmt.Errorf("request %s: %w", urlFile, err)
 		}
 		shouldAppend = true
@@ -272,10 +290,18 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 			return fmt.Errorf("remove stale partial %s: %w", fileOut, err)
 		}
 		return RangeIgnoredError{URL: urlFile}
+	case response.StatusCode == http.StatusPartialContent:
+		return fmt.Errorf("request %s: unsolicited partial response %s", urlFile, response.Status)
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		shouldAppend = false
 	default:
 		return unexpectedStatus(response, urlFile)
+	}
+	if shouldAppend && response.ContentLength >= 0 && response.ContentLength != expectedBodyBytes {
+		if response.ContentLength < expectedBodyBytes {
+			return fmt.Errorf("request %s: response Content-Length = %d, want %d: %w", urlFile, response.ContentLength, expectedBodyBytes, io.ErrUnexpectedEOF)
+		}
+		return fmt.Errorf("request %s: response Content-Length = %d, want %d", urlFile, response.ContentLength, expectedBodyBytes)
 	}
 
 	flagFile := os.O_CREATE | os.O_WRONLY
@@ -290,22 +316,66 @@ func downloadFileSingleResume(clientHTTP *http.Client, urlFile string, fileOut s
 	}
 
 	var reader io.Reader = response.Body
+	if shouldAppend {
+		reader = io.LimitReader(reader, expectedBodyBytes+1)
+	}
 	if progress != nil {
 		reader = &progressReader{
-			reader:     response.Body,
+			reader:     reader,
 			bytesDone:  bytesDoneStart,
 			bytesTotal: bytesTotal,
 			progress:   progress,
 		}
 		progress(bytesDoneStart, bytesTotal)
 	}
-	_, errCopy := io.Copy(fileHandle, reader)
+	bytesCopied, errCopy := io.Copy(fileHandle, reader)
 	errClose := fileHandle.Close()
-	if errCopy != nil {
-		return fmt.Errorf("write %s: %w", fileOut, errCopy)
+	var errWrite error
+	switch {
+	case errCopy != nil:
+		errWrite = fmt.Errorf("write %s: %w", fileOut, errCopy)
+	case shouldAppend && bytesCopied < expectedBodyBytes:
+		errWrite = fmt.Errorf("write %s: response body length = %d, want %d: %w", fileOut, bytesCopied, expectedBodyBytes, io.ErrUnexpectedEOF)
+	case shouldAppend && bytesCopied > expectedBodyBytes:
+		errWrite = fmt.Errorf("write %s: response body length = %d, want %d", fileOut, bytesCopied, expectedBodyBytes)
+	case errClose != nil:
+		errWrite = fmt.Errorf("close %s: %w", fileOut, errClose)
 	}
-	if errClose != nil {
-		return fmt.Errorf("close %s: %w", fileOut, errClose)
+	if errWrite != nil {
+		if shouldAppend {
+			if errTruncate := os.Truncate(fileOut, bytesExisting); errTruncate != nil {
+				return fmt.Errorf("%w; truncate partial %s to %d bytes: %v", errWrite, fileOut, bytesExisting, errTruncate)
+			}
+		}
+		return errWrite
+	}
+	return nil
+}
+
+func removeDownloadScratch(fileOut string) error {
+	if strings.TrimSpace(fileOut) == "" {
+		return fmt.Errorf("remove unverified download scratch: output path is empty")
+	}
+	info, err := os.Lstat(fileOut)
+	if err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("remove unverified download scratch %s: output path is a directory", fileOut)
+		}
+		if err := removeDownloadScratchFile(fileOut); err != nil {
+			return fmt.Errorf("remove unverified download scratch %s: %w", fileOut, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect unverified download scratch %s: %w", fileOut, err)
+	}
+
+	dirParts := fileOut + ".parts"
+	if _, err := os.Lstat(dirParts); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect unverified download scratch %s: %w", dirParts, err)
+	}
+	if err := removeAllDownloadScratch(dirParts); err != nil {
+		return fmt.Errorf("remove unverified download scratch %s: %w", dirParts, err)
 	}
 	return nil
 }
@@ -391,7 +461,7 @@ func probeRangeSupport(clientHTTP *http.Client, urlFile string, metadata downloa
 	if response.StatusCode != http.StatusPartialContent {
 		return false, nil
 	}
-	if err := validateContentRange(response.Header.Get("Content-Range"), 0, 0, metadata.ContentLength, true); err != nil {
+	if _, err := validateContentRange(response.Header.Get("Content-Range"), 0, 0, metadata.ContentLength, true); err != nil {
 		return false, fmt.Errorf("probe Range support for %s: %w", urlFile, err)
 	}
 	_, _ = io.CopyN(io.Discard, response.Body, 1)
@@ -568,7 +638,7 @@ func downloadChunk(clientHTTP *http.Client, urlFile string, dirParts string, chu
 	if response.StatusCode != http.StatusPartialContent {
 		return unexpectedStatus(response, urlFile)
 	}
-	if err := validateContentRange(response.Header.Get("Content-Range"), chunk.Start, chunk.End, metadata.ContentLength, true); err != nil {
+	if _, err := validateContentRange(response.Header.Get("Content-Range"), chunk.Start, chunk.End, metadata.ContentLength, true); err != nil {
 		return fmt.Errorf("request chunk %d for %s: %w", chunk.Index, urlFile, err)
 	}
 	fileHandle, err := os.OpenFile(fileChunk, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
