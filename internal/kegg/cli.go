@@ -50,6 +50,7 @@ type pathwayConfig struct {
 	shouldDryRun            bool
 	scopeType               string
 	scopeValue              string
+	preserveUnobservedEnd   bool
 }
 
 type briteConfig struct {

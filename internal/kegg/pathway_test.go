@@ -1231,8 +1231,12 @@ func TestRunFetchPathwayPrefixUsesOneCatalogAndBoundedWorkers(t *testing.T) {
 	if maximum.Load() > 2 || maximum.Load() < 2 {
 		t.Fatalf("max active = %d, want 2", maximum.Load())
 	}
-	manifest, err := readExistingPathwayManifest(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	dataManifest, err := os.ReadFile(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest manifestFile
+	if err := toml.Unmarshal(dataManifest, &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if len(manifest.Files) != 3 {
@@ -1243,10 +1247,15 @@ func TestRunFetchPathwayPrefixUsesOneCatalogAndBoundedWorkers(t *testing.T) {
 func TestRunFetchPathwayCheckpointsCompletedBatchBeforeLaterFailure(t *testing.T) {
 	oldBaseURL := baseURL
 	defer func() { baseURL = oldBaseURL }()
+	var infoRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/info/pathway":
-			_, _ = w.Write([]byte("pathway Release 1\n"))
+			if infoRequests.Add(1) == 1 {
+				_, _ = w.Write([]byte("pathway Release 1\n"))
+			} else {
+				_, _ = w.Write([]byte("pathway Release 2\n"))
+			}
 		case strings.HasPrefix(r.URL.Path, "/list/pathway/"):
 			code := strings.TrimPrefix(r.URL.Path, "/list/pathway/")
 			if code == "abg" {
@@ -1278,6 +1287,53 @@ func TestRunFetchPathwayCheckpointsCompletedBatchBeforeLaterFailure(t *testing.T
 	}
 	if len(manifest.Files) != 32 {
 		t.Fatalf("checkpoint files = %d, want 32 (run error: %v)", len(manifest.Files), errRun)
+	}
+	if manifest.SourceReleaseStart != "1" || manifest.SourceReleaseEnd != "2" {
+		t.Fatalf("checkpoint release range = %q..%q, want 1..2", manifest.SourceReleaseStart, manifest.SourceReleaseEnd)
+	}
+}
+
+func TestRunFetchPathwayCheckpointLeavesFailedEndMetadataUnclaimed(t *testing.T) {
+	oldBaseURL := baseURL
+	defer func() { baseURL = oldBaseURL }()
+	var infoRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/info/pathway":
+			if infoRequests.Add(1) == 1 {
+				_, _ = w.Write([]byte("pathway Release 1\n"))
+				return
+			}
+			http.Error(w, "unavailable", http.StatusBadRequest)
+		case "/list/genome":
+			_, _ = w.Write([]byte("T1\taaa\nT2\tbba\n"))
+		case "/list/pathway/aaa":
+			_, _ = w.Write([]byte("aaa00010\tpathway\n"))
+		case "/list/pathway/bba":
+			http.Error(w, "fatal", http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	cfg := createDefaultPathwayConfig()
+	cfg.dirOut, cfg.versionToken = t.TempDir(), "2026-04"
+	cfg.assetNames, cfg.organismPrefixes = []string{"list"}, []string{"a", "b"}
+	cfg.retryMax, cfg.requestInterval, cfg.workersMax = 1, 0, 1
+	if err := runFetchPathway(&cfg); err == nil {
+		t.Fatal("later prefix failure succeeded")
+	}
+	dataManifest, err := os.ReadFile(filepath.Join(cfg.dirOut, "pathway", "2026-04", "manifest.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest manifestFile
+	if err := toml.Unmarshal(dataManifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SourceReleaseStart != "1" || manifest.SourceReleaseEnd != "" {
+		t.Fatalf("checkpoint release range = %q..%q, want 1 with unclaimed end", manifest.SourceReleaseStart, manifest.SourceReleaseEnd)
 	}
 }
 

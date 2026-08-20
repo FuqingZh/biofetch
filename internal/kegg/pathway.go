@@ -128,6 +128,7 @@ func runFetchPathway(cfg *pathwayConfig) error {
 		cfg.versionToken = deriveKEGGSnapshotVersionToken(timeStarted)
 	}
 	cfg.version = cfg.versionToken
+	cfg.preserveUnobservedEnd = true
 	metadataStart, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
 	if err != nil {
 		logf("warning: KEGG pathway info metadata unavailable: %v", err)
@@ -194,7 +195,7 @@ func runFetchPathway(cfg *pathwayConfig) error {
 			countScopes += len(batchScopeKeys)
 			if !cfg.shouldDryRun {
 				var recordsComplete []pathwayRecord
-				recordsComplete, err = checkpointPathwayManifest(fileManifest, dirVersion, cfg, records)
+				recordsComplete, err = checkpointPathwayManifest(clientKegg, fileManifest, dirVersion, cfg, records)
 				if err != nil {
 					return err
 				}
@@ -225,12 +226,7 @@ func runFetchPathway(cfg *pathwayConfig) error {
 	if err != nil {
 		return err
 	}
-	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
-	if err != nil {
-		logf("warning: KEGG pathway info metadata unavailable after download: %v", err)
-	} else {
-		cfg.applyKEGGInfoMetadataEnd(metadataEnd)
-	}
+	refreshPathwayEndMetadata(clientKegg, cfg)
 
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return err
@@ -360,15 +356,27 @@ func mapPathwayScopesOrdered(
 	return ordered, nil
 }
 
-func checkpointPathwayManifest(fileManifest, dirVersion string, cfg *pathwayConfig, records []pathwayRecord) ([]pathwayRecord, error) {
+func checkpointPathwayManifest(clientKegg *keggClient, fileManifest, dirVersion string, cfg *pathwayConfig, records []pathwayRecord) ([]pathwayRecord, error) {
 	recordsComplete, err := buildCompletePathwayRecords(fileManifest, dirVersion, records)
 	if err != nil {
 		return nil, err
 	}
+	refreshPathwayEndMetadata(clientKegg, cfg)
 	if err := writeManifest(fileManifest, cfg, recordsComplete, time.Now()); err != nil {
 		return nil, err
 	}
 	return recordsComplete, nil
+}
+
+func refreshPathwayEndMetadata(clientKegg *keggClient, cfg *pathwayConfig) {
+	cfg.sourceReleaseEnd = ""
+	cfg.sourceLastUpdateEnd = ""
+	metadataEnd, err := resolveKEGGInfoMetadata(clientKegg, "pathway")
+	if err != nil {
+		logf("warning: KEGG pathway info metadata unavailable after download: %v", err)
+		return
+	}
+	cfg.applyKEGGInfoMetadataEnd(metadataEnd)
 }
 
 func resolvePathwayIDs(
@@ -1087,6 +1095,14 @@ func buildManifestFile(
 		cfg.sourceLastUpdateStart,
 		cfg.sourceLastUpdateEnd,
 	)
+	if cfg.preserveUnobservedEnd {
+		if cfg.sourceReleaseEnd == "" {
+			sourceReleaseEnd = ""
+		}
+		if cfg.sourceLastUpdateEnd == "" {
+			sourceLastUpdateEnd = ""
+		}
+	}
 	mapRecordsByPathway := make(map[string][]pathwayRecord)
 	pathwayIDs := make([]string, 0)
 	for _, record := range records {
