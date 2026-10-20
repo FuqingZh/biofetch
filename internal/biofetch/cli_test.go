@@ -17,6 +17,8 @@ var cliAssets = [][]string{
 	{"interpro", "scan"},
 	{"chebi", "database"},
 	{"chemont", "ontology"},
+	{"complexportal", "complextab"},
+	{"complexportal", "psi30"},
 	{"dbcan", "database"},
 	{"hmdb", "database"},
 	{"jaspar", "data"},
