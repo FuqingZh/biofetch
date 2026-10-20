@@ -1,7 +1,7 @@
 # Upstream data terms and redistribution boundary
 
-Version: v1.0
-Date: 2026-08-13
+Version: v1.1
+Date: 2026-10-20
 Status: current
 
 `biofetch` is an acquisition and snapshot-locking tool. The Apache-2.0
@@ -23,6 +23,7 @@ using, storing, or redistributing a snapshot.
 | WikiPathways | [WikiPathways](https://www.wikipathways.org/) | Follow pathway-specific and project terms | No upstream bytes |
 | ChEBI | [ChEBI downloads](https://www.ebi.ac.uk/chebi/downloadsForward.do) | Verify current ChEBI license and attribution | No upstream bytes |
 | Rhea | [Rhea](https://www.rhea-db.org/download) | Verify current Rhea license and citation | No upstream bytes |
+| Complex Portal | [Provider terms](https://www.ebi.ac.uk/complexportal/about#license_privacy), [download guide](https://www.ebi.ac.uk/training/online/courses/complex-portal-quick-tour/getting-data-from-complex-portal/) | Public HTTPS, CC0 data; cite [Balu et al. 2025](https://doi.org/10.1093/nar/gkae1085); curated and predicted evidence remain distinct | No upstream bytes |
 | JASPAR | [JASPAR downloads](https://jaspar.elixir.no/downloads/) | Follow JASPAR data and citation terms | No upstream bytes |
 | ChemOnt / ClassyFire | [ClassyFire](http://classyfire.wishartlab.com/) | Confirm current redistribution terms before commercial use | No upstream bytes |
 | LIPID MAPS | [LIPID MAPS](https://www.lipidmaps.org/data/downloads) | Check the current LIPID MAPS terms | No upstream bytes |

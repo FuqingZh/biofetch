@@ -3,6 +3,7 @@ package biofetch
 import (
 	"github.com/FuqingZh/biofetch/internal/chebi"
 	"github.com/FuqingZh/biofetch/internal/chemont"
+	"github.com/FuqingZh/biofetch/internal/complexportal"
 	"github.com/FuqingZh/biofetch/internal/dbcan"
 	"github.com/FuqingZh/biofetch/internal/eggnog"
 	"github.com/FuqingZh/biofetch/internal/geneontology"
@@ -36,6 +37,7 @@ func RunCLI(args []string) error {
 	commandRoot.AddCommand(eggnog.NewCommand())
 	commandRoot.AddCommand(chebi.NewCommand())
 	commandRoot.AddCommand(chemont.NewCommand())
+	commandRoot.AddCommand(complexportal.NewCommand())
 	commandRoot.AddCommand(dbcan.NewCommand())
 	commandRoot.AddCommand(geneontology.NewCommand())
 	commandRoot.AddCommand(hmdb.NewCommand())

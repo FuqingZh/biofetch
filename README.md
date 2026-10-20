@@ -4,7 +4,7 @@
 ends at source acquisition: raw files, source metadata, and per-snapshot
 `manifest.lock` files.
 
-The first public release targets Linux `amd64` and `arm64`, with `CGO_ENABLED=0`.
+Binary releases target Linux `amd64` and `arm64`, with `CGO_ENABLED=0`.
 Install the latest tagged release from the public module with:
 
 ```bash
@@ -41,6 +41,19 @@ Some established databases use a shorter or nested path, such as
 `manifest.lock` is relative to the lock's directory and lives under `raw/`.
 
 ## Common commands
+
+Fetch a complete, versioned Complex Portal release:
+
+```bash
+biofetch complexportal complextab fetch --output /database/bioinfo/resources/complexportal
+biofetch complexportal psi30 fetch --output /database/bioinfo/resources/complexportal --version 2026-01-09
+```
+
+ComplexTab includes all species and separately named predicted files. Omitted
+version resolves the latest dated release; explicit dates use fixed upstream
+URLs. XML remains the original complete archive. Both support `lock SNAPSHOT`
+and `restore SNAPSHOT`; see the
+[acquisition contract](docs/architecture/20261020-v1.0-complexportal-acquisition-contract.md).
 
 Download a database asset and write its snapshot lock:
 
@@ -155,8 +168,9 @@ the exact `dbcan/database/db_v5-2-9_5-5-2026` snapshot.
 large files such as the HMDB all-spectra bundle; selecting a declared large
 asset also requires `--allow-large-downloads`. KEGG metabolic entry records are
 acquired in REST batches of at most ten IDs and the default request interval is
-350 ms. The atomic dbCAN collection is the documented exception: it has no
-`--assets` option and always requires the large-download opt-in.
+350 ms. Atomic collections have no `--assets` option: dbCAN always requires
+the large-download opt-in; each Complex Portal asset acquires its complete
+release inventory.
 
 Long KEGG PATHWAY acquisitions can be split by the first letter of the
 organism code while retaining one snapshot and one controller-owned lock:
