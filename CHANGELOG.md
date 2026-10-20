@@ -17,6 +17,8 @@ All notable changes to biofetch are documented here. The project follows
 - Verify arm64 release binaries natively and support authorized release recovery.
 - Replace historical AO prerequisites with direct development and proportional
   local verification; preserve mandatory exact-head CI and release checks.
+- Update the pinned Go toolchain to 1.26.9 and networking dependencies to
+  resolve the security findings blocking release.
 
 ## [0.1.0] - 2026-08-14
 

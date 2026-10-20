@@ -14,7 +14,7 @@ bypasses authentication or redistribute upstream bytes.
 
 ## Local setup and gate
 
-Use the Go toolchain declared by `go.mod` (currently `go1.26.6`).
+Use the Go toolchain declared by `go.mod` (currently `go1.26.9`).
 Follow the [development and release contract](docs/development/20261020-v1.0-development-and-release-contract.md).
 For ordinary changes, run tests and vet for the affected package and direct
 consumers; use scoped race checks when concurrency or shared download/hash
@@ -31,6 +31,8 @@ GOCACHE=/tmp/biofetch-test go build -trimpath -o /tmp/biofetch ./cmd/biofetch
 go mod tidy -diff
 go mod verify
 python3 scripts/generate_third_party_notices.py --check
+go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.4.0 ./...
 ```
 
 Tests use temporary resources and must not contact live providers or write

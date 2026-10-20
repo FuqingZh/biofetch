@@ -27,7 +27,7 @@ var tabName = regexp.MustCompile(`^[1-9][0-9]*(_predicted)?\.tsv$`)
 
 func validateVersion(version string) error {
 	if date, err := time.Parse("2006-01-02", version); err != nil || date.Format("2006-01-02") != version {
-		return fmt.Errorf("Complex Portal version must be a valid YYYY-MM-DD release: %q", version)
+		return fmt.Errorf("complex portal version must be a valid YYYY-MM-DD release: %q", version)
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func readIndex(client *http.Client, address string) ([]byte, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Complex Portal metadata %s: %s", address, response.Status)
+		return nil, fmt.Errorf("complex portal metadata %s: %s", address, response.Status)
 	}
 	return boundedIndex(response.Body)
 }
@@ -80,7 +80,7 @@ func boundedIndex(reader io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > maxIndexBytes {
-		return nil, fmt.Errorf("Complex Portal directory listing exceeds %d bytes", maxIndexBytes)
+		return nil, fmt.Errorf("complex portal directory listing exceeds %d bytes", maxIndexBytes)
 	}
 	return data, nil
 }

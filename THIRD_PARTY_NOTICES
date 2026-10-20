@@ -36,13 +36,13 @@ included below for binary redistribution compliance.
 | `github.com/ulikunitz/xz` | `v0.5.16` | `BSD-3-Clause` | https://pkg.go.dev/github.com/ulikunitz/xz@v0.5.16 |
 | `github.com/xo/terminfo` | `v0.0.0-20220910002029-abceb7e1c41e` | `MIT` | https://pkg.go.dev/github.com/xo/terminfo@v0.0.0-20220910002029-abceb7e1c41e |
 | `go.yaml.in/yaml/v3` | `v3.0.4` | `MIT` | https://pkg.go.dev/go.yaml.in/yaml/v3@v3.0.4 |
-| `golang.org/x/crypto` | `v0.51.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/crypto@v0.51.0 |
+| `golang.org/x/crypto` | `v0.57.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/crypto@v0.57.0 |
 | `golang.org/x/exp` | `v0.0.0-20231006140011-7918f672742d` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/exp@v0.0.0-20231006140011-7918f672742d |
 | `golang.org/x/mod` | `v0.13.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/mod@v0.13.0 |
-| `golang.org/x/net` | `v0.55.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/net@v0.55.0 |
-| `golang.org/x/sys` | `v0.45.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/sys@v0.45.0 |
-| `golang.org/x/term` | `v0.43.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/term@v0.43.0 |
-| `golang.org/x/text` | `v0.37.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/text@v0.37.0 |
+| `golang.org/x/net` | `v0.60.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/net@v0.60.0 |
+| `golang.org/x/sys` | `v0.48.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/sys@v0.48.0 |
+| `golang.org/x/term` | `v0.46.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/term@v0.46.0 |
+| `golang.org/x/text` | `v0.42.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/text@v0.42.0 |
 | `golang.org/x/tools` | `v0.14.0` | `BSD-3-Clause` | https://pkg.go.dev/golang.org/x/tools@v0.14.0 |
 | `gopkg.in/check.v1` | `v0.0.0-20161208181325-20d25e280405` | `BSD-2-Clause` | https://pkg.go.dev/gopkg.in/check.v1@v0.0.0-20161208181325-20d25e280405 |
 | `gopkg.in/yaml.v3` | `v3.0.1` | `MIT` | https://pkg.go.dev/gopkg.in/yaml.v3@v3.0.1 |
@@ -1217,7 +1217,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ----- END NOTICE -----
 
-### `golang.org/x/crypto@v0.51.0`
+### `golang.org/x/crypto@v0.57.0`
 SPDX license: `BSD-3-Clause`
 
 ----- BEGIN LICENSE -----
@@ -1316,7 +1316,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END LICENSE -----
 
-### `golang.org/x/net@v0.55.0`
+### `golang.org/x/net@v0.60.0`
 SPDX license: `BSD-3-Clause`
 
 ----- BEGIN LICENSE -----
@@ -1349,7 +1349,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END LICENSE -----
 
-### `golang.org/x/sys@v0.45.0`
+### `golang.org/x/sys@v0.48.0`
 SPDX license: `BSD-3-Clause`
 
 ----- BEGIN LICENSE -----
@@ -1382,7 +1382,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END LICENSE -----
 
-### `golang.org/x/term@v0.43.0`
+### `golang.org/x/term@v0.46.0`
 SPDX license: `BSD-3-Clause`
 
 ----- BEGIN LICENSE -----
@@ -1415,7 +1415,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END LICENSE -----
 
-### `golang.org/x/text@v0.37.0`
+### `golang.org/x/text@v0.42.0`
 SPDX license: `BSD-3-Clause`
 
 ----- BEGIN LICENSE -----
