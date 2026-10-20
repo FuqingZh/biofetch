@@ -10,9 +10,10 @@ Read these documents in order:
 1. [Root README](../README.md) for the product boundary and common commands.
 2. [Resource and manifest contract](architecture/resource-manifest-contract.md)
    for snapshot layout, lock semantics, aggregate manifests, and path rules.
-3. [GitHub publication readiness implementation plan](implementation-plan/20260813-v1.0-github-publication-readiness-implementation-plan.md)
-   for module identity, licensing boundaries, CI/security, release artifacts,
-   public contributor entrypoints, and the first tagged release.
+3. [Development and release contract](development/20261020-v1.0-development-and-release-contract.md)
+   for direct development, proportional checks, exact-head integration and
+   publication. It supersedes historical AO adoption and first-release
+   pending statements.
 4. [KEGG PATHWAY sharded and bounded download implementation plan](implementation-plan/20260820-v1.0-kegg-pathway-sharded-download-implementation-plan.md)
    for organism-prefix selection, request timeouts, bounded organism workers,
    shared request limiting, and controller-owned manifest checkpoints.
@@ -41,6 +42,9 @@ Read these documents in order:
     for consumer compatibility and dataset-qualified identity.
 13. [Upstream data terms](compatibility/upstream-data-terms.md)
     for the non-redistribution boundary and source-specific access caveats.
+14. [Complex Portal acquisition contract](architecture/20261020-v1.0-complexportal-acquisition-contract.md)
+    for dated complete ComplexTab/XML snapshots, predicted data, offline
+    locks and immutable restore.
 
 The architecture and test contracts above describe the maintained
 InterProScan and dbCAN snapshot, checksum, verifier-failure, and offline-test
@@ -59,3 +63,6 @@ documents are never an implementation authority.
 The completed CLI v2, InterProScan, and AO adoption work is recorded in its
 [archived implementation plan](archive/20260723-v1.0-cli-v2-interpro-scan-ao-adoption-implementation-plan.md)
 and [closeout](archive/20260724-v1.0-cli-v2-interpro-scan-ao-adoption-closeout.md).
+AO adoption is no longer the development policy. The
+[publication readiness plan](implementation-plan/20260813-v1.0-github-publication-readiness-implementation-plan.md)
+retains first-release provenance; current publication rules are above.

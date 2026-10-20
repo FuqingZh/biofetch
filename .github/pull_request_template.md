@@ -4,6 +4,7 @@
 
 ## Verification
 
+- Local checks run, affected packages, and any unchecked boundaries:
 - [ ] `validate-biofetch` passes on the current head.
 - [ ] Tests use temporary resources and do not contact live providers.
 - [ ] CLI, snapshot layout, or manifest compatibility is documented.

@@ -1,3 +1,4 @@
 /biofetch
 dist/
 .codex
+.traces/

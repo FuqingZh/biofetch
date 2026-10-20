@@ -14,7 +14,14 @@ bypasses authentication or redistribute upstream bytes.
 
 ## Local setup and gate
 
-Use the Go version declared by `go.mod`. Before opening a pull request, run:
+Use the Go toolchain declared by `go.mod` (currently `go1.26.6`).
+Follow the [development and release contract](docs/development/20261020-v1.0-development-and-release-contract.md).
+For ordinary changes, run tests and vet for the affected package and direct
+consumers; use scoped race checks when concurrency or shared download/hash
+behavior changes. Documentation-only work needs link, command and authority
+checks, without unrelated Go regression.
+
+Before publishing a release candidate, run the complete local gate once:
 
 ```bash
 GOCACHE=/tmp/biofetch-test go test ./...
@@ -36,5 +43,12 @@ test belongs in a bounded workflow, not pull-request tests.
 Keep one concern per pull request, describe compatibility impact, link source
 terms, and report the exact commands run. Do not include database archives,
 credentials, cookies, or internal shared-storage paths. The required check is
-`validate-biofetch`; resolve review threads and re-run the current-head gate
-after every change.
+`validate-biofetch`; resolve review threads and verify the required remote
+checks against the current head immediately before merging. New code or
+failures require relevant local revalidation; unchanged source does not require
+another full local suite just because the PR, tag, or release state changed.
+
+Development is direct; AO sessions and claims are not prerequisites.
+Merge, release and shared-resource writes follow the user's explicit scope.
+Public releases contain software, notices, checksums, SBOM and provenance;
+database acquisition happens separately against official providers.
