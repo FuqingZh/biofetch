@@ -14,7 +14,7 @@ bypasses authentication or redistribute upstream bytes.
 
 ## Local setup and gate
 
-Use the Go toolchain declared by `go.mod` (currently `go1.26.9`).
+Use the Go toolchain declared by `go.mod` (currently `go1.26.11`).
 Follow the [development and release contract](docs/development/20261020-v1.0-development-and-release-contract.md).
 For ordinary changes, run tests and vet for the affected package and direct
 consumers; use scoped race checks when concurrency or shared download/hash

@@ -10,13 +10,14 @@ Read these documents in order:
 1. [Root README](../README.md) for the product boundary and common commands.
 2. [Resource and manifest contract](architecture/resource-manifest-contract.md)
    for snapshot layout, lock semantics, aggregate manifests, and path rules.
-3. [Development and release contract](development/20261020-v1.0-development-and-release-contract.md)
+3. [KEGG PATHWAY sharded and bounded download implementation plan](implementation-plan/20260820-v1.0-kegg-pathway-sharded-download-implementation-plan.md)
+   for multi-prefix selection, finite request timeout, shared-rate organism
+   workers, batch checkpoints, restart behavior, and the single-process
+   snapshot boundary.
+4. [Development and release contract](development/20261020-v1.0-development-and-release-contract.md)
    for direct development, proportional checks, exact-head integration and
    publication. It supersedes historical AO adoption and first-release
    pending statements.
-4. [KEGG PATHWAY sharded and bounded download implementation plan](implementation-plan/20260820-v1.0-kegg-pathway-sharded-download-implementation-plan.md)
-   for organism-prefix selection, request timeouts, bounded organism workers,
-   shared request limiting, and controller-owned manifest checkpoints.
 5. [Aggregate manifest v2 and build performance implementation plan](implementation-plan/20260810-v1.0-aggregate-manifest-build-performance-implementation-plan.md)
    for dataset-qualified snapshot identity, snapshot-aware discovery, bounded
    child-lock validation, v1 consumer migration, and deterministic performance
