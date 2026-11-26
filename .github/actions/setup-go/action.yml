@@ -7,8 +7,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        go_version='1.26.9'
-        go_sha256='42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d'
+        go_version='1.26.11'
+        go_sha256='9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec'
         archive="$RUNNER_TEMP/go${go_version}.linux-amd64.tar.gz"
         go_root="$RUNNER_TEMP/go"
         curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
